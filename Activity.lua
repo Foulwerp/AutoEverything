@@ -44,24 +44,29 @@ cancelButton:SetPoint("BOTTOM", 0, 15)
 cancelButton:SetText("Cancel")
 
 local function StopCountdown(cancelled)
+    local cancelMessage = countdown.cancelMessage
     countdown.active = false
     countdown.action = nil
+    countdown.kind = nil
+    countdown.cancelMessage = nil
     countdownFrame:SetScript("OnUpdate", nil)
     countdownFrame:Hide()
     if cancelled and AutoCore and AutoCore.Info then
-        AutoCore.Info("Activity", "Automatic departure cancelled for this run.")
+        AutoCore.Info("Activity", cancelMessage or "Automatic action cancelled.")
     end
 end
 
 cancelButton:SetScript("OnClick", function() StopCountdown(true) end)
 
-local function StartCountdown(title, verb, action, settingKey, defaultDelay, maxDelay)
+local function StartCountdown(title, verb, action, settingKey, defaultDelay, maxDelay, kind, cancelMessage)
     if countdown.active then return end
     local delay = tonumber(Setting(settingKey, defaultDelay)) or defaultDelay
     if delay < 1 then delay = 1 elseif delay > maxDelay then delay = maxDelay end
     countdown.active = true
     countdown.endsAt = GetTime() + delay
     countdown.action = action
+    countdown.kind = kind
+    countdown.cancelMessage = cancelMessage
     countdownTitle:SetText(title)
     countdownFrame:Show()
     local lastShown
@@ -87,6 +92,8 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("LFG_PROPOSAL_SHOW")
 eventFrame:RegisterEvent("LFG_COMPLETION_REWARD")
+eventFrame:RegisterEvent("LFG_UPDATE")
+eventFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
 eventFrame:RegisterEvent("UPDATE_BATTLEFIELD_STATUS")
 eventFrame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -97,7 +104,55 @@ eventFrame:RegisterEvent("CHAT_MSG_BG_SYSTEM_NEUTRAL")
 local acceptedBattlefield = {}
 local battlegroundCompletionHandled = false
 local dungeonCompletionHandled = false
+local pendingDungeonRequeue = false
+local pendingDungeonPartyLeave = false
+local dungeonPartyLeaveRequested = false
 local battlefieldPollElapsed = 0
+
+local function IsLFGQueueActive()
+    if not GetLFGMode then return false end
+    local mode, submode = GetLFGMode()
+    local value = string.lower(tostring(mode or "") .. " " .. tostring(submode or ""))
+    return string.find(value, "queue", 1, true)
+        or string.find(value, "proposal", 1, true)
+        or string.find(value, "rolecheck", 1, true)
+end
+
+local function MaybeStartDungeonRequeue()
+    if not pendingDungeonRequeue and not pendingDungeonPartyLeave then return end
+    local inInstance, instanceType = IsInInstance()
+    if inInstance and instanceType == "party" then return end
+
+    local partyMembers = GetNumPartyMembers and GetNumPartyMembers() or 0
+    if pendingDungeonPartyLeave and partyMembers > 0 then
+        if LeaveParty then
+            if not dungeonPartyLeaveRequested then
+                dungeonPartyLeaveRequested = true
+                LeaveParty()
+            end
+            return
+        end
+        pendingDungeonPartyLeave = false
+        if AutoCore and AutoCore.Warn then
+            AutoCore.Warn("Activity", "Leaving the dungeon party is unavailable on this client.")
+        end
+    end
+
+    local shouldRequeue = pendingDungeonRequeue
+    pendingDungeonRequeue = false
+    pendingDungeonPartyLeave = false
+    dungeonPartyLeaveRequested = false
+    if not shouldRequeue or IsLFGQueueActive() then return end
+    StartCountdown("Dungeon Requeue", "Joining Dungeon Finder", function()
+        if IsLFGQueueActive() then return end
+        if JoinLFG then
+            JoinLFG()
+        elseif AutoCore and AutoCore.Warn then
+            AutoCore.Warn("Activity", "Dungeon Finder requeue is unavailable on this client.")
+        end
+    end, "dungeonRequeueDelay", 30, 300, "dungeonRequeue",
+        "Automatic dungeon requeue cancelled.")
+end
 
 local function ScanBattlefieldQueues()
     if not GetBattlefieldStatus then return end
@@ -127,7 +182,8 @@ local function CheckBattlegroundCompletion()
     StartCountdown("Battleground Complete", "Leaving battleground", function()
         local stillInside, currentType = IsInInstance()
         if stillInside and currentType == "pvp" and LeaveBattlefield then LeaveBattlefield() end
-    end, "activityLeaveDelay", 3, 30)
+    end, "activityLeaveDelay", 3, 30, "battlegroundDeparture",
+        "Automatic battleground departure cancelled for this run.")
 end
 
 eventFrame:SetScript("OnUpdate", function(_, elapsed)
@@ -148,8 +204,14 @@ eventFrame:SetScript("OnEvent", function(_, event, message)
                 dungeonCompletionHandled = true
                 StartCountdown("Dungeon Complete", "Leaving dungeon", function()
                     local stillInside, currentType = IsInInstance()
-                    if stillInside and currentType == "party" and LFGTeleport then LFGTeleport(true) end
-                end, "dungeonExitDelay", 120, 300)
+                    if stillInside and currentType == "party" and LFGTeleport then
+                        pendingDungeonRequeue = Setting("autoRequeueDungeon", false)
+                        pendingDungeonPartyLeave = Setting("autoLeaveDungeonParty", false)
+                        dungeonPartyLeaveRequested = false
+                        LFGTeleport(true)
+                    end
+                end, "dungeonExitDelay", 120, 300, "dungeonDeparture",
+                    "Automatic dungeon departure cancelled for this run.")
             end
         end
     elseif event == "UPDATE_BATTLEFIELD_STATUS" then
@@ -163,6 +225,13 @@ eventFrame:SetScript("OnEvent", function(_, event, message)
         if not inInstance or instanceType ~= "party" then dungeonCompletionHandled = false end
         ScanBattlefieldQueues()
         CheckBattlegroundCompletion()
+        MaybeStartDungeonRequeue()
+    elseif event == "PARTY_MEMBERS_CHANGED" then
+        MaybeStartDungeonRequeue()
+    elseif event == "LFG_UPDATE" then
+        if countdown.active and countdown.kind == "dungeonRequeue" and IsLFGQueueActive() then
+            StopCountdown(false)
+        end
     else
         Activity.TrackEnemyFlagCarrier(message)
     end

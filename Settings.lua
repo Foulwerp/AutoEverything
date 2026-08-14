@@ -1623,9 +1623,9 @@ end
 
 pageBuilders["Queues & PvP"] = function(parent)
     PageHeader(parent, "Queues & PvP", "Opt-in queue handling, cancellable departures, and battleground keybind helpers.")
-    SectionCard(parent, 12, -76, 340, 230)
-    SectionCard(parent, 370, -76, 342, 230)
-    SectionCard(parent, 12, -318, 700, 190)
+    SectionCard(parent, 12, -76, 340, 300)
+    SectionCard(parent, 370, -76, 342, 300)
+    SectionCard(parent, 12, -388, 700, 190)
 
     Label(parent, "Dungeon Finder", 20, -84, 13)
     local roleCheck = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptLFGRoleCheck",
@@ -1645,10 +1645,13 @@ pageBuilders["Queues & PvP"] = function(parent)
         "Accepts the Dungeon Finder proposal when a group is ready.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoExitCompletedDungeon",
         "Exit completed dungeon", 20, -224, false,
-        "After the Dungeon Finder completion reward, shows a countdown with Cancel before teleporting out. It does not leave the party.")
+        "After the Dungeon Finder completion reward, shows a countdown with Cancel before teleporting out. Leaving the party is controlled separately below.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoLeaveDungeonParty",
+        "Leave party when exiting", 20, -252, false,
+        "After teleporting out of a completed dungeon, leaves the current party. Only applies to automatic dungeon departure.")
     local dungeonExitDelay = Core.GetSetting("core", "dungeonExitDelay",
         ResolvedDefault(AutoCoreConfig, "dungeonExitDelay", 120))
-    local dungeonDelayButton = ChoiceButton(parent, "Departure timer", 20, -252, 310, {
+    local dungeonDelayButton = ChoiceButton(parent, "Departure timer", 20, -280, 310, {
         { text = "30 seconds", value = 30 },
         { text = "1 minute", value = 60 },
         { text = "2 minutes", value = 120 },
@@ -1657,6 +1660,20 @@ pageBuilders["Queues & PvP"] = function(parent)
     }, dungeonExitDelay, function(value) SetSettingWithoutRefresh("core", "dungeonExitDelay", value) end)
     AddTooltip(dungeonDelayButton, "Dungeon departure timer",
         "Waits after completion before teleporting out. Cancel keeps you in the dungeon for the rest of that run so the group can continue.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoRequeueDungeon",
+        "Requeue after exiting", 20, -312, false,
+        "After automatic dungeon departure and optional party leave, shows a second cancellable timer before rejoining the retained Dungeon Finder selection.")
+    local dungeonRequeueDelay = Core.GetSetting("core", "dungeonRequeueDelay",
+        ResolvedDefault(AutoCoreConfig, "dungeonRequeueDelay", 30))
+    local requeueDelayButton = ChoiceButton(parent, "Requeue timer", 20, -340, 310, {
+        { text = "10 seconds", value = 10 },
+        { text = "30 seconds", value = 30 },
+        { text = "1 minute", value = 60 },
+        { text = "2 minutes", value = 120 },
+        { text = "5 minutes", value = 300 },
+    }, dungeonRequeueDelay, function(value) SetSettingWithoutRefresh("core", "dungeonRequeueDelay", value) end)
+    AddTooltip(requeueDelayButton, "Dungeon requeue timer",
+        "Waits after leaving the dungeon before joining the same retained Dungeon Finder selection. Cancel skips this requeue.")
 
     Label(parent, "Battleground", 378, -84, 13)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptBattlegroundPop",
@@ -1681,10 +1698,10 @@ pageBuilders["Queues & PvP"] = function(parent)
     AddTooltip(delayButton, "Cancellable departure timer",
         "The visible countdown used after a battleground reports a winner. Cancel suppresses departure for that run.")
 
-    Label(parent, "Battleground keybind utilities", 20, -326, 13)
+    Label(parent, "Battleground keybind utilities", 20, -396, 13)
     local help = Label(parent,
         "Bind Target Enemy Flag Carrier and Drop Flag or Selected Aura in the game's Key Bindings menu under Automation Utilities.",
-        20, -356)
+        20, -426)
     help:SetWidth(660)
     help:SetTextColor(Unpack(TEXT_MUTED))
     local auraID = Core.GetSetting("core", "dropAuraSpellID", ResolvedDefault(AutoCoreConfig, "dropAuraSpellID", 0))
@@ -1702,7 +1719,7 @@ pageBuilders["Queues & PvP"] = function(parent)
     if auraID > 0 and not activeAuraIDs[auraID] then
         table.insert(auraChoices, { text = "Saved aura (" .. auraID .. ")", value = auraID })
     end
-    local auraButton = ChoiceButton(parent, "Optional removable aura", 20, -400, 440,
+    local auraButton = ChoiceButton(parent, "Optional removable aura", 20, -470, 440,
         auraChoices, auraID, function(value)
             SetSettingWithoutRefresh("core", "dropAuraSpellID", value)
         end)
