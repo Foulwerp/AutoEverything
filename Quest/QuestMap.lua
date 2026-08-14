@@ -497,12 +497,6 @@ local function ConfigurePin(pin, cluster, size)
     -- QuestMarkers.lua (white skull, brown bag) rather than recoloring them.
     pin.icon:SetTexture(iconTextures[cluster.kind] or iconTextures.kill)
     pin.icon:SetVertexColor(1, 1, 1, 1)
-    if #cluster.members > 1 and size >= 14 then
-        pin.count:SetText(#cluster.members)
-        pin.count:Show()
-    else
-        pin.count:Hide()
-    end
 end
 
 local function NewPin(parent, minimap)
@@ -512,9 +506,6 @@ local function NewPin(parent, minimap)
     pin:EnableMouse(true)
     pin.icon = pin:CreateTexture(nil, "ARTWORK")
     pin.icon:SetAllPoints(pin)
-    pin.count = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    pin.count:SetPoint("BOTTOMRIGHT", pin, "BOTTOMRIGHT", 3, -2)
-    pin.count:SetTextColor(1, 0.9, 0.2)
     pin:SetScript("OnEnter", ShowPinTooltip)
     pin:SetScript("OnLeave", GameTooltip_Hide)
     pin:Hide()
