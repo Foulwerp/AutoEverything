@@ -7,6 +7,7 @@ AutoQuest = AutoQuest or {}
 AutoQuest.Map = AutoQuest.Map or {}
 local QuestMap = AutoQuest.Map
 local Resolver = AutoQuest.ObjectiveResolver
+local SpawnStore = AutoQuest.NPCSpawnStore
 
 local activeByZone = {}
 local activePointKeys = {}
@@ -174,7 +175,6 @@ end
 -- association. Once the resolver has confirmed the objective/NPC pair, use
 -- that NPC's known spawn list even when the quest page itself has no points.
 local function AddConfirmedLocations(objectives)
-    if type(AscensionNPCLocationDB) ~= "table" then return end
     for _, objective in ipairs(objectives or {}) do
         local confirmation = Resolver.GetConfirmations(objective.key)
         local kind = confirmation and ConfirmedMapKind(confirmation.kind)
@@ -182,7 +182,7 @@ local function AddConfirmedLocations(objectives)
             local objectiveAdded = false
             for rawNPCID in pairs(confirmation.npcIDs) do
                 local npcID = tonumber(rawNPCID)
-                local locations = npcID and AscensionNPCLocationDB[npcID]
+                local locations = npcID and SpawnStore.Get(npcID)
                 if type(locations) == "table" then
                     local npcName = type(confirmation.npcNames) == "table"
                         and confirmation.npcNames[rawNPCID] or nil
@@ -269,7 +269,7 @@ function QuestMap.RebuildIndex()
                             end
                         else
                             local id = tonumber(record.id)
-                            local locations = id and type(AscensionNPCLocationDB) == "table" and AscensionNPCLocationDB[id]
+                            local locations = id and SpawnStore.Get(id)
                             for _, location in ipairs(locations or {}) do
                                 -- Every coordinate here is a real distinct spawn
                                 -- point - one pin each, not just the first few.
