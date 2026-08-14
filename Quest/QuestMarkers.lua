@@ -445,6 +445,21 @@ local function FindPlate(unit)
     end
 end
 
+-- Nameplate add events are not replayed for plates that were already visible
+-- when this addon loaded or the UI reloaded. Ascension exposes the same
+-- nameplate unit tokens used by its bundled nameplate addons, so discover any
+-- missed plates during the existing bounded refresh instead of leaving the
+-- marker list empty until each unit's plate is recreated.
+local function DiscoverVisible()
+    for index = 1, 40 do
+        local unit = "nameplate" .. index
+        if UnitGUID(unit) then
+            local plate = FindPlate(unit)
+            if plate and plate:IsShown() then visibleUnits[unit] = plate end
+        end
+    end
+end
+
 function Markers.TestIcons()
     local unit = UnitExists("target") and "target" or (UnitExists("mouseover") and "mouseover")
     if not unit then
@@ -464,6 +479,7 @@ function Markers.TestIcons()
 end
 
 local function RefreshVisible()
+    DiscoverVisible()
     for unit, plate in pairs(visibleUnits) do
         if UnitExists(unit) and plate:IsShown() then
             UpdateUnit(unit, plate)
