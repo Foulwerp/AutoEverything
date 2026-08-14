@@ -5,10 +5,8 @@
 ## SavedVariables: AutoEverythingDB
 ## SavedVariablesPerCharacter: AutoEverythingCharDB
 
-Quest\AscensionQuestDB.lua
-Quest\QuestItemDB.lua
+Quest\QuestDatabase.lua
 Quest\NPCSpawnStore.lua
-Quest\NPCSpawnDB.xml
 Config.lua
 WeightTemplates.lua
 Core.lua

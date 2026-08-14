@@ -220,7 +220,7 @@ end
 
 ----------------------------------------------------------------------
 -- Quest DB resolution (shared by QuestMarkers and QuestMap)
--- AscensionQuestLocationDB (Quest/AscensionQuestDB.lua) is keyed by questID.
+-- AscensionQuestLocationDB (Quest/QuestDatabase.lua) is keyed by questID.
 -- Some database entries share a title across difficulties/phases (e.g. the
 -- three "Spirit Wars: Reclaiming Auchindoun" tiers), so questID is preferred
 -- whenever the client provides one; title is only used as a fallback since

@@ -14,3 +14,6 @@
 
 # Source artwork; the client uses the TGA version.
 /Textures/AutoEverythingIcon.png export-ignore
+
+# Keep the generated database deterministic across Windows and release builds.
+/Quest/QuestDatabase.lua text eol=lf
