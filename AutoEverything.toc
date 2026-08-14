@@ -20,6 +20,7 @@ AutoSell.lua
 AutoRoll.lua
 AuctionHouse.lua
 Quest\AutoQuest.lua
+Quest\QuestTargetResolver.lua
 Quest\GroupSync.lua
 Quest\QuestMarkers.lua
 Quest\QuestMap.lua

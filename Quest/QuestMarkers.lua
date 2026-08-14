@@ -7,13 +7,9 @@
 AutoQuest = AutoQuest or {}
 AutoQuest.Markers = AutoQuest.Markers or {}
 local Markers = AutoQuest.Markers
+local Resolver = AutoQuest.ObjectiveResolver
 
 local activeByNPC, activeByName = {}, {}
--- [lowercased objective text] = Blizzard's objectiveType ("monster", "item",
--- "object", ...) for every objective of every logged quest. Rebuilt
--- alongside activeByNPC/activeByName; feeds the live tooltip-scan fallback
--- below with ground-truth classification instead of keyword guessing.
-local objectiveTextIndex = {}
 -- [guid] = match table or false ("scanned, no match"). Cleared on every
 -- RebuildIndex so a live rescan only happens when the quest log actually
 -- changes, not on every 0.25s visible-nameplate refresh tick.
@@ -77,52 +73,10 @@ function Markers.ApplyProfile()
     refreshPending, refreshAt = true, 0
 end
 
--- Strips the trailing "0/3" or "62%" count off an objective line, leaving
--- just the stable label ("Red Linen Bandana"). The live count on a specific
--- unit's tooltip can already be ahead of whatever was true when the index
--- below was last rebuilt (e.g. you looted one since the last QUEST_LOG_UPDATE),
--- so matching on the full line including the count is unreliable - the label
--- alone is what stays constant.
-local function ObjectiveLabel(text)
-    local label = string.gsub(text or "", "|c%x%x%x%x%x%x%x%x", "")
-    label = string.gsub(label, "|r", "")
-    label = string.gsub(label, "%s*%d+%s*/%s*%d+%s*$", "")
-    label = string.gsub(label, "%s*%d+%%%s*$", "")
-    label = string.gsub(label, ":%s*$", "")
-    label = string.gsub(label, "^%s+", "")
-    label = string.gsub(label, "%s+$", "")
-    label = string.gsub(label, "%s+", " ")
-    return string.lower(label)
-end
-
 ----------------------------------------------------------------------
 -- NPC and objective indexing
 ----------------------------------------------------------------------
-local function NPCIDFromGUID(guid)
-    if type(guid) ~= "string" then return nil end
-
-    -- Prefer the Ascension-provided decoder. It understands both stock and
-    -- Ascension custom creature GUID layouts.
-    if type(GetCreatureIDFromGUID) == "function" then
-        local ok, value = pcall(GetCreatureIDFromGUID, guid)
-        value = ok and tonumber(value) or nil
-        if value and value > 0 then return value end
-    end
-
-    -- Modern textual GUID fallback: Creature-0-...-NPCID-spawnUID.
-    local fields = {}
-    for field in string.gmatch(guid, "[^-]+") do fields[#fields + 1] = field end
-    if fields[1] == "Creature" or fields[1] == "Vehicle" then
-        local value = tonumber(fields[6])
-        if value and value > 0 then return value end
-    end
-
-    -- Ascension's hexadecimal WotLK GUID: 0xF130EEEEEE...
-    if string.sub(guid, 1, 2) == "0x" and string.len(guid) >= 12 then
-        local value = tonumber(string.sub(guid, 7, 12), 16)
-        if value and value > 0 then return value end
-    end
-end
+local NPCIDFromGUID = Resolver.NPCIDFromGUID
 
 local function ParseProgress(objective)
     if not objective then return false, nil end
@@ -191,9 +145,9 @@ end
 
 function Markers.RebuildIndex()
     activeByNPC, activeByName = {}, {}
-    objectiveTextIndex = {}
     fallbackMatchCache = {}
     if not Enabled() then return end
+    Resolver.BuildActive()
 
     local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
     for logIndex = 1, entries do
@@ -207,20 +161,6 @@ function Markers.RebuildIndex()
                 objectives[objectiveIndex] = {
                     text=text or "", kind=objectiveType, done=done and true or false,
                 }
-                -- Indexed by every active quest's live objective label, not
-                -- just quests the database happens to know about. This is
-                -- what the live tooltip-scan fallback below matches against
-                -- to get Blizzard's own item-vs-monster classification
-                -- instead of guessing from keywords.
-                if text and text ~= "" then
-                    local label = ObjectiveLabel(text)
-                    if label ~= "" then
-                        objectiveTextIndex[label] = {
-                            kind = string.lower(objectiveType or ""),
-                            done = done and true or false,
-                        }
-                    end
-                end
             end
         end
         -- Resolve by questID, falling back to title (the client may not return
@@ -243,18 +183,10 @@ function Markers.RebuildIndex()
 end
 
 ----------------------------------------------------------------------
--- Live unit-tooltip fallback, the same approach nameplate quest-icon addons
--- use. The scraped database can miss an NPC - still-incomplete scrape,
--- an ID/name mismatch, a custom Ascension mob - but Blizzard's own unit
--- tooltip already prints objective lines ("Defias Bandits slain: 3/10")
--- for any unit that counts toward one of the player's active quests. This
--- reads that tooltip directly when the database lookup above comes up
--- empty. It only tells us "this unit matters right now", not a location,
--- so it complements the database rather than replacing it.
+-- The shared resolver scans live unit tooltips against exact active objective
+-- labels. It also persists a unique objective/NPC confirmation for map use;
+-- ambiguous duplicate labels remain immediate nameplate evidence only.
 ----------------------------------------------------------------------
-local scanTooltip = CreateFrame("GameTooltip", "AutoEverythingQuestMarkerTooltip", nil, "GameTooltipTemplate")
-scanTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
-
 -- Returns remaining count and whether it was a percentage (e.g. an escort
 -- quest's "62% complete"). Percentage objectives don't map to a kill/loot
 -- count, so callers skip them rather than badge them with a wrong number.
@@ -275,47 +207,21 @@ local function EnsureMatch(match)
 end
 
 local function ScanUnitForQuestMatch(unit)
-    if not next(objectiveTextIndex) then return nil end
-    if not UnitExists(unit) or UnitIsPlayer(unit) then return nil end
-
-    scanTooltip:ClearLines()
-    scanTooltip:SetUnit(unit)
-
+    local results = Resolver.MatchTooltip(unit)
+    if not results then return nil end
     local match
-    -- Line 1 is the unit's own name; quest info can appear on any line after
-    -- that.
-    for i = 2, scanTooltip:NumLines() do
-        local region = _G["AutoEverythingQuestMarkerTooltipTextLeft" .. i]
-        local text = region and region:GetText()
-        if text and text ~= "" then
-            local objective = objectiveTextIndex[ObjectiveLabel(text)]
-            local objectiveKind = objective and objective.kind
-            if objective and not objective.done
-                and (objectiveKind == "object" or objectiveKind == "event")
-            then
-                -- Interaction objectives may be plain flags with no count.
+    for _, result in ipairs(results) do
+        if result.kind == "interact" then
+            match = EnsureMatch(match)
+            match.talk = true
+        elseif result.kind == "kill" or result.kind == "loot" then
+            local remaining, isPercent = ParseTooltipProgress(result.rawLabel)
+            if not isPercent and (remaining == nil or remaining > 0) then
                 match = EnsureMatch(match)
-                match.talk = true
-            elseif objective and not objective.done
-                and (objectiveKind == "monster" or objectiveKind == "player" or objectiveKind == "item")
-            then
-                local remaining, isPercent = ParseTooltipProgress(text)
-                -- remaining == 0 means this specific objective is already
-                -- satisfied (e.g. "3/3"); skip badging it so the icon drops
-                -- off once nothing is left to do, while any other quest's
-                -- still-active objective on the same unit (a later line in
-                -- this same loop) keeps showing normally.
-                if remaining and remaining > 0 and not isPercent then
-                    -- Only exact active-objective matches are accepted. In
-                    -- particular, a generic numbered tooltip line must never
-                    -- fall through to a loot badge.
-                    local kind = objectiveKind == "item" and "loot" or "kill"
-                    if kind == "kill" or kind == "loot" then
-                        match = EnsureMatch(match)
-                        match[kind] = true
-                        local countKey = kind .. "Remaining"
-                        match[countKey] = math.max(match[countKey] or 0, remaining)
-                    end
+                match[result.kind] = true
+                if remaining then
+                    local countKey = result.kind .. "Remaining"
+                    match[countKey] = math.max(match[countKey] or 0, remaining)
                 end
             end
         end
@@ -498,6 +404,10 @@ function Markers.SetEnabled(enabled)
     Markers.RebuildIndex()
     RefreshVisible()
     AutoCore.Info("Quest", "Quest nameplate markers " .. (enabled and "enabled." or "disabled."))
+end
+
+function Markers.RequestRefresh()
+    refreshPending, refreshAt = true, 0
 end
 
 function Markers.IsEnabled() return Enabled() end
