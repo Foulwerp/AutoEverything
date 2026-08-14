@@ -1523,6 +1523,8 @@ pageBuilders.Convenience = function(parent)
             "Allows party auto-accept while a battleground or Dungeon Finder queue/proposal is active. Leave off to protect the queue." },
     }
     local rightFields = {
+        { "autoDismount", "Auto dismount", false,
+            "Dismounts after the client rejects an action because you are mounted, and before opening an enabled single-option flight map. Repeat the original rejected action once dismounted." },
         { "skipCinematics", "Skip cinematics", false,
             "Automatically skips in-game cinematics and movies - including first-time story scenes." },
         { "showSessionInTooltip", "Show session stats on minimap", true,
@@ -1566,10 +1568,10 @@ pageBuilders.Convenience = function(parent)
 
     -- Keep the keyword visually nested with Auto Invite and its friends-only
     -- option instead of isolating it in a separate card.
-    Label(parent, "Keyword", 420, -246, 11)
+    Label(parent, "Keyword", 420, -270, 11)
     local keyword = Core.GetSetting("core", "autoInviteKeyword",
         ResolvedDefault(AutoCoreConfig, "autoInviteKeyword", "inv"))
-    local keyEdit = Edit(parent, 510, -240, 190, keyword)
+    local keyEdit = Edit(parent, 510, -264, 190, keyword)
     local function SaveKeyword(self)
         SetSettingWithoutRefresh("core", "autoInviteKeyword", strtrim(self:GetText() or ""))
     end
@@ -1581,7 +1583,7 @@ pageBuilders.Convenience = function(parent)
 
     local summonMode = Core.GetSetting("core", "summonAcceptMode",
         ResolvedDefault(AutoCoreConfig, "summonAcceptMode", "delayed"))
-    ChoiceButton(parent, "Summons", 390, -286, 310, {
+    ChoiceButton(parent, "Summons", 390, -310, 310, {
         { text = "Accept near expiration", value = "delayed" },
         { text = "Accept immediately", value = "immediate" },
     }, summonMode, function(value)
@@ -1589,7 +1591,7 @@ pageBuilders.Convenience = function(parent)
     end)
     local summonSeconds = Core.GetSetting("core", "summonAcceptSeconds",
         ResolvedDefault(AutoCoreConfig, "summonAcceptSeconds", 3))
-    ChoiceButton(parent, "Delayed at", 390, -330, 310, {
+    ChoiceButton(parent, "Delayed at", 390, -354, 310, {
         { text = "1 second remaining", value = 1 },
         { text = "2 seconds remaining", value = 2 },
         { text = "3 seconds remaining", value = 3 },

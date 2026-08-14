@@ -75,6 +75,7 @@ dialogFrame:RegisterEvent("GOSSIP_SHOW")
 dialogFrame:RegisterEvent("RESURRECT_REQUEST")
 dialogFrame:RegisterEvent("DUEL_REQUESTED")
 dialogFrame:RegisterEvent("PARTY_INVITE_REQUEST")
+dialogFrame:RegisterEvent("UI_ERROR_MESSAGE")
 
 local function GossipHasQuests()
     return (GetGossipActiveQuests and select(1, GetGossipActiveQuests()) ~= nil)
@@ -101,7 +102,32 @@ local function SelectOnlySafeGossipOption()
         binder = "autoGossipInnkeeper",
     }
     local setting = settingByType[optionType]
-    if setting and ConfigEnabled(setting) then SelectGossipOption(1) end
+    if setting and ConfigEnabled(setting) then
+        if optionType == "taxi" and ConfigEnabled("autoDismount")
+            and IsMounted and IsMounted() and Dismount
+        then
+            Dismount()
+        end
+        SelectGossipOption(1)
+    end
+end
+
+local function IsMountedActionError(message)
+    if not message then return false end
+    if (ERR_NOT_WHILE_MOUNTED and message == ERR_NOT_WHILE_MOUNTED)
+        or (ERR_ATTACK_MOUNTED and message == ERR_ATTACK_MOUNTED)
+        or (ERR_TAXIPLAYERALREADYMOUNTED and message == ERR_TAXIPLAYERALREADYMOUNTED)
+    then
+        return true
+    end
+    -- Ascension adds custom mounted-action errors. The IsMounted guard below
+    -- keeps this localized fallback from reacting after the player dismounts.
+    return string.find(string.lower(message), "mount", 1, true) ~= nil
+end
+
+local function TryAutoDismount(message)
+    if not ConfigEnabled("autoDismount") or not Dismount or not IsMounted or not IsMounted() then return end
+    if IsMountedActionError(message) then Dismount() end
 end
 
 local function NormalizePlayerName(name)
@@ -228,6 +254,8 @@ dialogFrame:SetScript("OnEvent", function(_, event, arg1)
             if AcceptGroup then AcceptGroup() end
             if StaticPopup_Hide then StaticPopup_Hide("PARTY_INVITE") end
         end
+    elseif event == "UI_ERROR_MESSAGE" then
+        TryAutoDismount(arg1)
     end
 end)
 

@@ -48,6 +48,7 @@ AutoCoreConfig = {
     autoAcceptGroupInvite = false,
     autoAcceptInviteFriendsOnly = true,  -- when accepting invites, only from friends/guildmates
     autoAcceptInviteWhileQueued = false,
+    autoDismount = false,
     skipCinematics = false,              -- off: also skips first-time story cinematics
 
     -- Auto-invite on whisper. The keyword is matched as a case-insensitive
