@@ -13,6 +13,8 @@ AutoCoreConfig = {
     autoAcceptLFGRoleCheck = false,
     autoAcceptReadyCheck = false,
     autoConfirmSummon = false,
+    summonAcceptMode = "delayed",
+    summonAcceptSeconds = 3,
     autoSelectSingleGossip = true,
     cameraDistanceMax = 50,
     setCameraDistance = true,
@@ -23,10 +25,15 @@ AutoCoreConfig = {
 
     -- Convenience bundle (each event handler reads its own flag live).
     autoAcceptResurrect = false,
+    autoAcceptResurrectInstancesOnly = true,
+    autoAcceptResurrectOutOfCombatOnly = true,
+    autoAcceptResurrectVisibleOffererOnly = true,
     autoReleaseInBattleground = false,   -- off: some players want to accept a battle-rez instead
     autoDeclineDuels = false,
+    autoDeclineDuelsShiftBypass = true,
     autoAcceptGroupInvite = false,
     autoAcceptInviteFriendsOnly = true,  -- when accepting invites, only from friends/guildmates
+    autoAcceptInviteWhileQueued = false,
     skipCinematics = false,              -- off: also skips first-time story cinematics
 
     -- Auto-invite on whisper. The keyword is matched as a case-insensitive

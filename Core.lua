@@ -88,6 +88,102 @@ local function SelectOnlySafeGossipOption()
     end
 end
 
+local function NormalizePlayerName(name)
+    if not name then return nil end
+    return string.lower((string.gsub(name, "%-.*$", "")))
+end
+
+local function FindGroupUnitByName(name)
+    local wanted = NormalizePlayerName(name)
+    if not wanted then return nil end
+    if NormalizePlayerName(UnitName("player")) == wanted then return "player" end
+    for i = 1, (GetNumRaidMembers and GetNumRaidMembers() or 0) do
+        local unit = "raid" .. i
+        if NormalizePlayerName(UnitName(unit)) == wanted then return unit end
+    end
+    for i = 1, (GetNumPartyMembers and GetNumPartyMembers() or 0) do
+        local unit = "party" .. i
+        if NormalizePlayerName(UnitName(unit)) == wanted then return unit end
+    end
+    return nil
+end
+
+local function IsQueuedForActivity()
+    if GetBattlefieldStatus then
+        for i = 1, (MAX_BATTLEFIELD_QUEUES or 3) do
+            local status = GetBattlefieldStatus(i)
+            if status == "queued" or status == "confirm" then return true end
+        end
+    end
+    if GetLFGMode then
+        local mode, submode = GetLFGMode()
+        local value = string.lower(tostring(mode or "") .. " " .. tostring(submode or ""))
+        if string.find(value, "queue", 1, true)
+            or string.find(value, "proposal", 1, true)
+            or string.find(value, "rolecheck", 1, true)
+        then
+            return true
+        end
+    end
+    return false
+end
+
+local function CanAutoAcceptResurrect()
+    if ConfigEnabled("autoAcceptResurrectInstancesOnly") then
+        local inInstance, instanceType = IsInInstance()
+        if not inInstance or (instanceType ~= "party" and instanceType ~= "raid" and instanceType ~= "pvp") then
+            return false
+        end
+    end
+    if ConfigEnabled("autoAcceptResurrectOutOfCombatOnly") and UnitAffectingCombat("player") then
+        return false
+    end
+    if ConfigEnabled("autoAcceptResurrectVisibleOffererOnly") then
+        local offerer = ResurrectGetOfferer and ResurrectGetOfferer() or nil
+        local unit = FindGroupUnitByName(offerer)
+        if not unit or (UnitIsVisible and not UnitIsVisible(unit)) then return false end
+        if UnitAffectingCombat and UnitAffectingCombat(unit) then return false end
+    end
+    return true
+end
+
+local summonPending = false
+local summonTimerFrame = CreateFrame("Frame")
+local function ClearPendingSummon()
+    summonPending = false
+    summonTimerFrame:SetScript("OnUpdate", nil)
+end
+
+local function AcceptPendingSummon()
+    if ConfirmSummon then ConfirmSummon() end
+    if StaticPopup_Hide then StaticPopup_Hide("CONFIRM_SUMMON") end
+    ClearPendingSummon()
+end
+
+local function ScheduleSummonAcceptance()
+    if not ConfigEnabled("autoConfirmSummon") then return end
+    local mode = AutoCore and AutoCore.GetSetting
+        and AutoCore.GetSetting("core", "summonAcceptMode", coreConfig.summonAcceptMode)
+        or coreConfig.summonAcceptMode
+    if mode == "immediate" or not GetSummonConfirmTimeLeft then
+        AcceptPendingSummon()
+        return
+    end
+    summonPending = true
+    summonTimerFrame:SetScript("OnUpdate", function()
+        if not summonPending or not ConfigEnabled("autoConfirmSummon") then
+            ClearPendingSummon()
+            return
+        end
+        local remaining = GetSummonConfirmTimeLeft() or 0
+        if remaining <= 0 then ClearPendingSummon(); return end
+        local threshold = AutoCore and AutoCore.GetSetting
+            and AutoCore.GetSetting("core", "summonAcceptSeconds", coreConfig.summonAcceptSeconds)
+            or coreConfig.summonAcceptSeconds
+        if remaining <= (tonumber(threshold) or 3) then AcceptPendingSummon() end
+    end)
+end
+
 dialogFrame:SetScript("OnEvent", function(_, event, arg1)
     if event == "READY_CHECK" and ConfigEnabled("autoAcceptReadyCheck") then
         if ConfirmReadyCheck then
@@ -95,22 +191,24 @@ dialogFrame:SetScript("OnEvent", function(_, event, arg1)
         elseif ReadyCheckFrameYesButton and ReadyCheckFrameYesButton:IsShown() then
             ReadyCheckFrameYesButton:Click()
         end
-    elseif event == "CONFIRM_SUMMON" and ConfigEnabled("autoConfirmSummon") and ConfirmSummon then
-        ConfirmSummon()
-        if StaticPopup_Hide then StaticPopup_Hide("CONFIRM_SUMMON") end
+    elseif event == "CONFIRM_SUMMON" then
+        ScheduleSummonAcceptance()
     elseif event == "GOSSIP_SHOW" and ConfigEnabled("autoSelectSingleGossip") then
         SelectOnlySafeGossipOption()
-    elseif event == "RESURRECT_REQUEST" and ConfigEnabled("autoAcceptResurrect") then
+    elseif event == "RESURRECT_REQUEST" and ConfigEnabled("autoAcceptResurrect") and CanAutoAcceptResurrect() then
         if AcceptResurrect then AcceptResurrect() end
         if StaticPopup_Hide then
             StaticPopup_Hide("RESURRECT_NO_TIMER")
             StaticPopup_Hide("RESURRECT")
         end
-    elseif event == "DUEL_REQUESTED" and ConfigEnabled("autoDeclineDuels") then
+    elseif event == "DUEL_REQUESTED" and ConfigEnabled("autoDeclineDuels")
+        and not (ConfigEnabled("autoDeclineDuelsShiftBypass") and IsShiftKeyDown and IsShiftKeyDown())
+    then
         if CancelDuel then CancelDuel() end
         if StaticPopup_Hide then StaticPopup_Hide("DUEL_REQUESTED") end
     elseif event == "PARTY_INVITE_REQUEST" and ConfigEnabled("autoAcceptGroupInvite") then
-        if not ConfigEnabled("autoAcceptInviteFriendsOnly") or IsFriendOrGuild(arg1) then
+        local queueAllowed = ConfigEnabled("autoAcceptInviteWhileQueued") or not IsQueuedForActivity()
+        if queueAllowed and (not ConfigEnabled("autoAcceptInviteFriendsOnly") or IsFriendOrGuild(arg1)) then
             if AcceptGroup then AcceptGroup() end
             if StaticPopup_Hide then StaticPopup_Hide("PARTY_INVITE") end
         end

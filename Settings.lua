@@ -1467,7 +1467,7 @@ pageBuilders.General = function(parent)
         { "autoAcceptReadyCheck", "Auto accept ready checks",
             "Automatically confirms a raid/party ready check instead of requiring a manual click." },
         { "autoConfirmSummon", "Auto accept summons",
-            "Automatically accepts a warlock/meeting-stone summon instead of requiring a manual click." },
+            "Accepts a warlock/meeting-stone summon using the timing selected on the Convenience page." },
         { "autoSelectSingleGossip", "Auto gossip",
             "When an NPC's gossip window offers only one non-quest, non-service option, automatically selects it instead of requiring a manual click." },
         { "showMinimapButton", "Show minimap button",
@@ -1496,8 +1496,8 @@ pageBuilders.General = function(parent)
 end
 
 pageBuilders.Convenience = function(parent)
-    SectionCard(parent, 12, -68, 340, 208)
-    SectionCard(parent, 370, -68, 342, 208)
+    SectionCard(parent, 12, -68, 340, 320)
+    SectionCard(parent, 370, -68, 342, 320)
     PageHeader(parent, "Convenience", "Optional quality-of-life automation. Potentially disruptive actions remain off by default.")
     Label(parent, "Group and Safety", 20, -76, 13)
     Label(parent, "World and Social", 390, -76, 13)
@@ -1505,15 +1505,23 @@ pageBuilders.Convenience = function(parent)
     -- Left column: group/death conveniences. Right column: everything else.
     local leftFields = {
         { "autoAcceptResurrect", "Auto accept resurrection", false,
-            "Automatically accepts a resurrection offered by another player." },
+            "Accepts resurrection offers using the safety restrictions directly below." },
+        { "autoAcceptResurrectInstancesOnly", "  Instances only", true,
+            "Only accepts resurrection offers in dungeons, raids, and battlegrounds." },
+        { "autoAcceptResurrectOutOfCombatOnly", "  Out of combat only", true,
+            "Leaves resurrection offers manual while you are in combat." },
+        { "autoAcceptResurrectVisibleOffererOnly", "  Visible offerer only", true,
+            "Requires the offerer to be a visible, out-of-combat party or raid member." },
         { "autoReleaseInBattleground", "Auto release in battlegrounds", false,
             "Automatically releases your spirit the moment you die in a battleground so you respawn without waiting. Arenas and world/dungeon deaths are left alone." },
         { "autoDeclineDuels", "Auto decline duels", false,
-            "Automatically declines every duel request instead of showing the popup." },
+            "Declines duel requests unless Shift is held when the request arrives." },
         { "autoAcceptGroupInvite", "Auto accept party invites", false,
             "Automatically accepts party/raid invitations. Use the option below to limit this to people you know." },
         { "autoAcceptInviteFriendsOnly", "  Only from friends/guild", true,
             "When accepting party invites, only accept them from friends or guildmates. Ignored while 'Auto accept party invites' is off." },
+        { "autoAcceptInviteWhileQueued", "  Accept while queued", false,
+            "Allows party auto-accept while a battleground or Dungeon Finder queue/proposal is active. Leave off to protect the queue." },
     }
     local rightFields = {
         { "skipCinematics", "Skip cinematics", false,
@@ -1533,7 +1541,12 @@ pageBuilders.Convenience = function(parent)
     local y = -104
     for i, field in ipairs(leftFields) do
         -- Indent the friends-only sub-toggle under its parent.
-        local x = (i == #leftFields) and 50 or 20
+        local nested = field[1] == "autoAcceptResurrectInstancesOnly"
+            or field[1] == "autoAcceptResurrectOutOfCombatOnly"
+            or field[1] == "autoAcceptResurrectVisibleOffererOnly"
+            or field[1] == "autoAcceptInviteFriendsOnly"
+            or field[1] == "autoAcceptInviteWhileQueued"
+        local x = nested and 50 or 20
         leftControls[field[1]] = ScalarSettingRow(parent, "core", AutoCoreConfig, field[1], field[2], x, y, field[3], field[4])
         y = y - rowSpacing
     end
@@ -1543,7 +1556,13 @@ pageBuilders.Convenience = function(parent)
         rightControls[field[1]] = ScalarSettingRow(parent, "core", AutoCoreConfig, field[1], field[2], x, y2, field[3], field[4])
         y2 = y2 - rowSpacing
     end
-    BindToggleDependency(leftControls.autoAcceptGroupInvite, leftControls.autoAcceptInviteFriendsOnly)
+    BindToggleDependency(leftControls.autoAcceptResurrect,
+        leftControls.autoAcceptResurrectInstancesOnly,
+        leftControls.autoAcceptResurrectOutOfCombatOnly,
+        leftControls.autoAcceptResurrectVisibleOffererOnly)
+    BindToggleDependency(leftControls.autoAcceptGroupInvite,
+        leftControls.autoAcceptInviteFriendsOnly,
+        leftControls.autoAcceptInviteWhileQueued)
     BindToggleDependency(rightControls.autoInviteOnWhisper, rightControls.autoInviteFriendsOnly)
 
     -- Keep the keyword visually nested with Auto Invite and its friends-only
@@ -1560,6 +1579,26 @@ pageBuilders.Convenience = function(parent)
     AddEditHint(keyEdit, "inv",
         "The whisper keyword that triggers an auto party invite. Matched as a case-insensitive substring, "
         .. "so \"inv\" also fires on \"invite\" or \"invite me warrior\".")
+
+    local summonMode = Core.GetSetting("core", "summonAcceptMode",
+        ResolvedDefault(AutoCoreConfig, "summonAcceptMode", "delayed"))
+    ChoiceButton(parent, "Summons", 390, -286, 310, {
+        { text = "Accept near expiration", value = "delayed" },
+        { text = "Accept immediately", value = "immediate" },
+    }, summonMode, function(value)
+        SetSettingWithoutRefresh("core", "summonAcceptMode", value)
+    end)
+    local summonSeconds = Core.GetSetting("core", "summonAcceptSeconds",
+        ResolvedDefault(AutoCoreConfig, "summonAcceptSeconds", 3))
+    ChoiceButton(parent, "Delayed at", 390, -330, 310, {
+        { text = "1 second remaining", value = 1 },
+        { text = "2 seconds remaining", value = 2 },
+        { text = "3 seconds remaining", value = 3 },
+        { text = "5 seconds remaining", value = 5 },
+        { text = "10 seconds remaining", value = 10 },
+    }, summonSeconds, function(value)
+        SetSettingWithoutRefresh("core", "summonAcceptSeconds", value)
+    end)
 end
 
 ----------------------------------------------------------------------
