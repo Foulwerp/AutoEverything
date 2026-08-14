@@ -1,0 +1,90 @@
+name: Create release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (for example, v1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Version must look like v1.0.0 or v1.0.0-beta.1." >&2
+            exit 1
+          fi
+          if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null; then
+            echo "Tag $VERSION already exists." >&2
+            exit 1
+          fi
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists." >&2
+            exit 1
+          fi
+
+      - name: Build bundled addon ZIP
+        run: |
+          set -euo pipefail
+          rm -rf stage dist
+          mkdir -p stage dist
+          git archive --format=tar --prefix=AutoEverything/ HEAD | tar -xf - -C stage
+          cp -R Packaging/AutoEverything_AuctionDB stage/AutoEverything_AuctionDB
+          (cd stage && zip -q -r ../dist/AutoEverything.zip AutoEverything AutoEverything_AuctionDB)
+
+      - name: Validate bundled addon ZIP
+        run: |
+          set -euo pipefail
+          archive=dist/AutoEverything.zip
+          unzip -t "$archive"
+          unzip -Z1 "$archive" | grep -qx 'AutoEverything/AutoEverything.toc'
+          unzip -Z1 "$archive" | grep -qx 'AutoEverything_AuctionDB/AutoEverything_AuctionDB.toc'
+          unzip -Z1 "$archive" | grep -qx 'AutoEverything_AuctionDB/Database.lua'
+
+          roots="$(unzip -Z1 "$archive" | cut -d/ -f1 | sort -u | paste -sd' ' -)"
+          if [[ "$roots" != 'AutoEverything AutoEverything_AuctionDB' ]]; then
+            echo "Unexpected top-level archive folders: $roots" >&2
+            exit 1
+          fi
+
+          if unzip -Z1 "$archive" | grep -E '(^|/)(\.git|\.github|\.pi|\.claude|Quest/tools|Packaging|dist)(/|$)|(^|/)(AGENTS\.md|\.gitignore|\.gitattributes)$'; then
+            echo 'Developer-only files entered the release archive.' >&2
+            exit 1
+          fi
+
+          while IFS= read -r file; do
+            file="${file//$'\r'/}"
+            file="${file//\\//}"
+            [[ -z "$file" || "$file" == \#* ]] && continue
+            unzip -Z1 "$archive" | grep -Fqx "AutoEverything/$file" || {
+              echo "Main TOC file is missing from the archive: $file" >&2
+              exit 1
+            }
+          done < AutoEverything.toc
+
+      - name: Publish GitHub release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$VERSION" dist/AutoEverything.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --generate-notes

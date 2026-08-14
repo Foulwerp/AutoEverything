@@ -1,0 +1,7 @@
+## Interface: 30300
+## Title: AutoEverything Auction Database
+## Notes: Dedicated account-wide market data storage for AutoEverything.
+## Author: Foulwerp
+## SavedVariables: AutoEverythingAuctionDB
+
+Database.lua
