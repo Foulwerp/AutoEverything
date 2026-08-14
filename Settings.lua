@@ -1674,18 +1674,27 @@ pageBuilders["Queues & PvP"] = function(parent)
         20, -356)
     help:SetWidth(660)
     help:SetTextColor(Unpack(TEXT_MUTED))
-    Label(parent, "Optional removable aura spell ID", 20, -394, 11)
     local auraID = Core.GetSetting("core", "dropAuraSpellID", ResolvedDefault(AutoCoreConfig, "dropAuraSpellID", 0))
-    local auraEdit = Edit(parent, 20, -416, 220, tostring(auraID or 0))
-    local function SaveAuraID(self)
-        local value = tonumber(strtrim(self:GetText() or "")) or 0
-        value = math.max(0, math.floor(value))
-        self:SetText(tostring(value))
-        SetSettingWithoutRefresh("core", "dropAuraSpellID", value)
+    local auraChoices = { { text = "No extra aura", value = 0 } }
+    local activeAuraIDs = {}
+    for index = 1, 40 do
+        local name, _, _, _, _, _, _, _, _, _, spellID = UnitBuff("player", index)
+        if not name then break end
+        if spellID and not activeAuraIDs[spellID] then
+            activeAuraIDs[spellID] = true
+            table.insert(auraChoices, { text = name .. " (" .. spellID .. ")", value = spellID })
+        end
     end
-    auraEdit:SetScript("OnEnterPressed", function(self) SaveAuraID(self); self:ClearFocus() end)
-    auraEdit:HookScript("OnEditFocusLost", SaveAuraID)
-    AddEditHint(auraEdit, "0", "The drop keybind always checks known battleground flags first, then removes this exact helpful aura by spell ID. 0 disables the extra aura.")
+    auraID = tonumber(auraID) or 0
+    if auraID > 0 and not activeAuraIDs[auraID] then
+        table.insert(auraChoices, { text = "Saved aura (" .. auraID .. ")", value = auraID })
+    end
+    local auraButton = ChoiceButton(parent, "Optional removable aura", 20, -400, 440,
+        auraChoices, auraID, function(value)
+            SetSettingWithoutRefresh("core", "dropAuraSpellID", value)
+        end)
+    AddTooltip(auraButton, "Optional removable aura",
+        "Choose one of your current helpful auras. The drop keybind always checks known battleground flags first, then removes this saved aura. Reopen this page to refresh the list.")
 end
 
 ----------------------------------------------------------------------
