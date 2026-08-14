@@ -247,14 +247,12 @@ function QuestMap.RebuildIndex()
                     local recordType = tonumber(record.type) or 1
                     local objective = ObjectiveForRecord(objectives, record)
                     local kind = RecordKind(record, objective)
-                    -- NPC item-source lists are scraped possibilities, not
-                    -- client-confirmed targets. Unlike a visible nameplate, a
-                    -- static map coordinate has no unit tooltip with which to
-                    -- verify the association, so omit these rather than place
-                    -- misleading loot pins. Direct game-object item sources
-                    -- remain eligible and display as interactions.
-                    local unverifiedNPCSource = recordType ~= 2 and record.item ~= nil
-                    if objective and kind and not objective.done and not unverifiedNPCSource then
+                    -- The quest database is keyed by the same quest ID exposed
+                    -- by the client. Its source requirements therefore become
+                    -- useful immediately while that exact quest and objective
+                    -- are active; tooltip confirmation remains a fallback for
+                    -- targets missing from the website relationship data.
+                    if objective and kind and not objective.done then
                         local progress = ExtractProgress(objective.text)
                         if recordType == 2 then
                             -- Game objects aren't cross-referenced like NPCs -
