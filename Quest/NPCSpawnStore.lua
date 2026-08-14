@@ -8,6 +8,7 @@ AutoQuest.NPCSpawnStore = AutoQuest.NPCSpawnStore or {}
 local Store = AutoQuest.NPCSpawnStore
 
 local decoded = {}
+local decodedQuestNPCs = {}
 
 local function Decode(packed)
     local locations = {}
@@ -52,6 +53,33 @@ function Store.Get(npcID)
     return type(AscensionNPCLocationDB) == "table" and AscensionNPCLocationDB[npcID] or nil
 end
 
+-- NPC pages expose an "Objective of" quest list. The generator stores the
+-- inverse relationship as a compact comma-separated NPC list per quest so an
+-- active quest can activate its known spawns without scanning the whole DB.
+function Store.GetObjectiveNPCs(questID)
+    questID = tonumber(questID)
+    if not questID then return nil end
+    if decodedQuestNPCs[questID] ~= nil then
+        return decodedQuestNPCs[questID] or nil
+    end
+
+    local packed = type(AutoQuest.QuestObjectiveNPCs) == "table"
+        and AutoQuest.QuestObjectiveNPCs[questID] or nil
+    if type(packed) ~= "string" or packed == "" then
+        decodedQuestNPCs[questID] = false
+        return nil
+    end
+
+    local result = {}
+    for value in string.gmatch(packed, "[^,]+") do
+        local npcID = tonumber(value)
+        if npcID and npcID > 0 then result[#result + 1] = npcID end
+    end
+    decodedQuestNPCs[questID] = result
+    return result
+end
+
 function Store.ClearCache()
     decoded = {}
+    decodedQuestNPCs = {}
 end

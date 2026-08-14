@@ -212,6 +212,46 @@ local function AddConfirmedLocations(objectives)
     end
 end
 
+-- An NPC page's "Objective of" relationship identifies the quest but not its
+-- objective slot. Prefer an unfinished monster objective, then a sole
+-- unfinished objective. Mixed ambiguous quests remain on the mapper/tooltip
+-- paths instead of receiving a guessed pin type.
+local function ObjectiveForQuestNPC(objectives)
+    local unfinished, monster = {}, nil
+    for _, objective in ipairs(objectives or {}) do
+        if not objective.done then
+            unfinished[#unfinished + 1] = objective
+            local objectiveType = string.lower(objective.kind or "")
+            if not monster and (objectiveType == "monster" or objectiveType == "player") then
+                monster = objective
+            end
+        end
+    end
+    if monster then return monster end
+    if #unfinished == 1 then return unfinished[1] end
+end
+
+local function AddQuestObjectiveNPCs(questID, questTitle, objectives, npcIDs)
+    local objective = ObjectiveForQuestNPC(objectives)
+    local kind = objective and RecordKind({}, objective)
+    if not objective or not kind then return end
+
+    local _, displayLabel = Resolver.Normalize(objective.text)
+    for _, npcID in ipairs(npcIDs or {}) do
+        local record = { id=npcID, name=displayLabel ~= "" and displayLabel or questTitle }
+        for _, location in ipairs(SpawnStore.Get(npcID) or {}) do
+            for _, coord in ipairs(location.coords or {}) do
+                if AddLocation(location.zoneID, location.zone, location.floor,
+                    record, coord, questID, questTitle, kind,
+                    ExtractProgress(objective.text))
+                then
+                    buildStats.points = buildStats.points + 1
+                end
+            end
+        end
+    end
+end
+
 function QuestMap.RebuildIndex()
     activeByZone = {}
     activePointKeys = {}
@@ -229,13 +269,17 @@ function QuestMap.RebuildIndex()
         -- a questID at all on 3.3.5). See AutoQuest.ResolveQuestEntries.
         local resolved = (title and not isHeader) and AutoQuest.ResolveQuestEntries(questID, title) or {}
         if title and not isHeader then buildStats.activeQuests = buildStats.activeQuests + 1 end
-        if title and not isHeader and #resolved > 0 and complete ~= 1 and complete ~= true then
-            buildStats.matchedQuests = buildStats.matchedQuests + 1
+        if title and not isHeader and complete ~= 1 and complete ~= true then
             local objectives = {}
             local count = GetNumQuestLeaderBoards(logIndex) or 0
             for objectiveIndex = 1, count do
                 local text, objectiveType, done = GetQuestLogLeaderBoard(objectiveIndex, logIndex)
                 objectives[#objectives + 1] = { text=text or "", kind=objectiveType, done=done and true or false }
+            end
+
+            local objectiveNPCs = SpawnStore.GetObjectiveNPCs(questID)
+            if #resolved > 0 or type(objectiveNPCs) == "table" then
+                buildStats.matchedQuests = buildStats.matchedQuests + 1
             end
 
             for _, match in ipairs(resolved) do
@@ -287,6 +331,7 @@ function QuestMap.RebuildIndex()
                     points = buildStats.points - matchPointsBefore,
                 }
             end
+            AddQuestObjectiveNPCs(tonumber(questID), title, objectives, objectiveNPCs)
         end
     end
     AddConfirmedLocations(resolverObjectives)

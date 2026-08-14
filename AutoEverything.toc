@@ -8,6 +8,7 @@
 Quest\AscensionQuestDB.lua
 Quest\QuestItemDB.lua
 Quest\NPCSpawnStore.lua
+Quest\NPCSpawnDB.xml
 Config.lua
 WeightTemplates.lua
 Core.lua
