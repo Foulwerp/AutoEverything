@@ -252,6 +252,47 @@ local function AddQuestObjectiveNPCs(questID, questTitle, objectives, npcIDs)
     end
 end
 
+local function ObjectiveForQuestItem(objectives, itemName)
+    local needle = Resolver.Normalize(itemName)
+    local itemObjectives = {}
+    for _, objective in ipairs(objectives or {}) do
+        if not objective.done and string.lower(objective.kind or "") == "item" then
+            itemObjectives[#itemObjectives + 1] = objective
+            local normalized = Resolver.Normalize(objective.text)
+            if needle ~= "" and string.find(normalized, needle, 1, true) then
+                return objective
+            end
+        end
+    end
+    if #itemObjectives == 1 then return itemObjectives[1] end
+end
+
+local function AddQuestItemNPCs(questID, questTitle, objectives, sources)
+    for _, source in ipairs(sources or {}) do
+        local objective = ObjectiveForQuestItem(objectives, source.itemName)
+        if objective then
+            local _, displayLabel = Resolver.Normalize(objective.text)
+            local itemName = source.itemName or displayLabel
+            for _, npcID in ipairs(source.npcIDs or {}) do
+                local record = {
+                    id=npcID, name="NPC " .. npcID,
+                    item=itemName ~= "" and itemName or nil,
+                }
+                for _, location in ipairs(SpawnStore.Get(npcID) or {}) do
+                    for _, coord in ipairs(location.coords or {}) do
+                        if AddLocation(location.zoneID, location.zone, location.floor,
+                            record, coord, questID, questTitle, "loot",
+                            ExtractProgress(objective.text))
+                        then
+                            buildStats.points = buildStats.points + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
 function QuestMap.RebuildIndex()
     activeByZone = {}
     activePointKeys = {}
@@ -278,7 +319,10 @@ function QuestMap.RebuildIndex()
             end
 
             local objectiveNPCs = SpawnStore.GetObjectiveNPCs(questID)
-            if #resolved > 0 or type(objectiveNPCs) == "table" then
+            local itemSources = SpawnStore.GetQuestItemSources(questID)
+            if #resolved > 0 or type(objectiveNPCs) == "table"
+                or type(itemSources) == "table"
+            then
                 buildStats.matchedQuests = buildStats.matchedQuests + 1
             end
 
@@ -332,6 +376,7 @@ function QuestMap.RebuildIndex()
                 }
             end
             AddQuestObjectiveNPCs(tonumber(questID), title, objectives, objectiveNPCs)
+            AddQuestItemNPCs(tonumber(questID), title, objectives, itemSources)
         end
     end
     AddConfirmedLocations(resolverObjectives)

@@ -9,6 +9,7 @@ local Store = AutoQuest.NPCSpawnStore
 
 local decoded = {}
 local decodedQuestNPCs = {}
+local decodedQuestItems = {}
 
 local function Decode(packed)
     local locations = {}
@@ -79,7 +80,47 @@ function Store.GetObjectiveNPCs(questID)
     return result
 end
 
+-- Required item pages expose both the quests that need the item and every NPC
+-- in their Dropped-by table. Keep item identity in the packed relationship so
+-- mixed-objective quests can match the correct live item objective.
+function Store.GetQuestItemSources(questID)
+    questID = tonumber(questID)
+    if not questID then return nil end
+    if decodedQuestItems[questID] ~= nil then
+        return decodedQuestItems[questID] or nil
+    end
+
+    local packed = type(AutoQuest.QuestItemNPCs) == "table"
+        and AutoQuest.QuestItemNPCs[questID] or nil
+    if type(packed) ~= "string" or packed == "" then
+        decodedQuestItems[questID] = false
+        return nil
+    end
+
+    local result = {}
+    for group in string.gmatch(packed, "[^|]+") do
+        local itemText, npcText = string.match(group, "^(%d+):(.*)$")
+        local itemID = tonumber(itemText)
+        if itemID then
+            local source = {
+                itemID = itemID,
+                itemName = type(AutoQuest.QuestItemNames) == "table"
+                    and AutoQuest.QuestItemNames[itemID] or nil,
+                npcIDs = {},
+            }
+            for value in string.gmatch(npcText or "", "[^,]+") do
+                local npcID = tonumber(value)
+                if npcID and npcID > 0 then source.npcIDs[#source.npcIDs + 1] = npcID end
+            end
+            if #source.npcIDs > 0 then result[#result + 1] = source end
+        end
+    end
+    decodedQuestItems[questID] = result
+    return result
+end
+
 function Store.ClearCache()
     decoded = {}
     decodedQuestNPCs = {}
+    decodedQuestItems = {}
 end
