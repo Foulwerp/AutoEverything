@@ -1663,13 +1663,15 @@ pageBuilders["Groups & Queues"] = function(parent)
         "Leave party when exiting", 408, -236, false,
         "After teleporting out of a completed dungeon, leaves the current party. Only applies to automatic dungeon departure.")
     local dungeonExitDelay = Core.GetSetting("core", "dungeonExitDelay",
-        ResolvedDefault(AutoCoreConfig, "dungeonExitDelay", 120))
+        ResolvedDefault(AutoCoreConfig, "dungeonExitDelay", 10))
+    local shortDungeonDelays = { [5] = true, [10] = true, [15] = true, [20] = true, [30] = true }
+    if not shortDungeonDelays[tonumber(dungeonExitDelay)] then dungeonExitDelay = 10 end
     local dungeonDelayButton = ChoiceButton(parent, "Departure timer", 378, -264, 310, {
+        { text = "5 seconds", value = 5 },
+        { text = "10 seconds", value = 10 },
+        { text = "15 seconds", value = 15 },
+        { text = "20 seconds", value = 20 },
         { text = "30 seconds", value = 30 },
-        { text = "1 minute", value = 60 },
-        { text = "2 minutes", value = 120 },
-        { text = "3 minutes", value = 180 },
-        { text = "5 minutes", value = 300 },
     }, dungeonExitDelay, function(value) SetSettingWithoutRefresh("core", "dungeonExitDelay", value) end)
     AddTooltip(dungeonDelayButton, "Dungeon departure timer",
         "Waits after completion before teleporting out. Cancel keeps you in the dungeon for the rest of that run so the group can continue.")
@@ -1677,13 +1679,14 @@ pageBuilders["Groups & Queues"] = function(parent)
         "Requeue after exiting", 408, -296, false,
         "After automatic dungeon departure and optional party leave, shows a second cancellable timer before rejoining the retained Dungeon Finder selection.")
     local dungeonRequeueDelay = Core.GetSetting("core", "dungeonRequeueDelay",
-        ResolvedDefault(AutoCoreConfig, "dungeonRequeueDelay", 30))
+        ResolvedDefault(AutoCoreConfig, "dungeonRequeueDelay", 10))
+    if not shortDungeonDelays[tonumber(dungeonRequeueDelay)] then dungeonRequeueDelay = 10 end
     local requeueDelayButton = ChoiceButton(parent, "Requeue timer", 378, -324, 310, {
+        { text = "5 seconds", value = 5 },
         { text = "10 seconds", value = 10 },
+        { text = "15 seconds", value = 15 },
+        { text = "20 seconds", value = 20 },
         { text = "30 seconds", value = 30 },
-        { text = "1 minute", value = 60 },
-        { text = "2 minutes", value = 120 },
-        { text = "5 minutes", value = 300 },
     }, dungeonRequeueDelay, function(value) SetSettingWithoutRefresh("core", "dungeonRequeueDelay", value) end)
     AddTooltip(requeueDelayButton, "Dungeon requeue timer",
         "Waits after leaving the dungeon before joining the same retained Dungeon Finder selection. Cancel skips this requeue.")

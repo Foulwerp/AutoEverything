@@ -60,7 +60,8 @@ cancelButton:SetScript("OnClick", function() StopCountdown(true) end)
 
 local function StartCountdown(title, verb, action, settingKey, defaultDelay, maxDelay, kind, cancelMessage)
     if countdown.active then return end
-    local delay = tonumber(Setting(settingKey, defaultDelay)) or defaultDelay
+    local delay = defaultDelay
+    if settingKey then delay = tonumber(Setting(settingKey, defaultDelay)) or defaultDelay end
     if delay < 1 then delay = 1 elseif delay > maxDelay then delay = maxDelay end
     countdown.active = true
     countdown.endsAt = GetTime() + delay
@@ -84,6 +85,15 @@ local function StartCountdown(title, verb, action, settingKey, defaultDelay, max
             if actionToRun then actionToRun() end
         end
     end)
+end
+
+-- Dungeon follow-up decisions should be quick. Values from older profiles
+-- used minute-scale timers; normalize those to the new default instead of
+-- preserving an unexpectedly long wait or exposing a hidden legacy option.
+local SHORT_DUNGEON_DELAYS = { [5] = true, [10] = true, [15] = true, [20] = true, [30] = true }
+local function ShortDungeonDelay(settingKey)
+    local delay = tonumber(Setting(settingKey, 10))
+    return SHORT_DUNGEON_DELAYS[delay] and delay or 10
 end
 
 ----------------------------------------------------------------------
@@ -150,7 +160,7 @@ local function MaybeStartDungeonRequeue()
         elseif AutoCore and AutoCore.Warn then
             AutoCore.Warn("Activity", "Dungeon Finder requeue is unavailable on this client.")
         end
-    end, "dungeonRequeueDelay", 30, 300, "dungeonRequeue",
+    end, nil, ShortDungeonDelay("dungeonRequeueDelay"), 30, "dungeonRequeue",
         "Automatic dungeon requeue cancelled.")
 end
 
@@ -210,7 +220,7 @@ eventFrame:SetScript("OnEvent", function(_, event, message)
                         dungeonPartyLeaveRequested = false
                         LFGTeleport(true)
                     end
-                end, "dungeonExitDelay", 120, 300, "dungeonDeparture",
+                end, nil, ShortDungeonDelay("dungeonExitDelay"), 30, "dungeonDeparture",
                     "Automatic dungeon departure cancelled for this run.")
             end
         end
