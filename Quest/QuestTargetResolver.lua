@@ -130,7 +130,7 @@ function Resolver.GetConfirmations(objectiveKey)
     return SavedTargets()[objectiveKey]
 end
 
-function Resolver.Confirm(objectiveKey, npcID, kind)
+function Resolver.Confirm(objectiveKey, npcID, kind, npcName)
     local objective = activeByKey[objectiveKey]
     npcID = tonumber(npcID)
     if not objective or not npcID or npcID <= 0 then return false end
@@ -150,8 +150,19 @@ function Resolver.Confirm(objectiveKey, npcID, kind)
     if type(confirmation.npcIDs) ~= "table" then
         confirmation.npcIDs = {}
     end
-    if confirmation.npcIDs[npcID] then return false end
-    confirmation.npcIDs[npcID] = true
+    local changed = false
+    if not confirmation.npcIDs[npcID] then
+        confirmation.npcIDs[npcID] = true
+        changed = true
+    end
+    if type(npcName) == "string" and npcName ~= "" then
+        if type(confirmation.npcNames) ~= "table" then confirmation.npcNames = {} end
+        if confirmation.npcNames[npcID] ~= npcName then
+            confirmation.npcNames[npcID] = npcName
+            changed = true
+        end
+    end
+    if not changed then return false end
     if AutoQuest.Markers and AutoQuest.Markers.RequestRefresh then
         AutoQuest.Markers.RequestRefresh()
     end
@@ -209,7 +220,8 @@ function Resolver.MatchTooltip(unit)
             immediate[#immediate + 1] = result
             if #matches == 1 and npcID and kind ~= "neutral" then
                 promotable = matches[1]
-                local added = Resolver.Confirm(promotable.key, npcID, kind)
+                local npcName = type(UnitName) == "function" and UnitName(unit) or nil
+                local added = Resolver.Confirm(promotable.key, npcID, kind, npcName)
                 local confirmation = Resolver.GetConfirmations(promotable.key)
                 result.promoted = added or (
                     confirmation

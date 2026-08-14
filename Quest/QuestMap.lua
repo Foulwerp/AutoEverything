@@ -6,6 +6,7 @@
 AutoQuest = AutoQuest or {}
 AutoQuest.Map = AutoQuest.Map or {}
 local QuestMap = AutoQuest.Map
+local Resolver = AutoQuest.ObjectiveResolver
 
 local activeByZone = {}
 local activePointKeys = {}
@@ -164,11 +165,62 @@ local function AddLocation(zoneID, zoneName, floor, record, coord, questID, ques
     return true
 end
 
+local function ConfirmedMapKind(kind)
+    if kind == "kill" or kind == "loot" then return kind end
+    if kind == "interact" then return "object" end
+end
+
+-- A unique live tooltip match is stronger evidence than a scraped item-source
+-- association. Once the resolver has confirmed the objective/NPC pair, use
+-- that NPC's known spawn list even when the quest page itself has no points.
+local function AddConfirmedLocations(objectives)
+    if type(AscensionNPCLocationDB) ~= "table" then return end
+    for _, objective in ipairs(objectives or {}) do
+        local confirmation = Resolver.GetConfirmations(objective.key)
+        local kind = confirmation and ConfirmedMapKind(confirmation.kind)
+        if kind and type(confirmation.npcIDs) == "table" then
+            local objectiveAdded = false
+            for rawNPCID in pairs(confirmation.npcIDs) do
+                local npcID = tonumber(rawNPCID)
+                local locations = npcID and AscensionNPCLocationDB[npcID]
+                if type(locations) == "table" then
+                    local npcName = type(confirmation.npcNames) == "table"
+                        and confirmation.npcNames[rawNPCID] or nil
+                    local record = {
+                        id = npcID,
+                        name = npcName or objective.displayLabel,
+                        item = kind == "loot" and objective.displayLabel or nil,
+                    }
+                    for _, location in ipairs(locations) do
+                        for _, coord in ipairs(location.coords or {}) do
+                            if AddLocation(
+                                location.zoneID, location.zone, location.floor,
+                                record, coord, objective.questID, objective.questTitle,
+                                kind, ExtractProgress(objective.rawLabel)
+                            ) then
+                                buildStats.points = buildStats.points + 1
+                                objectiveAdded = true
+                            end
+                        end
+                    end
+                end
+            end
+            if objectiveAdded then
+                buildStats.confirmedObjectives = buildStats.confirmedObjectives + 1
+            end
+        end
+    end
+end
+
 function QuestMap.RebuildIndex()
     activeByZone = {}
     activePointKeys = {}
-    buildStats = { activeQuests=0, matchedQuests=0, points=0, matches={} }
-    if not Enabled() or type(AscensionQuestLocationDB) ~= "table" then return end
+    buildStats = {
+        activeQuests=0, matchedQuests=0, confirmedObjectives=0,
+        points=0, matches={}
+    }
+    if not Enabled() then return end
+    local resolverObjectives = Resolver.BuildActive()
 
     local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
     for logIndex = 1, entries do
@@ -239,6 +291,7 @@ function QuestMap.RebuildIndex()
             end
         end
     end
+    AddConfirmedLocations(resolverObjectives)
 end
 
 -- Every exposed spawn coordinate gets its own pin. Records are merged only
@@ -602,6 +655,10 @@ function QuestMap.SetEnabled(enabled)
     AutoCore.Info("Quest", "Quest map pins " .. (enabled and "enabled." or "disabled."))
 end
 
+function QuestMap.RequestRefresh()
+    refreshPending, refreshAt = true, 0
+end
+
 function QuestMap.IsEnabled() return Enabled() end
 
 function QuestMap.Debug()
@@ -613,6 +670,7 @@ function QuestMap.Debug()
     print("|cff33ccffQuest Pins|r")
     print("  enabled=" .. tostring(Enabled()) .. " dbLoaded=" .. tostring(type(AscensionQuestLocationDB) == "table"))
     print("  activeQuests=" .. buildStats.activeQuests .. " matchedInDB=" .. buildStats.matchedQuests
+        .. " confirmedObjectives=" .. buildStats.confirmedObjectives
         .. " indexedPoints=" .. buildStats.points)
     for _, match in ipairs(buildStats.matches or {}) do
         print("    matched: " .. tostring(match.title) .. " (id " .. tostring(match.id) .. ") -> "
