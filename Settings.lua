@@ -335,7 +335,7 @@ local function PageHeader(parent, title, description)
         intro:SetWidth(680)
         intro:SetJustifyH("LEFT")
         intro:SetTextColor(Unpack(TEXT_MUTED))
-        ApplyUIFont(intro, 11)
+        ApplyUIFont(intro, 12)
         return intro
     end
 end
@@ -446,6 +446,10 @@ local function Check(parent, text, x, y, checked, callback)
     local toggle = Track(CreateFrame("Button", nil, parent))
     toggle:SetSize(TOGGLE_WIDTH, TOGGLE_HEIGHT)
     toggle:SetPoint("TOPLEFT", x, y)
+    -- Preserve the compact visual while providing a forgiving click target.
+    -- SetHitRectInsets is available on the Wrath button widget and does not
+    -- affect layout, so dense two-column pages keep their alignment.
+    if toggle.SetHitRectInsets then toggle:SetHitRectInsets(-5, -5, -5, -5) end
     toggle.checked = (checked == true)
     toggle.available = true
     toggle.onChanged = nil
@@ -1064,9 +1068,7 @@ end
 -- A calm landing page: every module exposes its current state, a useful
 -- one-line summary, and a direct route to its detailed configuration.
 pageBuilders.Overview = function(parent)
-    Label(parent, "Overview", 20, -20, 20)
-    local intro = Label(parent, "Your automation at a glance. Changes are saved immediately to the active profile.", 20, -50)
-    intro:SetTextColor(Unpack(TEXT_MUTED))
+    PageHeader(parent, "Overview", "Your automation at a glance. Changes are saved immediately to the active profile.")
 
     local modules = {
         { "Loot", "loot", AutoLootConfig, "Loot only items matched by your items-to-loot rules.", "Loot Rules", "rules" },
@@ -1083,7 +1085,7 @@ pageBuilders.Overview = function(parent)
     local X = { 20, 370 }
     local Y = { -82, -208, -334, -460 }
     local activeCount = 0
-    local stateLabels = {}
+    local stateButtons = {}
     for index, item in ipairs(modules) do
         -- Copy loop values into per-card locals. Older Lua clients reuse the
         -- generic-for control variable, which would otherwise make every
@@ -1109,14 +1111,23 @@ pageBuilders.Overview = function(parent)
         title:SetPoint("TOPLEFT", 16, -14)
         title:SetText("Auto" .. moduleLabel)
         title:SetTextColor(Unpack(TEXT))
+        ApplyUIFont(title, 15)
 
         local enabled = Core.GetSetting(moduleName, "enabled", ResolvedDefault(moduleConfig, "enabled", true))
         if enabled then activeCount = activeCount + 1 end
-        local state = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        state:SetPoint("TOPRIGHT", -16, -18)
-        state:SetText(enabled and "ACTIVE" or "PAUSED")
-        state:SetTextColor(Unpack(enabled and BRAND or TEXT_MUTED))
-        stateLabels[moduleName] = state
+        local state = SkinnedButton(card, enabled and "Active" or "Paused", 240, -10, 74, function()
+            local isEnabled = Core.GetSetting(moduleName, "enabled", ResolvedDefault(moduleConfig, "enabled", true)) ~= false
+            SetSettingWithoutRefresh(moduleName, "enabled", not isEnabled)
+            if overviewRefresh then overviewRefresh() end
+            local navButton = navButtons[modulePage]
+            if navButton then navButton:Paint() end
+            UpdateGlobalAutomationStatus()
+        end, 24)
+        stateButtons[moduleName] = state
+        state:HookScript("OnLeave", function()
+            if overviewRefresh then overviewRefresh() end
+        end)
+        AddTooltip(state, "Toggle Auto" .. moduleLabel, "Enable or pause this module for the active profile.")
 
         local description = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         description:SetPoint("TOPLEFT", 16, -39)
@@ -1124,6 +1135,7 @@ pageBuilders.Overview = function(parent)
         description:SetJustifyH("LEFT")
         description:SetText(moduleDescription)
         description:SetTextColor(Unpack(TEXT_MUTED))
+        ApplyUIFont(description, 11)
 
         local detailValue
         if moduleName == "loot" then
@@ -1159,6 +1171,7 @@ pageBuilders.Overview = function(parent)
             rules:SetPoint("BOTTOMLEFT", 16, 34)
             rules:SetText(count .. (count == 1 and " configured rule" or " configured rules"))
             rules:SetTextColor(Unpack(TEXT_MUTED))
+            ApplyUIFont(rules, 10)
         end
 
         local configure = Button(card, "Configure  >", 202, -84, 112, function()
@@ -1178,15 +1191,24 @@ pageBuilders.Overview = function(parent)
         for _, item in ipairs(modules) do
             local enabled = Core.GetSetting(item[2], "enabled", ResolvedDefault(item[3], "enabled", true)) ~= false
             if enabled then active = active + 1 end
-            local state = stateLabels[item[2]]
+            local state = stateButtons[item[2]]
             if state then
-                state:SetText(enabled and "ACTIVE" or "PAUSED")
-                state:SetTextColor(Unpack(enabled and BRAND or TEXT_MUTED))
+                state:SetText(enabled and "Active" or "Paused")
+                local stateText = state.GetFontString and state:GetFontString()
+                if stateText then stateText:SetTextColor(Unpack(enabled and BRAND or TEXT_MUTED)) end
+                if enabled then
+                    state:SetBackdropColor(BRAND[1] * 0.14, BRAND[2] * 0.14, BRAND[3] * 0.14, 1)
+                    state:SetBackdropBorderColor(Unpack(BRAND))
+                else
+                    state:SetBackdropColor(Unpack(CTRL_BG))
+                    state:SetBackdropBorderColor(Unpack(BORDER))
+                end
             end
         end
         moduleSummary:SetText(active .. " of " .. #modules .. " modules active")
         moduleSummary:SetTextColor(Unpack(active == #modules and BRAND or TEXT))
     end
+    overviewRefresh()
     local upgradeSection = Core.GetProfileSection("upgrade", false) or {}
     local hasWeight = false
     for _, value in pairs(upgradeSection.weights or {}) do
@@ -4320,7 +4342,7 @@ local function CreateMainFrame()
     subtitle:SetPoint("TOPLEFT", titleText, "BOTTOMLEFT", 1, -2)
     subtitle:SetText("AUTOMATION CONTROL CENTER")
     subtitle:SetTextColor(Unpack(TEXT_MUTED))
-    ApplyUIFont(subtitle, 9)
+    ApplyUIFont(subtitle, 10)
 
     saveStatus = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     saveStatus:SetPoint("LEFT", titleText, "RIGHT", 12, 0)
@@ -4359,7 +4381,7 @@ local function CreateMainFrame()
     globalStatus = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     globalStatus:SetWidth(92)
     globalStatus:SetJustifyH("RIGHT")
-    ApplyUIFont(globalStatus, 9)
+    ApplyUIFont(globalStatus, 10)
     globalToggle = SkinnedButton(frame, "Pause all", 0, 0, 92, function()
         local moduleDefaults = {
             loot = AutoLootConfig, junk = AutoJunkConfig, sell = AutoSellConfig,
@@ -4457,6 +4479,7 @@ local function CreateMainFrame()
             moduleToggle = CreateFrame("Button", nil, button)
             moduleToggle:SetSize(24, 12)
             moduleToggle:SetPoint("RIGHT", button, "RIGHT", -10, 0)
+            if moduleToggle.SetHitRectInsets then moduleToggle:SetHitRectInsets(-5, -5, -7, -7) end
             moduleToggle:SetFrameLevel((button:GetFrameLevel() or 0) + 3)
             local toggleTrack = Capsule(moduleToggle, "ARTWORK", 12)
             toggleTrack:AnchorTo(moduleToggle)
@@ -4529,7 +4552,7 @@ local function CreateMainFrame()
         local heading = nav:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
         heading:SetPoint("TOPLEFT", 14, y)
         heading:SetText(text)
-        ApplyUIFont(heading, 10)
+        ApplyUIFont(heading, 11)
         heading:SetTextColor(Unpack(TEXT_MUTED))
         return y - 18
     end
