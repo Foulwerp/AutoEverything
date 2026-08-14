@@ -16,6 +16,12 @@ AutoCoreConfig = {
     summonAcceptMode = "delayed",
     summonAcceptSeconds = 3,
     autoSelectSingleGossip = true,
+    autoGossipVendor = false,
+    autoGossipTrainer = false,
+    autoGossipTaxi = false,
+    autoGossipBanker = false,
+    autoGossipBattlemaster = false,
+    autoGossipInnkeeper = false,
     cameraDistanceMax = 50,
     setCameraDistance = true,
     showLoginSummary = true,
@@ -83,6 +89,7 @@ AutoLootConfig = {
 
 -- AutoSell: sells matching items at a merchant.
 AutoSellConfig = {
+    activationMode = "automatic",  -- automatic, shift, or manual button
     enabled = false,
     learnVanity = false,
     maxQuality = 0,

@@ -596,6 +596,45 @@ end
 ----------------------------------------------------------------------
 -- Event handling
 ----------------------------------------------------------------------
+local function GetActivationMode()
+    return AutoCore.GetSetting("sell", "activationMode", (AutoSellConfig or {}).activationMode or "automatic")
+end
+
+local function RunConfiguredMerchantActions()
+    local activeCfg = GetActiveConfig()
+    if not (AS.db.enabled and activeCfg and activeCfg.enabled) then return end
+    AS.ScanAndSell(false, function()
+        if MerchantFrame and MerchantFrame:IsShown() then AS.RepairItems() end
+    end)
+end
+
+local merchantActionButton
+if MerchantFrame then
+    merchantActionButton = CreateFrame("Button", nil, MerchantFrame, "UIPanelButtonTemplate")
+    merchantActionButton:SetSize(110, 22)
+    merchantActionButton:SetPoint("BOTTOMRIGHT", MerchantFrame, "BOTTOMRIGHT", -34, 28)
+    merchantActionButton:SetText("Sell & Repair")
+    merchantActionButton:SetScript("OnClick", RunConfiguredMerchantActions)
+    merchantActionButton:Hide()
+end
+
+local shiftWasDown = false
+eventFrame:SetScript("OnUpdate", function()
+    local shown = MerchantFrame and MerchantFrame:IsShown()
+    local mode = GetActivationMode()
+    if merchantActionButton then
+        if shown and mode == "manual" and AS.db.enabled then merchantActionButton:Show()
+        else merchantActionButton:Hide() end
+    end
+    if not shown or mode ~= "shift" or not AS.db.enabled then
+        shiftWasDown = false
+        return
+    end
+    local shiftDown = IsShiftKeyDown and IsShiftKeyDown()
+    if shiftDown and not shiftWasDown then RunConfiguredMerchantActions() end
+    shiftWasDown = shiftDown == true
+end)
+
 eventFrame:RegisterEvent("MERCHANT_SHOW")
 eventFrame:RegisterEvent("MERCHANT_UPDATE")
 eventFrame:RegisterEvent("MERCHANT_CLOSED")
@@ -619,14 +658,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             sellState.lastUpdateAt = GetTime()
         end
     elseif event == "MERCHANT_SHOW" then
-        local activeCfg = GetActiveConfig()
-        if AS.db.enabled and activeCfg and activeCfg.enabled then
-            -- Sell matching items first, then repair only after the verified
-            -- queue has finished so sale proceeds are available.
-            AS.ScanAndSell(false, function()
-                if MerchantFrame and MerchantFrame:IsShown() then AS.RepairItems() end
-            end)
-        end
+        if GetActivationMode() == "automatic" then RunConfiguredMerchantActions() end
     elseif event == "MERCHANT_CLOSED" then
         if sellState then FinishSellQueue(true) end
     end

@@ -81,11 +81,21 @@ local function SelectOnlySafeGossipOption()
     end
 
     local options = { GetGossipOptions() }
-    -- GetGossipOptions returns text/type pairs. Only select one generic dialog
-    -- option; service types can spend money, travel, queue, or open other UIs.
-    if #options == 2 and options[2] == "gossip" then
-        SelectGossipOption(1)
-    end
+    -- GetGossipOptions returns text/type pairs. Only act when there is exactly
+    -- one choice; typed services remain individually opt-in.
+    if #options ~= 2 then return end
+    local optionType = options[2]
+    local settingByType = {
+        gossip = "autoSelectSingleGossip",
+        vendor = "autoGossipVendor",
+        trainer = "autoGossipTrainer",
+        taxi = "autoGossipTaxi",
+        banker = "autoGossipBanker",
+        battlemaster = "autoGossipBattlemaster",
+        binder = "autoGossipInnkeeper",
+    }
+    local setting = settingByType[optionType]
+    if setting and ConfigEnabled(setting) then SelectGossipOption(1) end
 end
 
 local function NormalizePlayerName(name)
@@ -193,7 +203,7 @@ dialogFrame:SetScript("OnEvent", function(_, event, arg1)
         end
     elseif event == "CONFIRM_SUMMON" then
         ScheduleSummonAcceptance()
-    elseif event == "GOSSIP_SHOW" and ConfigEnabled("autoSelectSingleGossip") then
+    elseif event == "GOSSIP_SHOW" then
         SelectOnlySafeGossipOption()
     elseif event == "RESURRECT_REQUEST" and ConfigEnabled("autoAcceptResurrect") and CanAutoAcceptResurrect() then
         if AcceptResurrect then AcceptResurrect() end

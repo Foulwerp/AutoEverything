@@ -1498,6 +1498,7 @@ end
 pageBuilders.Convenience = function(parent)
     SectionCard(parent, 12, -68, 340, 320)
     SectionCard(parent, 370, -68, 342, 320)
+    SectionCard(parent, 12, -400, 700, 170)
     PageHeader(parent, "Convenience", "Optional quality-of-life automation. Potentially disruptive actions remain off by default.")
     Label(parent, "Group and Safety", 20, -76, 13)
     Label(parent, "World and Social", 390, -76, 13)
@@ -1599,6 +1600,25 @@ pageBuilders.Convenience = function(parent)
     }, summonSeconds, function(value)
         SetSettingWithoutRefresh("core", "summonAcceptSeconds", value)
     end)
+
+    Label(parent, "Single-option NPC services", 20, -410, 13)
+    local gossipFields = {
+        { "autoGossipVendor", "Open vendor", 20, -440,
+            "Selects a sole Vendor option. It does not buy or sell anything by itself." },
+        { "autoGossipTrainer", "Open trainer", 20, -468,
+            "Selects a sole Trainer option. Trainer purchases still follow their separate setting." },
+        { "autoGossipTaxi", "Open flight map", 20, -496,
+            "Selects a sole Flight Master option. It does not choose or purchase a flight." },
+        { "autoGossipBanker", "Open bank", 370, -440,
+            "Selects a sole Banker option." },
+        { "autoGossipBattlemaster", "Open battleground list", 370, -468,
+            "Selects a sole Battlemaster option. It does not queue for a battleground." },
+        { "autoGossipInnkeeper", "Open bind confirmation", 370, -496,
+            "Selects a sole Innkeeper bind option but never confirms changing your home location." },
+    }
+    for _, field in ipairs(gossipFields) do
+        ScalarSettingRow(parent, "core", AutoCoreConfig, field[1], field[2], field[3], field[4], false, field[5])
+    end
 end
 
 ----------------------------------------------------------------------
@@ -3674,6 +3694,18 @@ local function RulePage(spec)
         local section = Core.GetProfileSection(spec.moduleName, true)
         if spec.moduleName == "sell" then
             if not spec.safety then
+                local activationMode = Core.GetSetting("sell", "activationMode",
+                    ResolvedDefault(AutoSellConfig, "activationMode", "automatic"))
+                local activationButton = ChoiceButton(parent, "Activation", 248, -48, 222, {
+                    { text = "When merchant opens", value = "automatic" },
+                    { text = "Press Shift while open", value = "shift" },
+                    { text = "Merchant window button", value = "manual" },
+                }, activationMode, function(value)
+                    section.activationMode = value
+                    NotifyWithoutRefresh("sell")
+                end)
+                AddTooltip(activationButton, "Merchant activation",
+                    "Automatic runs on opening. Shift mode starts a full verified sell-and-repair run when Shift is pressed at any time while the merchant remains open. Manual adds a Sell & Repair button to the merchant window.")
                 ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 20, -86, true,
                     "Prints a chat message when AutoSell sells matching items.")
                 ScalarCheck(parent, "sell", AutoSellConfig, "learnVanity", "Learn vanity items", 190, -86, true,
