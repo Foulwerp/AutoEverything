@@ -223,8 +223,8 @@ end
 -- AscensionQuestLocationDB (Quest/QuestDatabase.lua) is keyed by questID.
 -- Some database entries share a title across difficulties/phases (e.g. the
 -- three "Spirit Wars: Reclaiming Auchindoun" tiers), so questID is preferred
--- whenever the client provides one; title is only used as a fallback since
--- 3.3.5's quest log doesn't always report a questID.
+-- whenever the client provides one; title is a database compatibility lookup
+-- for 3.3.5 quest-log entries that do not report a questID.
 ----------------------------------------------------------------------
 local questEntriesByTitle = nil
 

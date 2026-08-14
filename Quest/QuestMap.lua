@@ -318,11 +318,31 @@ function QuestMap.RebuildIndex()
                 objectives[#objectives + 1] = { text=text or "", kind=objectiveType, done=done and true or false }
             end
 
-            local objectiveNPCs = SpawnStore.GetObjectiveNPCs(questID)
-            local itemSources = SpawnStore.GetQuestItemSources(questID)
-            if #resolved > 0 or type(objectiveNPCs) == "table"
-                or type(itemSources) == "table"
-            then
+            -- Relationship tables are keyed by database quest ID. The client
+            -- may omit that ID, so query the exact ID first and then any IDs
+            -- resolved from the database title index.
+            local relationshipData, relationshipIDs = {}, {}
+            local function AddRelationshipID(value)
+                value = tonumber(value)
+                if not value or relationshipIDs[value] then return end
+                relationshipIDs[value] = true
+                relationshipData[#relationshipData + 1] = {
+                    questID = value,
+                    npcIDs = SpawnStore.GetObjectiveNPCs(value),
+                    itemSources = SpawnStore.GetQuestItemSources(value),
+                }
+            end
+            AddRelationshipID(questID)
+            for _, match in ipairs(resolved) do AddRelationshipID(match.id) end
+
+            local hasRelationshipData = false
+            for _, data in ipairs(relationshipData) do
+                if type(data.npcIDs) == "table" or type(data.itemSources) == "table" then
+                    hasRelationshipData = true
+                    break
+                end
+            end
+            if #resolved > 0 or hasRelationshipData then
                 buildStats.matchedQuests = buildStats.matchedQuests + 1
             end
 
@@ -338,8 +358,8 @@ function QuestMap.RebuildIndex()
                     -- The quest database is keyed by the same quest ID exposed
                     -- by the client. Its source requirements therefore become
                     -- useful immediately while that exact quest and objective
-                    -- are active; tooltip confirmation remains a fallback for
-                    -- targets missing from the website relationship data.
+                    -- are active; live tooltip evidence is processed only
+                    -- after all database relationships have been considered.
                     if objective and kind and not objective.done then
                         local progress = ExtractProgress(objective.text)
                         if recordType == 2 then
@@ -375,8 +395,10 @@ function QuestMap.RebuildIndex()
                     points = buildStats.points - matchPointsBefore,
                 }
             end
-            AddQuestObjectiveNPCs(tonumber(questID), title, objectives, objectiveNPCs)
-            AddQuestItemNPCs(tonumber(questID), title, objectives, itemSources)
+            for _, data in ipairs(relationshipData) do
+                AddQuestObjectiveNPCs(data.questID, title, objectives, data.npcIDs)
+                AddQuestItemNPCs(data.questID, title, objectives, data.itemSources)
+            end
         end
     end
     AddConfirmedLocations(resolverObjectives)

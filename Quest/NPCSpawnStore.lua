@@ -1,7 +1,7 @@
 ----------------------------------------------------------------------
 -- NPCSpawnStore.lua
 -- =================
--- Lazy access to packed NPC coordinates with fresh quest-page fallback data.
+-- Lazy access to the consolidated packed NPC coordinate database.
 ----------------------------------------------------------------------
 AutoQuest = AutoQuest or {}
 AutoQuest.NPCSpawnStore = AutoQuest.NPCSpawnStore or {}
@@ -51,7 +51,7 @@ function Store.Get(npcID)
         if not decoded[npcID] then decoded[npcID] = Decode(packed) end
         return decoded[npcID]
     end
-    return type(AscensionNPCLocationDB) == "table" and AscensionNPCLocationDB[npcID] or nil
+    return nil
 end
 
 -- NPC pages expose an "Objective of" quest list. The generator stores the

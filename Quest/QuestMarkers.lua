@@ -14,7 +14,7 @@ local activeByNPC, activeByName = {}, {}
 -- [guid] = match table or false ("scanned, no match"). Cleared on every
 -- RebuildIndex so a live rescan only happens when the quest log actually
 -- changes, not on every 0.25s visible-nameplate refresh tick.
-local fallbackMatchCache = {}
+local liveMatchCache = {}
 local visibleUnits = {}
 local refreshPending, refreshAt = false, 0
 
@@ -179,7 +179,7 @@ end
 
 function Markers.RebuildIndex()
     activeByNPC, activeByName = {}, {}
-    fallbackMatchCache = {}
+    liveMatchCache = {}
     if not Enabled() then return end
     Resolver.BuildActive()
 
@@ -218,25 +218,37 @@ function Markers.RebuildIndex()
         -- record is absent or incomplete. Merge both relationship types by
         -- NPC ID so a mixed objective can display both kill and loot badges.
         if title and not isHeader and complete ~= 1 and complete ~= true and SpawnStore then
-            local objectiveNPCs = SpawnStore.GetObjectiveNPCs(questID)
+            local relationshipQuestIDs, seenQuestIDs = {}, {}
+            local function AddRelationshipQuestID(value)
+                value = tonumber(value)
+                if value and not seenQuestIDs[value] then
+                    seenQuestIDs[value] = true
+                    relationshipQuestIDs[#relationshipQuestIDs + 1] = value
+                end
+            end
+            AddRelationshipQuestID(questID)
+            for _, match in ipairs(resolved) do AddRelationshipQuestID(match.id) end
+
             local npcObjective = ObjectiveForQuestNPC(objectives)
             local npcDone, npcRemaining = ParseProgress(npcObjective)
             local npcKind = RecordKind({}, npcObjective)
-            if npcObjective and npcKind and not npcDone then
-                for _, npcID in ipairs(objectiveNPCs or {}) do
-                    AddMatch(activeByNPC, tonumber(npcID), npcKind, title, nil, npcRemaining)
+            for _, relationshipQuestID in ipairs(relationshipQuestIDs) do
+                if npcObjective and npcKind and not npcDone then
+                    for _, npcID in ipairs(SpawnStore.GetObjectiveNPCs(relationshipQuestID) or {}) do
+                        AddMatch(activeByNPC, tonumber(npcID), npcKind, title, nil, npcRemaining)
+                    end
                 end
-            end
 
-            for _, source in ipairs(SpawnStore.GetQuestItemSources(questID) or {}) do
-                local itemObjective = ObjectiveForQuestItem(objectives, source.itemName)
-                local itemDone, itemRemaining = ParseProgress(itemObjective)
-                if itemObjective and not itemDone then
-                    for _, npcID in ipairs(source.npcIDs or {}) do
-                        AddMatch(
-                            activeByNPC, tonumber(npcID), "loot", title,
-                            source.itemName, itemRemaining
-                        )
+                for _, source in ipairs(SpawnStore.GetQuestItemSources(relationshipQuestID) or {}) do
+                    local itemObjective = ObjectiveForQuestItem(objectives, source.itemName)
+                    local itemDone, itemRemaining = ParseProgress(itemObjective)
+                    if itemObjective and not itemDone then
+                        for _, npcID in ipairs(source.npcIDs or {}) do
+                            AddMatch(
+                                activeByNPC, tonumber(npcID), "loot", title,
+                                source.itemName, itemRemaining
+                            )
+                        end
                     end
                 end
             end
@@ -246,8 +258,9 @@ function Markers.RebuildIndex()
 end
 
 ----------------------------------------------------------------------
--- The shared resolver scans live unit tooltips against exact active objective
--- labels. It also persists a unique objective/NPC confirmation for map use;
+-- After database matching, the shared resolver scans live unit tooltips only
+-- when an unmatched unit or loot/interact verification needs live evidence.
+-- It also persists a unique objective/NPC confirmation for map use;
 -- ambiguous duplicate labels remain immediate nameplate evidence only.
 ----------------------------------------------------------------------
 -- Returns remaining count and whether it was a percentage (e.g. an escort
@@ -300,12 +313,13 @@ local function MatchUnit(unit)
         match = name and activeByName[string.lower(name)]
     end
     local guid = UnitGUID(unit)
-    local cached = guid and fallbackMatchCache[guid]
-    if cached == nil then
+    local needsLiveEvidence = not match or match.loot or match.talk
+    local cached = needsLiveEvidence and guid and liveMatchCache[guid] or nil
+    if needsLiveEvidence and cached == nil then
         cached = ScanUnitForQuestMatch(unit) or false
-        if guid then fallbackMatchCache[guid] = cached end
+        if guid then liveMatchCache[guid] = cached end
     end
-    local tooltipMatch = cached or nil
+    local tooltipMatch = needsLiveEvidence and cached or nil
 
     if match then
         -- Scraped loot-source and interaction associations can be broader than
@@ -364,7 +378,7 @@ local function GetMarker(plate)
     marker.kill = NewBadge(marker, "Interface\\AddOns\\AutoEverything\\Media\\Icons\\QuestSkull.tga", 30)
     marker.loot = NewBadge(marker, "Interface\\AddOns\\AutoEverything\\Media\\Icons\\QuestLootBag.tga", 30)
     -- "Speak with" objectives, using Blizzard's own chat bubble artwork.
-    -- Comes only from the live tooltip-scan fallback, never the database.
+    -- Comes only from live tooltip evidence, never an inferred database kind.
     marker.talk = NewBadge(marker, "Interface\\WorldMap\\ChatBubble_64.PNG", 30)
     marker:Hide()
 
@@ -493,7 +507,7 @@ function Markers.Debug()
         local name = UnitName(unit)
         if npcID and activeByNPC[npcID] == match then source = "database (npcID)"
         elseif name and activeByName[string.lower(name)] == match then source = "database (name)"
-        else source = "live tooltip scan (fallback)" end
+        else source = "live tooltip evidence" end
     end
     print("  unit=" .. unit .. " name=" .. tostring(UnitName(unit))
         .. " player=" .. tostring(UnitIsPlayer(unit)))
