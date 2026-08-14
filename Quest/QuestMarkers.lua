@@ -8,6 +8,7 @@ AutoQuest = AutoQuest or {}
 AutoQuest.Markers = AutoQuest.Markers or {}
 local Markers = AutoQuest.Markers
 local Resolver = AutoQuest.ObjectiveResolver
+local SpawnStore = AutoQuest.NPCSpawnStore
 
 local activeByNPC, activeByName = {}, {}
 -- [guid] = match table or false ("scanned, no match"). Cleared on every
@@ -125,6 +126,39 @@ local function ObjectiveStatus(objectives, record)
     return done, remaining, objective
 end
 
+-- NPC-page relationships identify the quest but not its objective slot. Match
+-- them to the same safe live objective selection used by map pins: prefer an
+-- unfinished monster objective, or accept the only unfinished objective.
+local function ObjectiveForQuestNPC(objectives)
+    local unfinished, monster = {}, nil
+    for _, objective in ipairs(objectives or {}) do
+        if not objective.done then
+            unfinished[#unfinished + 1] = objective
+            local objectiveType = string.lower(objective.kind or "")
+            if not monster and (objectiveType == "monster" or objectiveType == "player") then
+                monster = objective
+            end
+        end
+    end
+    if monster then return monster end
+    if #unfinished == 1 then return unfinished[1] end
+end
+
+local function ObjectiveForQuestItem(objectives, itemName)
+    local needle = Resolver.Normalize(itemName)
+    local itemObjectives = {}
+    for _, objective in ipairs(objectives or {}) do
+        if not objective.done and string.lower(objective.kind or "") == "item" then
+            itemObjectives[#itemObjectives + 1] = objective
+            local normalized = Resolver.Normalize(objective.text)
+            if needle ~= "" and string.find(normalized, needle, 1, true) then
+                return objective
+            end
+        end
+    end
+    if #itemObjectives == 1 then return itemObjectives[1] end
+end
+
 local function AddMatch(index, key, kind, questTitle, itemName, remaining)
     if key == nil or key == "" then return end
     local match = index[key]
@@ -174,6 +208,35 @@ function Markers.RebuildIndex()
                     if objective and kind and not done then
                         AddMatch(activeByNPC, tonumber(record.id), kind, title, record.item, remaining)
                         AddMatch(activeByName, string.lower(record.name or ""), kind, title, record.item, remaining)
+                    end
+                end
+            end
+        end
+
+        -- The crawl also discovers targets through NPC "Objective of" and
+        -- item "Dropped by" relationships. These cover quests whose Mapper
+        -- record is absent or incomplete. Merge both relationship types by
+        -- NPC ID so a mixed objective can display both kill and loot badges.
+        if title and not isHeader and complete ~= 1 and complete ~= true and SpawnStore then
+            local objectiveNPCs = SpawnStore.GetObjectiveNPCs(questID)
+            local npcObjective = ObjectiveForQuestNPC(objectives)
+            local npcDone, npcRemaining = ParseProgress(npcObjective)
+            local npcKind = RecordKind({}, npcObjective)
+            if npcObjective and npcKind and not npcDone then
+                for _, npcID in ipairs(objectiveNPCs or {}) do
+                    AddMatch(activeByNPC, tonumber(npcID), npcKind, title, nil, npcRemaining)
+                end
+            end
+
+            for _, source in ipairs(SpawnStore.GetQuestItemSources(questID) or {}) do
+                local itemObjective = ObjectiveForQuestItem(objectives, source.itemName)
+                local itemDone, itemRemaining = ParseProgress(itemObjective)
+                if itemObjective and not itemDone then
+                    for _, npcID in ipairs(source.npcIDs or {}) do
+                        AddMatch(
+                            activeByNPC, tonumber(npcID), "loot", title,
+                            source.itemName, itemRemaining
+                        )
                     end
                 end
             end
