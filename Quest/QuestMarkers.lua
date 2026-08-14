@@ -313,7 +313,7 @@ local function MatchUnit(unit)
         match = name and activeByName[string.lower(name)]
     end
     local guid = UnitGUID(unit)
-    local needsLiveEvidence = not match or match.loot or match.talk
+    local needsLiveEvidence = not match or match.talk
     local cached = needsLiveEvidence and guid and liveMatchCache[guid] or nil
     if needsLiveEvidence and cached == nil then
         cached = ScanUnitForQuestMatch(unit) or false
@@ -322,16 +322,17 @@ local function MatchUnit(unit)
     local tooltipMatch = needsLiveEvidence and cached or nil
 
     if match then
-        -- Scraped loot-source and interaction associations can be broader than
-        -- the live server's actual targets. Require the unit's own quest
-        -- tooltip to confirm those badges. Kill requirements remain safe to
-        -- resolve by exact NPC id/name from the active quest record.
+        -- Active quest records and item-source relationships identify exact
+        -- kill/loot NPCs, matching the evidence already used by map pins.
+        -- Interaction associations remain broader and still require the
+        -- unit's live quest tooltip to confirm them.
         match = {
             kill = match.kill,
-            loot = match.loot and tooltipMatch and tooltipMatch.loot or false,
+            loot = match.loot,
             talk = match.talk and tooltipMatch and tooltipMatch.talk or false,
             killRemaining = match.killRemaining,
-            lootRemaining = tooltipMatch and tooltipMatch.lootRemaining,
+            lootRemaining = match.lootRemaining
+                or (tooltipMatch and tooltipMatch.lootRemaining),
             quests = match.quests, items = match.items,
         }
         if not match.kill and not match.loot and not match.talk then match = nil end
