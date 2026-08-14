@@ -16,6 +16,7 @@ AutoCoreConfig = {
     autoAcceptBattlegroundPop = false,
     autoLeaveCompletedBattleground = false,
     autoExitCompletedDungeon = false,
+    dungeonExitDelay = 120,
     activityLeaveDelay = 3,
     trackEnemyFlagCarrier = true,
     dropAuraSpellID = 0,

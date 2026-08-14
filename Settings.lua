@@ -1646,6 +1646,17 @@ pageBuilders["Queues & PvP"] = function(parent)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoExitCompletedDungeon",
         "Exit completed dungeon", 20, -224, false,
         "After the Dungeon Finder completion reward, shows a countdown with Cancel before teleporting out. It does not leave the party.")
+    local dungeonExitDelay = Core.GetSetting("core", "dungeonExitDelay",
+        ResolvedDefault(AutoCoreConfig, "dungeonExitDelay", 120))
+    local dungeonDelayButton = ChoiceButton(parent, "Departure timer", 20, -252, 310, {
+        { text = "30 seconds", value = 30 },
+        { text = "1 minute", value = 60 },
+        { text = "2 minutes", value = 120 },
+        { text = "3 minutes", value = 180 },
+        { text = "5 minutes", value = 300 },
+    }, dungeonExitDelay, function(value) SetSettingWithoutRefresh("core", "dungeonExitDelay", value) end)
+    AddTooltip(dungeonDelayButton, "Dungeon departure timer",
+        "Waits after completion before teleporting out. Cancel keeps you in the dungeon for the rest of that run so the group can continue.")
 
     Label(parent, "Battleground", 378, -84, 13)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptBattlegroundPop",
@@ -1668,7 +1679,7 @@ pageBuilders["Queues & PvP"] = function(parent)
         { text = "30 seconds", value = 30 },
     }, leaveDelay, function(value) SetSettingWithoutRefresh("core", "activityLeaveDelay", value) end)
     AddTooltip(delayButton, "Cancellable departure timer",
-        "The visible countdown used by completed battleground and Dungeon Finder departure. Cancel suppresses departure for that run.")
+        "The visible countdown used after a battleground reports a winner. Cancel suppresses departure for that run.")
 
     Label(parent, "Battleground keybind utilities", 20, -326, 13)
     local help = Label(parent,

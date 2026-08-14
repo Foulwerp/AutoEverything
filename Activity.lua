@@ -55,10 +55,10 @@ end
 
 cancelButton:SetScript("OnClick", function() StopCountdown(true) end)
 
-local function StartCountdown(title, verb, action)
+local function StartCountdown(title, verb, action, settingKey, defaultDelay, maxDelay)
     if countdown.active then return end
-    local delay = tonumber(Setting("activityLeaveDelay", 3)) or 3
-    if delay < 1 then delay = 1 elseif delay > 30 then delay = 30 end
+    local delay = tonumber(Setting(settingKey, defaultDelay)) or defaultDelay
+    if delay < 1 then delay = 1 elseif delay > maxDelay then delay = maxDelay end
     countdown.active = true
     countdown.endsAt = GetTime() + delay
     countdown.action = action
@@ -96,6 +96,7 @@ eventFrame:RegisterEvent("CHAT_MSG_BG_SYSTEM_NEUTRAL")
 
 local acceptedBattlefield = {}
 local battlegroundCompletionHandled = false
+local dungeonCompletionHandled = false
 local battlefieldPollElapsed = 0
 
 local function ScanBattlefieldQueues()
@@ -126,7 +127,7 @@ local function CheckBattlegroundCompletion()
     StartCountdown("Battleground Complete", "Leaving battleground", function()
         local stillInside, currentType = IsInInstance()
         if stillInside and currentType == "pvp" and LeaveBattlefield then LeaveBattlefield() end
-    end)
+    end, "activityLeaveDelay", 3, 30)
 end
 
 eventFrame:SetScript("OnUpdate", function(_, elapsed)
@@ -137,15 +138,19 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
 end)
 
 eventFrame:SetScript("OnEvent", function(_, event, message)
-    if event == "LFG_PROPOSAL_SHOW" and Setting("autoAcceptLFGProposal", false) then
-        if AcceptProposal then AcceptProposal() end
-    elseif event == "LFG_COMPLETION_REWARD" and Setting("autoExitCompletedDungeon", false) then
-        local inInstance, instanceType = IsInInstance()
-        if inInstance and instanceType == "party" then
-            StartCountdown("Dungeon Complete", "Leaving dungeon", function()
-                local stillInside, currentType = IsInInstance()
-                if stillInside and currentType == "party" and LFGTeleport then LFGTeleport() end
-            end)
+    if event == "LFG_PROPOSAL_SHOW" then
+        dungeonCompletionHandled = false
+        if Setting("autoAcceptLFGProposal", false) and AcceptProposal then AcceptProposal() end
+    elseif event == "LFG_COMPLETION_REWARD" then
+        if not dungeonCompletionHandled and Setting("autoExitCompletedDungeon", false) then
+            local inInstance, instanceType = IsInInstance()
+            if inInstance and instanceType == "party" then
+                dungeonCompletionHandled = true
+                StartCountdown("Dungeon Complete", "Leaving dungeon", function()
+                    local stillInside, currentType = IsInInstance()
+                    if stillInside and currentType == "party" and LFGTeleport then LFGTeleport(true) end
+                end, "dungeonExitDelay", 120, 300)
+            end
         end
     elseif event == "UPDATE_BATTLEFIELD_STATUS" then
         ScanBattlefieldQueues()
@@ -154,6 +159,8 @@ eventFrame:SetScript("OnEvent", function(_, event, message)
         CheckBattlegroundCompletion()
     elseif event == "PLAYER_ENTERING_WORLD" then
         if countdown.active then StopCountdown(false) end
+        local inInstance, instanceType = IsInInstance()
+        if not inInstance or instanceType ~= "party" then dungeonCompletionHandled = false end
         ScanBattlefieldQueues()
         CheckBattlegroundCompletion()
     else
