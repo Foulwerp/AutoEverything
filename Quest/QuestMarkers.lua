@@ -14,11 +14,6 @@ local activeByNPC, activeByName = {}, {}
 -- alongside activeByNPC/activeByName; feeds the live tooltip-scan fallback
 -- below with ground-truth classification instead of keyword guessing.
 local objectiveTextIndex = {}
--- Runtime-only confirmations keyed by normalized live objective text, then NPC
--- id. These are deliberately not SavedVariables: the bundled Ascension data
--- supplies locations; the tooltip merely selects which database NPC record is
--- authoritative for the currently active objective.
-local confirmedTargets = {}
 -- [guid] = match table or false ("scanned, no match"). Cleared on every
 -- RebuildIndex so a live rescan only happens when the quest log actually
 -- changes, not on every 0.25s visible-nameplate refresh tick.
@@ -152,28 +147,6 @@ local function RecordKind(record, objective)
     return nil
 end
 
-local function ConfirmTarget(unit, text, kind)
-    local npcID = NPCIDFromGUID and NPCIDFromGUID(UnitGUID(unit))
-    local label = ObjectiveLabel(text)
-    if not npcID or label == "" or not kind then return end
-
-    local target = confirmedTargets[label]
-    if not target then
-        target = { kind = kind, npcs = {} }
-        confirmedTargets[label] = target
-    elseif target.kind ~= kind then
-        -- Conflicting live classifications are not safe enough for map pins.
-        target.kind = nil
-        return
-    end
-    if target.npcs[npcID] then return end
-
-    target.npcs[npcID] = true
-    if AutoQuest.Map and AutoQuest.Map.RequestRefresh then
-        AutoQuest.Map.RequestRefresh()
-    end
-end
-
 -- Tie every scraped record to a live objective before it can create a badge.
 local function ObjectiveForRecord(objectives, record)
     local needle = string.lower(record.item or record.name or "")
@@ -267,17 +240,6 @@ function Markers.RebuildIndex()
         end
     end
 
-    -- Completion, abandonment, and objective replacement all remove the live
-    -- label from this index. Drop its session confirmation immediately.
-    for label, target in pairs(confirmedTargets) do
-        local objective = objectiveTextIndex[label]
-        if not objective or objective.done or objective.kind == ""
-            or (target.kind == "kill" and objective.kind ~= "monster" and objective.kind ~= "player")
-            or (target.kind == "loot" and objective.kind ~= "item")
-        then
-            confirmedTargets[label] = nil
-        end
-    end
 end
 
 ----------------------------------------------------------------------
@@ -334,7 +296,6 @@ local function ScanUnitForQuestMatch(unit)
                 -- Interaction objectives may be plain flags with no count.
                 match = EnsureMatch(match)
                 match.talk = true
-                ConfirmTarget(unit, text, "talk")
             elseif objective and not objective.done
                 and (objectiveKind == "monster" or objectiveKind == "player" or objectiveKind == "item")
             then
@@ -352,7 +313,6 @@ local function ScanUnitForQuestMatch(unit)
                     if kind == "kill" or kind == "loot" then
                         match = EnsureMatch(match)
                         match[kind] = true
-                        ConfirmTarget(unit, text, kind)
                         local countKey = kind .. "Remaining"
                         match[countKey] = math.max(match[countKey] or 0, remaining)
                     end
@@ -398,12 +358,6 @@ local function MatchUnit(unit)
     return match, npcID
 end
 
-
-function Markers.IsTargetConfirmed(npcID, objectiveText, kind)
-    local target = confirmedTargets[ObjectiveLabel(objectiveText)]
-    return target and target.kind == kind
-        and target.npcs[tonumber(npcID)] == true or false
-end
 
 ----------------------------------------------------------------------
 -- Independent marker frames

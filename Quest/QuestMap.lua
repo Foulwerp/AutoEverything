@@ -195,14 +195,13 @@ function QuestMap.RebuildIndex()
                     local recordType = tonumber(record.type) or 1
                     local objective = ObjectiveForRecord(objectives, record)
                     local kind = RecordKind(record, objective)
-                    -- NPC item-source lists are scraped possibilities. Once a
-                    -- live unit tooltip confirms the NPC id for this active
-                    -- objective, use every spawn for that id from the bundled
-                    -- Ascension database. Direct game-object sources need no
-                    -- such confirmation and display as interactions.
+                    -- NPC item-source lists are scraped possibilities, not
+                    -- client-confirmed targets. Unlike a visible nameplate, a
+                    -- static map coordinate has no unit tooltip with which to
+                    -- verify the association, so omit these rather than place
+                    -- misleading loot pins. Direct game-object item sources
+                    -- remain eligible and display as interactions.
                     local unverifiedNPCSource = recordType ~= 2 and record.item ~= nil
-                        and not (AutoQuest.Markers and AutoQuest.Markers.IsTargetConfirmed
-                            and AutoQuest.Markers.IsTargetConfirmed(record.id, objective and objective.text, kind))
                     if objective and kind and not objective.done and not unverifiedNPCSource then
                         local progress = ExtractProgress(objective.text)
                         if recordType == 2 then
@@ -601,10 +600,6 @@ function QuestMap.SetEnabled(enabled)
     UpdatePlayerLocation()
     QuestMap.UpdateMinimap()
     AutoCore.Info("Quest", "Quest map pins " .. (enabled and "enabled." or "disabled."))
-end
-
-function QuestMap.RequestRefresh()
-    refreshPending, refreshAt = true, 0
 end
 
 function QuestMap.IsEnabled() return Enabled() end
