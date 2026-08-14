@@ -34,6 +34,12 @@ roleCheckFrame:RegisterEvent("LFG_ROLE_CHECK_SHOW")
 
 roleCheckFrame:SetScript("OnEvent", function(self, event)
     if event == "LFG_ROLE_CHECK_SHOW" and ConfigEnabled("autoAcceptLFGRoleCheck") and CompleteLFGRoleCheck then
+        local role = AutoCore and AutoCore.GetSetting
+            and AutoCore.GetSetting("core", "lfgAutoRole", coreConfig.lfgAutoRole)
+            or coreConfig.lfgAutoRole
+        if role and role ~= "current" and SetLFGRoles then
+            SetLFGRoles(false, role == "tank", role == "healer", role == "damage")
+        end
         CompleteLFGRoleCheck(true)
     end
 end)

@@ -1462,8 +1462,6 @@ pageBuilders.General = function(parent)
     local fields = {
         { "showLoginSummary", "Show login summary",
             "Prints one combined status line for all modules when you log in." },
-        { "autoAcceptLFGRoleCheck", "Auto accept role checks",
-            "Automatically confirms the Dungeon Finder role-check popup instead of requiring a manual click." },
         { "autoAcceptReadyCheck", "Auto accept ready checks",
             "Automatically confirms a raid/party ready check instead of requiring a manual click." },
         { "autoConfirmSummon", "Auto accept summons",
@@ -1619,6 +1617,75 @@ pageBuilders.Convenience = function(parent)
     for _, field in ipairs(gossipFields) do
         ScalarSettingRow(parent, "core", AutoCoreConfig, field[1], field[2], field[3], field[4], false, field[5])
     end
+end
+
+pageBuilders["Queues & PvP"] = function(parent)
+    PageHeader(parent, "Queues & PvP", "Opt-in queue handling, cancellable departures, and battleground keybind helpers.")
+    SectionCard(parent, 12, -76, 340, 230)
+    SectionCard(parent, 370, -76, 342, 230)
+    SectionCard(parent, 12, -318, 700, 190)
+
+    Label(parent, "Dungeon Finder", 20, -84, 13)
+    local roleCheck = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptLFGRoleCheck",
+        "Accept role check", 20, -116, false,
+        "Chooses the role below and confirms the Dungeon Finder role check.")
+    local role = Core.GetSetting("core", "lfgAutoRole", ResolvedDefault(AutoCoreConfig, "lfgAutoRole", "current"))
+    local roleButton = ChoiceButton(parent, "Role", 20, -148, 310, {
+        { text = "Keep current selection", value = "current" },
+        { text = "Tank", value = "tank" },
+        { text = "Healer", value = "healer" },
+        { text = "Damage", value = "damage" },
+    }, role, function(value) SetSettingWithoutRefresh("core", "lfgAutoRole", value) end)
+    AddTooltip(roleButton, "Role-check selection",
+        "Keep current selection confirms the roles already checked in Dungeon Finder. A named role replaces them before confirmation.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptLFGProposal",
+        "Accept dungeon queue pop", 20, -196, false,
+        "Accepts the Dungeon Finder proposal when a group is ready.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoExitCompletedDungeon",
+        "Exit completed dungeon", 20, -224, false,
+        "After the Dungeon Finder completion reward, shows a countdown with Cancel before teleporting out. It does not leave the party.")
+
+    Label(parent, "Battleground", 378, -84, 13)
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptBattlegroundPop",
+        "Accept queue pop", 378, -116, false,
+        "Accepts a confirmed battleground queue slot immediately.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoLeaveCompletedBattleground",
+        "Leave after completion", 378, -144, false,
+        "After the battlefield reports a winner, shows a countdown with Cancel before leaving.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "trackEnemyFlagCarrier",
+        "Track enemy flag carrier", 378, -172, true,
+        "Tracks the enemy carrying your faction's flag from battleground system messages for the target keybind.")
+
+    local leaveDelay = Core.GetSetting("core", "activityLeaveDelay",
+        ResolvedDefault(AutoCoreConfig, "activityLeaveDelay", 3))
+    local delayButton = ChoiceButton(parent, "Departure timer", 378, -204, 310, {
+        { text = "3 seconds", value = 3 },
+        { text = "5 seconds", value = 5 },
+        { text = "10 seconds", value = 10 },
+        { text = "15 seconds", value = 15 },
+        { text = "30 seconds", value = 30 },
+    }, leaveDelay, function(value) SetSettingWithoutRefresh("core", "activityLeaveDelay", value) end)
+    AddTooltip(delayButton, "Cancellable departure timer",
+        "The visible countdown used by completed battleground and Dungeon Finder departure. Cancel suppresses departure for that run.")
+
+    Label(parent, "Battleground keybind utilities", 20, -326, 13)
+    local help = Label(parent,
+        "Bind Target Enemy Flag Carrier and Drop Flag or Selected Aura in the game's Key Bindings menu under Automation Utilities.",
+        20, -356)
+    help:SetWidth(660)
+    help:SetTextColor(Unpack(TEXT_MUTED))
+    Label(parent, "Optional removable aura spell ID", 20, -394, 11)
+    local auraID = Core.GetSetting("core", "dropAuraSpellID", ResolvedDefault(AutoCoreConfig, "dropAuraSpellID", 0))
+    local auraEdit = Edit(parent, 20, -416, 220, tostring(auraID or 0))
+    local function SaveAuraID(self)
+        local value = tonumber(strtrim(self:GetText() or "")) or 0
+        value = math.max(0, math.floor(value))
+        self:SetText(tostring(value))
+        SetSettingWithoutRefresh("core", "dropAuraSpellID", value)
+    end
+    auraEdit:SetScript("OnEnterPressed", function(self) SaveAuraID(self); self:ClearFocus() end)
+    auraEdit:HookScript("OnEditFocusLost", SaveAuraID)
+    AddEditHint(auraEdit, "0", "The drop keybind always checks known battleground flags first, then removes this exact helpful aura by spell ID. 0 disables the extra aura.")
 end
 
 ----------------------------------------------------------------------
@@ -4443,7 +4510,7 @@ local function CreateMainFrame()
     y = y - 40
 
     y = NavHeading("AUTOMATION", y)
-    for _, pageName in ipairs({ "General", "Convenience" }) do
+    for _, pageName in ipairs({ "General", "Convenience", "Queues & PvP" }) do
         CreateNavButton(pageName, "TOPLEFT", 12, y)
         y = y - 28
     end

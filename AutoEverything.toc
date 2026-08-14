@@ -28,5 +28,7 @@ Quest\QuestMarkers.lua
 Quest\QuestMap.lua
 AutoUpgrade.lua
 AutoLoot.lua
+Activity.lua
+Bindings.xml
 MinimapButton.lua
 Settings.lua

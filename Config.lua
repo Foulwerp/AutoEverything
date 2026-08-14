@@ -11,6 +11,14 @@
 -- General: convenience automation handled by Core.
 AutoCoreConfig = {
     autoAcceptLFGRoleCheck = false,
+    lfgAutoRole = "current",             -- current, tank, healer, or damage
+    autoAcceptLFGProposal = false,
+    autoAcceptBattlegroundPop = false,
+    autoLeaveCompletedBattleground = false,
+    autoExitCompletedDungeon = false,
+    activityLeaveDelay = 3,
+    trackEnemyFlagCarrier = true,
+    dropAuraSpellID = 0,
     autoAcceptReadyCheck = false,
     autoConfirmSummon = false,
     summonAcceptMode = "delayed",

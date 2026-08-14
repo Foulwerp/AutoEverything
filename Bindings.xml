@@ -1,0 +1,8 @@
+<Bindings>
+    <Binding name="AUTOMATION_TARGET_ENEMY_FLAG" header="AUTOMATION_UTILITIES">
+        AutoActivity.TargetEnemyFlagCarrier()
+    </Binding>
+    <Binding name="AUTOMATION_DROP_FLAG_AURA">
+        AutoActivity.DropFlagOrSelectedAura()
+    </Binding>
+</Bindings>
