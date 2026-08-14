@@ -1,0 +1,38 @@
+# Local coding-agent and repository metadata (at any depth)
+**/.git/
+**/.pi/
+**/.claude/
+**/.codex/
+**/.cursor/
+**/.windsurf/
+
+# Local quest development tools
+Quest/tools/
+
+# Local release and utility files
+/package-release.ps1
+/Random useful commands.txt
+
+# Keep documentation local except for the repository's main README
+*.md
+!/README.md
+
+# Generated release packages
+dist/
+
+# Build and backup archives
+*.zip
+*.7z
+*.rar
+
+# Generated caches and downloaded research pages
+__pycache__/
+*.py[cod]
+*.html
+*.htm
+
+# Editor and OS clutter
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

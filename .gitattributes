@@ -1,0 +1,13 @@
+# Files useful in the source repository but not in an installed addon.
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/.claude export-ignore
+/.pi export-ignore
+/AGENTS.md export-ignore
+/Quest/tools export-ignore
+"/Random useful commands.txt" export-ignore
+/package-release.ps1 export-ignore
+/dist export-ignore
+
+# Source artwork; the client uses the TGA version.
+/Textures/AutoEverythingIcon.png export-ignore

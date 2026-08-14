@@ -1,0 +1,29 @@
+## Interface: 30300
+## Title: AutoEverything
+## Notes: An all-in-one automation addon that automatically manages junk, sells items, rolls on loot, accepts/completes quests, and equips upgrades based on configurable filters and priority lists.
+## Author: Foulwerp
+## SavedVariables: AutoEverythingDB
+## SavedVariablesPerCharacter: AutoEverythingCharDB
+
+Quest\AscensionQuestDB.lua
+Quest\QuestItemDB.lua
+Config.lua
+WeightTemplates.lua
+Core.lua
+PlayerItemLevel.lua
+UI\Theme.lua
+ActionBarEffects.lua
+AutoActionBars.lua
+AutoBuff.lua
+AutoJunk.lua
+AutoSell.lua
+AutoRoll.lua
+AuctionHouse.lua
+Quest\AutoQuest.lua
+Quest\GroupSync.lua
+Quest\QuestMarkers.lua
+Quest\QuestMap.lua
+AutoUpgrade.lua
+AutoLoot.lua
+MinimapButton.lua
+Settings.lua
