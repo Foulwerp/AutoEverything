@@ -54,11 +54,6 @@ end
 
 local function NPCIDFromGUID(guid)
     if type(guid) ~= "string" then return nil end
-    if type(GetCreatureIDFromGUID) == "function" then
-        local ok, value = pcall(GetCreatureIDFromGUID, guid)
-        value = ok and tonumber(value) or nil
-        if value and value > 0 then return value end
-    end
 
     local fields = {}
     for field in string.gmatch(guid, "[^-]+") do fields[#fields + 1] = field end
@@ -69,6 +64,15 @@ local function NPCIDFromGUID(guid)
 
     if string.sub(guid, 1, 2) == "0x" and string.len(guid) >= 12 then
         local value = tonumber(string.sub(guid, 7, 12), 16)
+        if value and value > 0 then return value end
+    end
+
+    -- Ascension's helper can truncate legacy GUID creature IDs (for example,
+    -- 0x336 / 822 may be reported as 82). Use it only for an unknown GUID
+    -- format after the stable client encodings above have been exhausted.
+    if type(GetCreatureIDFromGUID) == "function" then
+        local ok, value = pcall(GetCreatureIDFromGUID, guid)
+        value = ok and tonumber(value) or nil
         if value and value > 0 then return value end
     end
 end
