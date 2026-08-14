@@ -981,7 +981,7 @@ end
 -- call Refresh() and reuse the cached page. A nil module means a profile-wide
 -- change, while a named module only retires pages that display that section.
 local modulePages = {
-    core = { "Overview", "General", "Convenience" },
+    core = { "Overview", "General", "Convenience", "Groups & Queues" },
     junk = { "Overview", "Junk Rules" },
     loot = { "Overview", "Loot Rules" },
     sell = { "Overview", "Sell Rules", "Never Sell" },
@@ -1453,125 +1453,89 @@ end
 -- Scalar settings pages
 ----------------------------------------------------------------------
 pageBuilders.General = function(parent)
-    SectionCard(parent, 12, -68, 700, 400)
-    PageHeader(parent, "General", "Shared behavior, interface preferences, and automation defaults.")
-    Label(parent, "Interaction", 20, -76, 13)
-    -- Verbose diagnostics are deliberately not a toggle here: it is a
-    -- troubleshooting switch, not a preference. /ae verbose turns it on.
-    local y = -104
-    local fields = {
-        { "showLoginSummary", "Show login summary",
-            "Prints one combined status line for all modules when you log in." },
-        { "autoAcceptReadyCheck", "Auto accept ready checks",
-            "Automatically confirms a raid/party ready check instead of requiring a manual click." },
-        { "autoConfirmSummon", "Auto accept summons",
-            "Accepts a warlock/meeting-stone summon using the timing selected on the Convenience page." },
-        { "autoSelectSingleGossip", "Auto gossip",
-            "When an NPC's gossip window offers only one non-quest, non-service option, automatically selects it instead of requiring a manual click." },
-        { "showMinimapButton", "Show minimap button",
-            "Shows the automation icon on the minimap for quick access to status and toggles." },
-        { "setCameraDistance", "Set camera zoom",
-            "Raises the maximum camera zoom-out distance to the value below, past the game's normal default limit." },
-    }
-    for _, field in ipairs(fields) do
-        ScalarSettingRow(parent, "core", AutoCoreConfig, field[1], field[2], 20, y, false, field[3])
-        y = y - 28
-    end
-    ScalarSettingRow(parent, "core", AutoCoreConfig, "showPlayerItemLevel", "Show player item level",
-        390, -104, true,
-        "Adds the average equipped item level to player hover tooltips. Nearby players are inspected automatically when the client allows it; recent results are cached briefly.")
-    ScalarSlider(parent, "core", AutoCoreConfig, "cameraDistanceMax", nil, 20, y, 50, 10, 50,
-        "Sets the maximum camera zoom distance. Changes apply immediately while the camera-zoom option above is enabled.",
-        "Camera Zoom", 680)
+    PageHeader(parent, "General", "Interface preferences and shared display behavior.")
+    SectionCard(parent, 12, -76, 700, 220)
+    SectionCard(parent, 12, -308, 700, 120)
 
-    Label(parent, "ElvUI Action Bar Cooldowns", 20, -354, 13)
+    Label(parent, "Interface", 20, -84, 13)
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "showLoginSummary", "Show login summary",
+        20, -116, true,
+        "Prints one combined status line for all modules when you log in.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "showMinimapButton", "Show minimap button",
+        20, -144, true,
+        "Shows the automation icon on the minimap for quick access to status and toggles.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "showSessionInTooltip", "Show session stats on minimap",
+        20, -172, true,
+        "Shows this session's gold, items sold, junk deleted, and repair costs on the minimap button tooltip.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "showPlayerItemLevel", "Show player item level",
+        20, -200, true,
+        "Adds the average equipped item level to player hover tooltips. Nearby players are inspected automatically when the client allows it; recent results are cached briefly.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "setCameraDistance", "Set camera zoom",
+        390, -116, true,
+        "Raises the maximum camera zoom-out distance to the value below, past the game's normal default limit.")
+    ScalarSlider(parent, "core", AutoCoreConfig, "cameraDistanceMax", nil, 390, -152, 50, 10, 50,
+        "Sets the maximum camera zoom distance. Changes apply immediately while the camera-zoom option above is enabled.",
+        "Camera Zoom", 310)
+
+    -- Verbose diagnostics remain a slash-command troubleshooting switch,
+    -- rather than a persistent interface preference.
+    Label(parent, "ElvUI Action Bar Cooldowns", 20, -316, 13)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "disableActionBarSwipe", "Disable cooldown swipe",
-        20, -382, false,
+        20, -352, false,
         "Hides the dark radial cooldown sweep on ElvUI action buttons. ElvUI's cooldown numbers remain visible.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "disableActionBarBling", "Disable cooldown bling",
-        20, -410, false,
+        390, -352, false,
         "Suppresses the blue-white shine animation when an ElvUI action-button cooldown finishes.")
 end
 
 pageBuilders.Convenience = function(parent)
-    SectionCard(parent, 12, -68, 340, 320)
-    SectionCard(parent, 370, -68, 342, 320)
-    SectionCard(parent, 12, -400, 700, 170)
-    PageHeader(parent, "Convenience", "Optional quality-of-life automation. Potentially disruptive actions remain off by default.")
-    Label(parent, "Group and Safety", 20, -76, 13)
-    Label(parent, "World and Social", 390, -76, 13)
+    PageHeader(parent, "Convenience", "Optional world, safety, social, and NPC interaction behavior.")
+    SectionCard(parent, 12, -76, 340, 190)
+    SectionCard(parent, 370, -76, 342, 190)
+    SectionCard(parent, 12, -278, 340, 230)
+    SectionCard(parent, 370, -278, 342, 230)
 
-    -- Left column: group/death conveniences. Right column: everything else.
-    local leftFields = {
-        { "autoAcceptResurrect", "Auto accept resurrection", false,
-            "Accepts resurrection offers using the safety restrictions directly below." },
-        { "autoAcceptResurrectInstancesOnly", "  Instances only", true,
-            "Only accepts resurrection offers in dungeons, raids, and battlegrounds." },
-        { "autoAcceptResurrectOutOfCombatOnly", "  Out of combat only", true,
-            "Leaves resurrection offers manual while you are in combat." },
-        { "autoAcceptResurrectVisibleOffererOnly", "  Visible offerer only", true,
-            "Requires the offerer to be a visible, out-of-combat party or raid member." },
-        { "autoReleaseInBattleground", "Auto release in battlegrounds", false,
-            "Automatically releases your spirit the moment you die in a battleground so you respawn without waiting. Arenas and world/dungeon deaths are left alone." },
-        { "autoDeclineDuels", "Auto decline duels", false,
-            "Declines duel requests unless Shift is held when the request arrives." },
-        { "autoAcceptGroupInvite", "Auto accept party invites", false,
-            "Automatically accepts party/raid invitations. Use the option below to limit this to people you know." },
-        { "autoAcceptInviteFriendsOnly", "  Only from friends/guild", true,
-            "When accepting party invites, only accept them from friends or guildmates. Ignored while 'Auto accept party invites' is off." },
-        { "autoAcceptInviteWhileQueued", "  Accept while queued", false,
-            "Allows party auto-accept while a battleground or Dungeon Finder queue/proposal is active. Leave off to protect the queue." },
-    }
-    local rightFields = {
-        { "autoDismount", "Auto dismount", false,
-            "Dismounts after the client rejects an action because you are mounted, and before opening an enabled single-option flight map. Repeat the original rejected action once dismounted." },
-        { "skipCinematics", "Skip cinematics", false,
-            "Automatically skips in-game cinematics and movies - including first-time story scenes." },
-        { "showSessionInTooltip", "Show session stats on minimap", true,
-            "Shows this session's gold, items sold, junk deleted, and repair costs on the minimap button tooltip." },
-        { "autoLearnTrainerSpells", "Auto learn trainer spells", false,
-            "When you open a class/profession trainer, buys every available spell you can afford, cheapest first. This spends your gold." },
-        { "autoInviteOnWhisper", "Auto invite on whisper", false,
-            "Sends a party invite to anyone who whispers you the keyword below. The keyword is matched anywhere in the message." },
-        { "autoInviteFriendsOnly", "  Only from friends/guild", false,
-            "When auto-inviting on a whisper, only invite friends or guildmates. Ignored while 'Auto invite on whisper' is off." },
-    }
+    Label(parent, "Safety", 20, -84, 13)
+    local resurrect = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptResurrect",
+        "Auto accept resurrection", 20, -116, false,
+        "Accepts resurrection offers using the safety restrictions directly below.")
+    local resurrectInstances = ScalarSettingRow(parent, "core", AutoCoreConfig,
+        "autoAcceptResurrectInstancesOnly", "Instances only", 50, -144, true,
+        "Only accepts resurrection offers in dungeons, raids, and battlegrounds.")
+    local resurrectCombat = ScalarSettingRow(parent, "core", AutoCoreConfig,
+        "autoAcceptResurrectOutOfCombatOnly", "Out of combat only", 50, -172, true,
+        "Leaves resurrection offers manual while you are in combat.")
+    local resurrectVisible = ScalarSettingRow(parent, "core", AutoCoreConfig,
+        "autoAcceptResurrectVisibleOffererOnly", "Visible offerer only", 50, -200, true,
+        "Requires the offerer to be a visible, out-of-combat party or raid member.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoDeclineDuels", "Auto decline duels",
+        20, -228, false,
+        "Declines duel requests unless Shift is held when the request arrives.")
+    BindToggleDependency(resurrect, resurrectInstances, resurrectCombat, resurrectVisible)
 
-    local leftControls, rightControls = {}, {}
-    local rowSpacing = 28
-    local y = -104
-    for i, field in ipairs(leftFields) do
-        -- Indent the friends-only sub-toggle under its parent.
-        local nested = field[1] == "autoAcceptResurrectInstancesOnly"
-            or field[1] == "autoAcceptResurrectOutOfCombatOnly"
-            or field[1] == "autoAcceptResurrectVisibleOffererOnly"
-            or field[1] == "autoAcceptInviteFriendsOnly"
-            or field[1] == "autoAcceptInviteWhileQueued"
-        local x = nested and 50 or 20
-        leftControls[field[1]] = ScalarSettingRow(parent, "core", AutoCoreConfig, field[1], field[2], x, y, field[3], field[4])
-        y = y - rowSpacing
-    end
-    local y2 = -104
-    for i, field in ipairs(rightFields) do
-        local x = (i == #rightFields) and 420 or 390
-        rightControls[field[1]] = ScalarSettingRow(parent, "core", AutoCoreConfig, field[1], field[2], x, y2, field[3], field[4])
-        y2 = y2 - rowSpacing
-    end
-    BindToggleDependency(leftControls.autoAcceptResurrect,
-        leftControls.autoAcceptResurrectInstancesOnly,
-        leftControls.autoAcceptResurrectOutOfCombatOnly,
-        leftControls.autoAcceptResurrectVisibleOffererOnly)
-    BindToggleDependency(leftControls.autoAcceptGroupInvite,
-        leftControls.autoAcceptInviteFriendsOnly,
-        leftControls.autoAcceptInviteWhileQueued)
-    BindToggleDependency(rightControls.autoInviteOnWhisper, rightControls.autoInviteFriendsOnly)
+    Label(parent, "World", 378, -84, 13)
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoDismount", "Auto dismount",
+        378, -116, false,
+        "Dismounts after the client rejects an action because you are mounted, and before opening an enabled single-option flight map. Repeat the original rejected action once dismounted.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "skipCinematics", "Skip cinematics",
+        378, -144, false,
+        "Automatically skips in-game cinematics and movies - including first-time story scenes.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoLearnTrainerSpells", "Auto learn trainer spells",
+        378, -172, false,
+        "When you open a class/profession trainer, buys every available spell you can afford, cheapest first. This spends your gold.")
 
-    -- Keep the keyword visually nested with Auto Invite and its friends-only
-    -- option instead of isolating it in a separate card.
-    Label(parent, "Keyword", 420, -270, 11)
+    Label(parent, "Whisper Invites", 20, -286, 13)
+    local whisperInvite = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoInviteOnWhisper",
+        "Auto invite on whisper", 20, -318, false,
+        "Sends a party invite to anyone who whispers you the keyword below. The keyword is matched anywhere in the message.")
+    local whisperFriends = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoInviteFriendsOnly",
+        "Only from friends/guild", 50, -346, false,
+        "When auto-inviting on a whisper, only invite friends or guildmates.")
+    BindToggleDependency(whisperInvite, whisperFriends)
+    Label(parent, "Keyword", 50, -378, 11)
     local keyword = Core.GetSetting("core", "autoInviteKeyword",
         ResolvedDefault(AutoCoreConfig, "autoInviteKeyword", "inv"))
-    local keyEdit = Edit(parent, 510, -264, 190, keyword)
+    local keyEdit = Edit(parent, 130, -372, 200, keyword)
     local function SaveKeyword(self)
         SetSettingWithoutRefresh("core", "autoInviteKeyword", strtrim(self:GetText() or ""))
     end
@@ -1581,17 +1545,58 @@ pageBuilders.Convenience = function(parent)
         "The whisper keyword that triggers an auto party invite. Matched as a case-insensitive substring, "
         .. "so \"inv\" also fires on \"invite\" or \"invite me warrior\".")
 
+    Label(parent, "NPC Interactions", 378, -286, 13)
+    local autoGossip = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoSelectSingleGossip",
+        "Auto gossip", 378, -318, true,
+        "Automatically selects an eligible sole gossip option. Enable only the service types wanted below.")
+    local gossipFields = {
+        { "autoGossipVendor", "Open vendor", 408, -346,
+            "Selects a sole Vendor option. It does not buy or sell anything by itself." },
+        { "autoGossipTrainer", "Open trainer", 408, -374,
+            "Selects a sole Trainer option. Trainer purchases still follow their separate setting." },
+        { "autoGossipTaxi", "Open flight map", 408, -402,
+            "Selects a sole Flight Master option. It does not choose or purchase a flight." },
+        { "autoGossipBanker", "Open bank", 408, -430,
+            "Selects a sole Banker option." },
+        { "autoGossipBattlemaster", "Open battleground list", 408, -458,
+            "Selects a sole Battlemaster option. It does not queue for a battleground." },
+        { "autoGossipInnkeeper", "Open bind confirmation", 408, -486,
+            "Selects a sole Innkeeper bind option but never confirms changing your home location." },
+    }
+    local gossipControls = {}
+    for _, field in ipairs(gossipFields) do
+        gossipControls[#gossipControls + 1] = ScalarSettingRow(parent, "core", AutoCoreConfig,
+            field[1], field[2], field[3], field[4], false, field[5])
+    end
+    BindToggleDependency(autoGossip, unpack(gossipControls))
+end
+
+pageBuilders["Groups & Queues"] = function(parent)
+    PageHeader(parent, "Groups & Queues", "Party prompts, Dungeon Finder flow, and battleground automation in one place.")
+    SectionCard(parent, 12, -76, 340, 300)
+    SectionCard(parent, 370, -76, 342, 300)
+    SectionCard(parent, 12, -388, 700, 190)
+
+    Label(parent, "Party & Raid", 20, -84, 13)
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptReadyCheck",
+        "Auto accept ready checks", 20, -116, false,
+        "Automatically confirms a party or raid ready check.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoConfirmSummon",
+        "Auto accept summons", 20, -144, false,
+        "Accepts warlock and meeting-stone summons using the timing directly below.")
     local summonMode = Core.GetSetting("core", "summonAcceptMode",
         ResolvedDefault(AutoCoreConfig, "summonAcceptMode", "delayed"))
-    ChoiceButton(parent, "Summons", 390, -310, 310, {
+    local summonModeButton = ChoiceButton(parent, "Summons", 20, -172, 310, {
         { text = "Accept near expiration", value = "delayed" },
         { text = "Accept immediately", value = "immediate" },
     }, summonMode, function(value)
         SetSettingWithoutRefresh("core", "summonAcceptMode", value)
     end)
+    AddTooltip(summonModeButton, "Summon timing",
+        "Choose immediate acceptance or wait until the summon is near expiration.")
     local summonSeconds = Core.GetSetting("core", "summonAcceptSeconds",
         ResolvedDefault(AutoCoreConfig, "summonAcceptSeconds", 3))
-    ChoiceButton(parent, "Delayed at", 390, -354, 310, {
+    local summonDelayButton = ChoiceButton(parent, "Delayed at", 20, -204, 310, {
         { text = "1 second remaining", value = 1 },
         { text = "2 seconds remaining", value = 2 },
         { text = "3 seconds remaining", value = 3 },
@@ -1600,39 +1605,25 @@ pageBuilders.Convenience = function(parent)
     }, summonSeconds, function(value)
         SetSettingWithoutRefresh("core", "summonAcceptSeconds", value)
     end)
+    AddTooltip(summonDelayButton, "Delayed summon acceptance",
+        "When summon timing is delayed, accepts at this many seconds remaining.")
+    local partyInvite = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptGroupInvite",
+        "Auto accept party invites", 20, -240, false,
+        "Automatically accepts party or raid invitations using the restrictions below.")
+    local partyInviteFriends = ScalarSettingRow(parent, "core", AutoCoreConfig,
+        "autoAcceptInviteFriendsOnly", "Only from friends/guild", 50, -268, true,
+        "Only accepts invitations from friends or guildmates.")
+    local partyInviteQueued = ScalarSettingRow(parent, "core", AutoCoreConfig,
+        "autoAcceptInviteWhileQueued", "Accept while queued", 50, -296, false,
+        "Allows party invitations while a battleground or Dungeon Finder queue or proposal is active.")
+    BindToggleDependency(partyInvite, partyInviteFriends, partyInviteQueued)
 
-    Label(parent, "Single-option NPC services", 20, -410, 13)
-    local gossipFields = {
-        { "autoGossipVendor", "Open vendor", 20, -440,
-            "Selects a sole Vendor option. It does not buy or sell anything by itself." },
-        { "autoGossipTrainer", "Open trainer", 20, -468,
-            "Selects a sole Trainer option. Trainer purchases still follow their separate setting." },
-        { "autoGossipTaxi", "Open flight map", 20, -496,
-            "Selects a sole Flight Master option. It does not choose or purchase a flight." },
-        { "autoGossipBanker", "Open bank", 370, -440,
-            "Selects a sole Banker option." },
-        { "autoGossipBattlemaster", "Open battleground list", 370, -468,
-            "Selects a sole Battlemaster option. It does not queue for a battleground." },
-        { "autoGossipInnkeeper", "Open bind confirmation", 370, -496,
-            "Selects a sole Innkeeper bind option but never confirms changing your home location." },
-    }
-    for _, field in ipairs(gossipFields) do
-        ScalarSettingRow(parent, "core", AutoCoreConfig, field[1], field[2], field[3], field[4], false, field[5])
-    end
-end
-
-pageBuilders["Queues & PvP"] = function(parent)
-    PageHeader(parent, "Queues & PvP", "Opt-in queue handling, cancellable departures, and battleground keybind helpers.")
-    SectionCard(parent, 12, -76, 340, 300)
-    SectionCard(parent, 370, -76, 342, 300)
-    SectionCard(parent, 12, -388, 700, 190)
-
-    Label(parent, "Dungeon Finder", 20, -84, 13)
+    Label(parent, "Dungeon Finder", 378, -84, 13)
     local roleCheck = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptLFGRoleCheck",
-        "Accept role check", 20, -116, false,
+        "Accept role check", 378, -116, false,
         "Chooses the role below and confirms the Dungeon Finder role check.")
     local role = Core.GetSetting("core", "lfgAutoRole", ResolvedDefault(AutoCoreConfig, "lfgAutoRole", "current"))
-    local roleButton = ChoiceButton(parent, "Role", 20, -148, 310, {
+    local roleButton = ChoiceButton(parent, "Role", 378, -148, 310, {
         { text = "Keep current selection", value = "current" },
         { text = "Tank", value = "tank" },
         { text = "Healer", value = "healer" },
@@ -1641,17 +1632,17 @@ pageBuilders["Queues & PvP"] = function(parent)
     AddTooltip(roleButton, "Role-check selection",
         "Keep current selection confirms the roles already checked in Dungeon Finder. A named role replaces them before confirmation.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptLFGProposal",
-        "Accept dungeon queue pop", 20, -196, false,
+        "Accept dungeon queue pop", 378, -180, false,
         "Accepts the Dungeon Finder proposal when a group is ready.")
-    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoExitCompletedDungeon",
-        "Exit completed dungeon", 20, -224, false,
+    local dungeonExit = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoExitCompletedDungeon",
+        "Exit completed dungeon", 378, -208, false,
         "After the Dungeon Finder completion reward, shows a countdown with Cancel before teleporting out. Leaving the party is controlled separately below.")
-    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoLeaveDungeonParty",
-        "Leave party when exiting", 20, -252, false,
+    local dungeonPartyLeave = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoLeaveDungeonParty",
+        "Leave party when exiting", 408, -236, false,
         "After teleporting out of a completed dungeon, leaves the current party. Only applies to automatic dungeon departure.")
     local dungeonExitDelay = Core.GetSetting("core", "dungeonExitDelay",
         ResolvedDefault(AutoCoreConfig, "dungeonExitDelay", 120))
-    local dungeonDelayButton = ChoiceButton(parent, "Departure timer", 20, -280, 310, {
+    local dungeonDelayButton = ChoiceButton(parent, "Departure timer", 378, -264, 310, {
         { text = "30 seconds", value = 30 },
         { text = "1 minute", value = 60 },
         { text = "2 minutes", value = 120 },
@@ -1660,12 +1651,12 @@ pageBuilders["Queues & PvP"] = function(parent)
     }, dungeonExitDelay, function(value) SetSettingWithoutRefresh("core", "dungeonExitDelay", value) end)
     AddTooltip(dungeonDelayButton, "Dungeon departure timer",
         "Waits after completion before teleporting out. Cancel keeps you in the dungeon for the rest of that run so the group can continue.")
-    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoRequeueDungeon",
-        "Requeue after exiting", 20, -312, false,
+    local dungeonRequeue = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoRequeueDungeon",
+        "Requeue after exiting", 408, -296, false,
         "After automatic dungeon departure and optional party leave, shows a second cancellable timer before rejoining the retained Dungeon Finder selection.")
     local dungeonRequeueDelay = Core.GetSetting("core", "dungeonRequeueDelay",
         ResolvedDefault(AutoCoreConfig, "dungeonRequeueDelay", 30))
-    local requeueDelayButton = ChoiceButton(parent, "Requeue timer", 20, -340, 310, {
+    local requeueDelayButton = ChoiceButton(parent, "Requeue timer", 378, -324, 310, {
         { text = "10 seconds", value = 10 },
         { text = "30 seconds", value = 30 },
         { text = "1 minute", value = 60 },
@@ -1674,21 +1665,19 @@ pageBuilders["Queues & PvP"] = function(parent)
     }, dungeonRequeueDelay, function(value) SetSettingWithoutRefresh("core", "dungeonRequeueDelay", value) end)
     AddTooltip(requeueDelayButton, "Dungeon requeue timer",
         "Waits after leaving the dungeon before joining the same retained Dungeon Finder selection. Cancel skips this requeue.")
+    BindToggleDependency(dungeonExit, dungeonPartyLeave, dungeonRequeue)
 
-    Label(parent, "Battleground", 378, -84, 13)
+    Label(parent, "Battleground", 20, -396, 13)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptBattlegroundPop",
-        "Accept queue pop", 378, -116, false,
+        "Accept queue pop", 20, -428, false,
         "Accepts a confirmed battleground queue slot immediately.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoLeaveCompletedBattleground",
-        "Leave after completion", 378, -144, false,
+        "Leave after completion", 20, -456, false,
         "After the battlefield reports a winner, shows a countdown with Cancel before leaving.")
-    ScalarSettingRow(parent, "core", AutoCoreConfig, "trackEnemyFlagCarrier",
-        "Track enemy flag carrier", 378, -172, true,
-        "Tracks the enemy carrying your faction's flag from battleground system messages for the target keybind.")
 
     local leaveDelay = Core.GetSetting("core", "activityLeaveDelay",
         ResolvedDefault(AutoCoreConfig, "activityLeaveDelay", 3))
-    local delayButton = ChoiceButton(parent, "Departure timer", 378, -204, 310, {
+    local delayButton = ChoiceButton(parent, "Departure timer", 20, -484, 310, {
         { text = "3 seconds", value = 3 },
         { text = "5 seconds", value = 5 },
         { text = "10 seconds", value = 10 },
@@ -1697,13 +1686,14 @@ pageBuilders["Queues & PvP"] = function(parent)
     }, leaveDelay, function(value) SetSettingWithoutRefresh("core", "activityLeaveDelay", value) end)
     AddTooltip(delayButton, "Cancellable departure timer",
         "The visible countdown used after a battleground reports a winner. Cancel suppresses departure for that run.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoReleaseInBattleground",
+        "Auto release after death", 20, -516, false,
+        "Automatically releases your spirit in battlegrounds. Arenas and world or dungeon deaths remain manual.")
 
-    Label(parent, "Battleground keybind utilities", 20, -396, 13)
-    local help = Label(parent,
-        "Bind Target Enemy Flag Carrier and Drop Flag or Selected Aura in the game's Key Bindings menu under Automation Utilities.",
-        20, -426)
-    help:SetWidth(660)
-    help:SetTextColor(Unpack(TEXT_MUTED))
+    Label(parent, "Battleground Keybinds", 378, -396, 13)
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "trackEnemyFlagCarrier",
+        "Track enemy flag carrier", 378, -428, true,
+        "Tracks the enemy carrying your faction's flag for the Target Enemy Flag Carrier keybind under Automation Utilities.")
     local auraID = Core.GetSetting("core", "dropAuraSpellID", ResolvedDefault(AutoCoreConfig, "dropAuraSpellID", 0))
     local auraChoices = { { text = "No extra aura", value = 0 } }
     local activeAuraIDs = {}
@@ -1719,12 +1709,12 @@ pageBuilders["Queues & PvP"] = function(parent)
     if auraID > 0 and not activeAuraIDs[auraID] then
         table.insert(auraChoices, { text = "Saved aura (" .. auraID .. ")", value = auraID })
     end
-    local auraButton = ChoiceButton(parent, "Optional removable aura", 20, -470, 440,
+    local auraButton = ChoiceButton(parent, "Removable aura", 378, -456, 310,
         auraChoices, auraID, function(value)
             SetSettingWithoutRefresh("core", "dropAuraSpellID", value)
         end)
     AddTooltip(auraButton, "Optional removable aura",
-        "Choose one of your current helpful auras. The drop keybind always checks known battleground flags first, then removes this saved aura. Reopen this page to refresh the list.")
+        "Choose one current helpful aura for the Drop Flag or Selected Aura keybind under Automation Utilities. Known battleground flags are always checked first. Reopen this page to refresh the list.")
 end
 
 ----------------------------------------------------------------------
@@ -4549,7 +4539,7 @@ local function CreateMainFrame()
     y = y - 40
 
     y = NavHeading("AUTOMATION", y)
-    for _, pageName in ipairs({ "General", "Convenience", "Queues & PvP" }) do
+    for _, pageName in ipairs({ "General", "Convenience", "Groups & Queues" }) do
         CreateNavButton(pageName, "TOPLEFT", 12, y)
         y = y - 28
     end
@@ -4573,6 +4563,7 @@ end
 function Settings.Open(page)
     if AutoAuction and AutoAuction.Hide then AutoAuction.Hide() end
     CreateMainFrame()
+    if page == "Queues & PvP" then page = "Groups & Queues" end
     if page and pageBuilders[page] then
         if page ~= currentPage then CancelRuleEditors() end
         currentPage = page
