@@ -1,7 +1,7 @@
 ----------------------------------------------------------------------
 -- NPCSpawnStore.lua
 -- =================
--- Lazy access to packed NPC coordinates with legacy database fallback.
+-- Lazy access to packed NPC coordinates with fresh quest-page fallback data.
 ----------------------------------------------------------------------
 AutoQuest = AutoQuest or {}
 AutoQuest.NPCSpawnStore = AutoQuest.NPCSpawnStore or {}
