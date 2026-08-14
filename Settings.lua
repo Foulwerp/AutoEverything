@@ -183,6 +183,15 @@ local function SectionCard(parent, x, y, width, height)
     return fill
 end
 
+-- Cards use a shared content-driven bottom inset. Callers provide the bottom
+-- edge of their final control rather than guessing a generous fixed height;
+-- this keeps every group compact while preserving the same breathing room.
+local PAGE_CANVAS_INSET = 18
+local SECTION_BOTTOM_INSET = 14
+local function FitSectionCard(parent, x, top, width, contentBottom)
+    return SectionCard(parent, x, top, width, top - contentBottom + SECTION_BOTTOM_INSET)
+end
+
 -- Shared treatment for full-pane editors and centered dialogs. A raised
 -- blue-grey surface and subtle header wash make modal content feel like part
 -- of AutoEverything instead of an unstyled black frame.
@@ -969,7 +978,11 @@ local function Refresh(rebuild)
     end
     if not cached and pageBuilders[currentPage] then
         local page = CreateFrame("Frame", nil, pageHost)
-        page:SetAllPoints(pageHost)
+        -- The authored page grid is 724 pixels wide. Center it inside the
+        -- 760-pixel host so the 12-pixel card gutters read equally on both
+        -- sides instead of leaving all spare width on the right.
+        page:SetPoint("TOPLEFT", pageHost, "TOPLEFT", PAGE_CANVAS_INSET, 0)
+        page:SetPoint("BOTTOMRIGHT", pageHost, "BOTTOMRIGHT", -PAGE_CANVAS_INSET, 0)
         controls = {}
         pageBuilders[currentPage](page)
         cached = { frame = page, controls = controls }
@@ -1082,9 +1095,8 @@ pageBuilders.Overview = function(parent)
     }
 
     local CARD_W, CARD_H = 330, 118
-    local X = { 20, 370 }
+    local X = { 22, 372 }
     local Y = { -82, -208, -334, -460 }
-    local activeCount = 0
     local stateButtons = {}
     for index, item in ipairs(modules) do
         -- Copy loop values into per-card locals. Older Lua clients reuse the
@@ -1114,7 +1126,6 @@ pageBuilders.Overview = function(parent)
         ApplyUIFont(title, 15)
 
         local enabled = Core.GetSetting(moduleName, "enabled", ResolvedDefault(moduleConfig, "enabled", true))
-        if enabled then activeCount = activeCount + 1 end
         local state = SkinnedButton(card, enabled and "Active" or "Paused", 240, -10, 74, function()
             local isEnabled = Core.GetSetting(moduleName, "enabled", ResolvedDefault(moduleConfig, "enabled", true)) ~= false
             SetSettingWithoutRefresh(moduleName, "enabled", not isEnabled)
@@ -1181,11 +1192,13 @@ pageBuilders.Overview = function(parent)
         AddTooltip(configure, "Configure Auto" .. moduleLabel, "Open this module's detailed settings.")
     end
 
-    SectionCard(parent, 12, -586, 700, 48)
-    local profileSummary = Label(parent, "Profile: " .. Core.GetProfileName(), 24, -598, 13)
+    -- Match the footer edges to the overview card columns and center both
+    -- summary rows so the final card follows the same visual axis.
+    SectionCard(parent, 22, -586, 680, 48)
+    local profileSummary = Label(parent, "", 22, -598, 13)
+    profileSummary:SetWidth(680)
+    profileSummary:SetJustifyH("CENTER")
     profileSummary:SetTextColor(Unpack(TEXT))
-    local moduleSummary = Label(parent, activeCount .. " of " .. #modules .. " modules active", 250, -598, 13)
-    moduleSummary:SetTextColor(Unpack(activeCount == #modules and BRAND or TEXT))
     overviewRefresh = function()
         local active = 0
         for _, item in ipairs(modules) do
@@ -1205,8 +1218,8 @@ pageBuilders.Overview = function(parent)
                 end
             end
         end
-        moduleSummary:SetText(active .. " of " .. #modules .. " modules active")
-        moduleSummary:SetTextColor(Unpack(active == #modules and BRAND or TEXT))
+        profileSummary:SetText("Profile: " .. Core.GetProfileName() .. "   |cff" .. BRAND_HEX
+            .. active .. " of " .. #modules .. " modules active|r")
     end
     overviewRefresh()
     local upgradeSection = Core.GetProfileSection("upgrade", false) or {}
@@ -1221,8 +1234,9 @@ pageBuilders.Overview = function(parent)
     end
     local session = Core.GetSessionSummary and Core.GetSessionSummary() or {}
     local sessionText = #session > 0 and table.concat(session, "   •   ", 1, math.min(3, #session)) or "Session statistics begin after login."
-    local sessionSummary = Label(parent, sessionText, 24, -620)
-    sessionSummary:SetWidth(660)
+    local sessionSummary = Label(parent, sessionText, 22, -620)
+    sessionSummary:SetWidth(680)
+    sessionSummary:SetJustifyH("CENTER")
     sessionSummary:SetTextColor(Unpack(TEXT_MUTED))
 end
 
@@ -1476,8 +1490,8 @@ end
 ----------------------------------------------------------------------
 pageBuilders.General = function(parent)
     PageHeader(parent, "General", "Interface preferences and shared display behavior.")
-    SectionCard(parent, 12, -76, 700, 220)
-    SectionCard(parent, 12, -308, 700, 120)
+    FitSectionCard(parent, 12, -76, 700, -214)
+    FitSectionCard(parent, 12, -240, 700, -298)
 
     Label(parent, "Interface", 20, -84, 13)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "showLoginSummary", "Show login summary",
@@ -1501,21 +1515,21 @@ pageBuilders.General = function(parent)
 
     -- Verbose diagnostics remain a slash-command troubleshooting switch,
     -- rather than a persistent interface preference.
-    Label(parent, "ElvUI Action Bar Cooldowns", 20, -316, 13)
+    Label(parent, "ElvUI Action Bar Cooldowns", 20, -248, 13)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "disableActionBarSwipe", "Disable cooldown swipe",
-        20, -352, false,
+        20, -284, false,
         "Hides the dark radial cooldown sweep on ElvUI action buttons. ElvUI's cooldown numbers remain visible.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "disableActionBarBling", "Disable cooldown bling",
-        390, -352, false,
+        390, -284, false,
         "Suppresses the blue-white shine animation when an ElvUI action-button cooldown finishes.")
 end
 
 pageBuilders.Convenience = function(parent)
     PageHeader(parent, "Convenience", "Optional world, safety, social, and NPC interaction behavior.")
-    SectionCard(parent, 12, -76, 340, 190)
-    SectionCard(parent, 370, -76, 342, 190)
-    SectionCard(parent, 12, -278, 340, 230)
-    SectionCard(parent, 370, -278, 342, 230)
+    FitSectionCard(parent, 12, -76, 340, -242)
+    FitSectionCard(parent, 370, -76, 342, -186)
+    FitSectionCard(parent, 12, -268, 340, -384)
+    FitSectionCard(parent, 370, -212, 342, -434)
 
     Label(parent, "Safety", 20, -84, 13)
     local resurrect = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptResurrect",
@@ -1546,18 +1560,18 @@ pageBuilders.Convenience = function(parent)
         378, -172, false,
         "When you open a class/profession trainer, buys every available spell you can afford, cheapest first. This spends your gold.")
 
-    Label(parent, "Whisper Invites", 20, -286, 13)
+    Label(parent, "Whisper Invites", 20, -276, 13)
     local whisperInvite = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoInviteOnWhisper",
-        "Auto invite on whisper", 20, -318, false,
+        "Auto invite on whisper", 20, -308, false,
         "Sends a party invite to anyone who whispers you the keyword below. The keyword is matched anywhere in the message.")
     local whisperFriends = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoInviteFriendsOnly",
-        "Only from friends/guild", 50, -346, false,
+        "Only from friends/guild", 50, -336, false,
         "When auto-inviting on a whisper, only invite friends or guildmates.")
     BindToggleDependency(whisperInvite, whisperFriends)
-    Label(parent, "Keyword", 50, -378, 11)
+    Label(parent, "Keyword", 50, -368, 11)
     local keyword = Core.GetSetting("core", "autoInviteKeyword",
         ResolvedDefault(AutoCoreConfig, "autoInviteKeyword", "inv"))
-    local keyEdit = Edit(parent, 130, -372, 200, keyword)
+    local keyEdit = Edit(parent, 130, -362, 200, keyword)
     local function SaveKeyword(self)
         SetSettingWithoutRefresh("core", "autoInviteKeyword", strtrim(self:GetText() or ""))
     end
@@ -1567,22 +1581,22 @@ pageBuilders.Convenience = function(parent)
         "The whisper keyword that triggers an auto party invite. Matched as a case-insensitive substring, "
         .. "so \"inv\" also fires on \"invite\" or \"invite me warrior\".")
 
-    Label(parent, "NPC Interactions", 378, -286, 13)
+    Label(parent, "NPC Interactions", 378, -220, 13)
     local autoGossip = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoSelectSingleGossip",
-        "Auto gossip", 378, -318, true,
+        "Auto gossip", 378, -252, true,
         "Automatically selects an eligible sole gossip option. Enable only the service types wanted below.")
     local gossipFields = {
-        { "autoGossipVendor", "Open vendor", 408, -346,
+        { "autoGossipVendor", "Open vendor", 408, -280,
             "Selects a sole Vendor option. It does not buy or sell anything by itself." },
-        { "autoGossipTrainer", "Open trainer", 408, -374,
+        { "autoGossipTrainer", "Open trainer", 408, -308,
             "Selects a sole Trainer option. Trainer purchases still follow their separate setting." },
-        { "autoGossipTaxi", "Open flight map", 408, -402,
+        { "autoGossipTaxi", "Open flight map", 408, -336,
             "Selects a sole Flight Master option. It does not choose or purchase a flight." },
-        { "autoGossipBanker", "Open bank", 408, -430,
+        { "autoGossipBanker", "Open bank", 408, -364,
             "Selects a sole Banker option." },
-        { "autoGossipBattlemaster", "Open battleground list", 408, -458,
+        { "autoGossipBattlemaster", "Open battleground list", 408, -392,
             "Selects a sole Battlemaster option. It does not queue for a battleground." },
-        { "autoGossipInnkeeper", "Open bind confirmation", 408, -486,
+        { "autoGossipInnkeeper", "Open bind confirmation", 408, -420,
             "Selects a sole Innkeeper bind option but never confirms changing your home location." },
     }
     local gossipControls = {}
@@ -1595,9 +1609,9 @@ end
 
 pageBuilders["Groups & Queues"] = function(parent)
     PageHeader(parent, "Groups & Queues", "Party prompts, Dungeon Finder flow, and battleground automation in one place.")
-    SectionCard(parent, 12, -76, 340, 300)
-    SectionCard(parent, 370, -76, 342, 300)
-    SectionCard(parent, 12, -388, 700, 190)
+    FitSectionCard(parent, 12, -76, 340, -306)
+    FitSectionCard(parent, 370, -76, 342, -345)
+    FitSectionCard(parent, 12, -372, 700, -513)
 
     Label(parent, "Party & Raid", 20, -84, 13)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptReadyCheck",
@@ -1630,13 +1644,13 @@ pageBuilders["Groups & Queues"] = function(parent)
     AddTooltip(summonDelayButton, "Delayed summon acceptance",
         "When summon timing is delayed, accepts at this many seconds remaining.")
     local partyInvite = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptGroupInvite",
-        "Auto accept party invites", 20, -240, false,
+        "Auto accept party invites", 20, -236, false,
         "Automatically accepts party or raid invitations using the restrictions below.")
     local partyInviteFriends = ScalarSettingRow(parent, "core", AutoCoreConfig,
-        "autoAcceptInviteFriendsOnly", "Only from friends/guild", 50, -268, true,
+        "autoAcceptInviteFriendsOnly", "Only from friends/guild", 50, -264, true,
         "Only accepts invitations from friends or guildmates.")
     local partyInviteQueued = ScalarSettingRow(parent, "core", AutoCoreConfig,
-        "autoAcceptInviteWhileQueued", "Accept while queued", 50, -296, false,
+        "autoAcceptInviteWhileQueued", "Accept while queued", 50, -292, false,
         "Allows party invitations while a battleground or Dungeon Finder queue or proposal is active.")
     BindToggleDependency(partyInvite, partyInviteFriends, partyInviteQueued)
 
@@ -1645,7 +1659,7 @@ pageBuilders["Groups & Queues"] = function(parent)
         "Accept role check", 378, -116, false,
         "Chooses the role below and confirms the Dungeon Finder role check.")
     local role = Core.GetSetting("core", "lfgAutoRole", ResolvedDefault(AutoCoreConfig, "lfgAutoRole", "current"))
-    local roleButton = ChoiceButton(parent, "Role", 378, -148, 310, {
+    local roleButton = ChoiceButton(parent, "Role", 378, -144, 310, {
         { text = "Keep current selection", value = "current" },
         { text = "Tank", value = "tank" },
         { text = "Healer", value = "healer" },
@@ -1654,19 +1668,19 @@ pageBuilders["Groups & Queues"] = function(parent)
     AddTooltip(roleButton, "Role-check selection",
         "Keep current selection confirms the roles already checked in Dungeon Finder. A named role replaces them before confirmation.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptLFGProposal",
-        "Accept dungeon queue pop", 378, -180, false,
+        "Accept dungeon queue pop", 378, -176, false,
         "Accepts the Dungeon Finder proposal when a group is ready.")
     local dungeonExit = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoExitCompletedDungeon",
-        "Exit completed dungeon", 378, -208, false,
+        "Exit completed dungeon", 378, -204, false,
         "After the Dungeon Finder completion reward, shows a countdown with Cancel before teleporting out. Leaving the party is controlled separately below.")
     local dungeonPartyLeave = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoLeaveDungeonParty",
-        "Leave party when exiting", 408, -236, false,
+        "Leave party when exiting", 408, -232, false,
         "After teleporting out of a completed dungeon, leaves the current party. Only applies to automatic dungeon departure.")
     local dungeonExitDelay = Core.GetSetting("core", "dungeonExitDelay",
         ResolvedDefault(AutoCoreConfig, "dungeonExitDelay", 10))
     local shortDungeonDelays = { [5] = true, [10] = true, [15] = true, [20] = true, [30] = true }
     if not shortDungeonDelays[tonumber(dungeonExitDelay)] then dungeonExitDelay = 10 end
-    local dungeonDelayButton = ChoiceButton(parent, "Departure timer", 378, -264, 310, {
+    local dungeonDelayButton = ChoiceButton(parent, "Departure timer", 378, -260, 310, {
         { text = "5 seconds", value = 5 },
         { text = "10 seconds", value = 10 },
         { text = "15 seconds", value = 15 },
@@ -1676,12 +1690,12 @@ pageBuilders["Groups & Queues"] = function(parent)
     AddTooltip(dungeonDelayButton, "Dungeon departure timer",
         "Waits after completion before teleporting out. Cancel keeps you in the dungeon for the rest of that run so the group can continue.")
     local dungeonRequeue = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoRequeueDungeon",
-        "Requeue after exiting", 408, -296, false,
+        "Requeue after exiting", 408, -292, false,
         "After automatic dungeon departure and optional party leave, shows a second cancellable timer before rejoining the retained Dungeon Finder selection.")
     local dungeonRequeueDelay = Core.GetSetting("core", "dungeonRequeueDelay",
         ResolvedDefault(AutoCoreConfig, "dungeonRequeueDelay", 10))
     if not shortDungeonDelays[tonumber(dungeonRequeueDelay)] then dungeonRequeueDelay = 10 end
-    local requeueDelayButton = ChoiceButton(parent, "Requeue timer", 378, -324, 310, {
+    local requeueDelayButton = ChoiceButton(parent, "Requeue timer", 378, -320, 310, {
         { text = "5 seconds", value = 5 },
         { text = "10 seconds", value = 10 },
         { text = "15 seconds", value = 15 },
@@ -1692,17 +1706,17 @@ pageBuilders["Groups & Queues"] = function(parent)
         "Waits after leaving the dungeon before joining the same retained Dungeon Finder selection. Cancel skips this requeue.")
     BindToggleDependency(dungeonExit, dungeonPartyLeave, dungeonRequeue)
 
-    Label(parent, "Battleground", 20, -396, 13)
+    Label(parent, "Battleground", 20, -380, 13)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptBattlegroundPop",
-        "Accept queue pop", 20, -428, false,
+        "Accept queue pop", 20, -412, false,
         "Accepts a confirmed battleground queue slot immediately.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoLeaveCompletedBattleground",
-        "Leave after completion", 20, -456, false,
+        "Leave after completion", 20, -440, false,
         "After the battlefield reports a winner, shows a countdown with Cancel before leaving.")
 
     local leaveDelay = Core.GetSetting("core", "activityLeaveDelay",
         ResolvedDefault(AutoCoreConfig, "activityLeaveDelay", 3))
-    local delayButton = ChoiceButton(parent, "Departure timer", 20, -484, 310, {
+    local delayButton = ChoiceButton(parent, "Departure timer", 20, -468, 310, {
         { text = "3 seconds", value = 3 },
         { text = "5 seconds", value = 5 },
         { text = "10 seconds", value = 10 },
@@ -1712,12 +1726,12 @@ pageBuilders["Groups & Queues"] = function(parent)
     AddTooltip(delayButton, "Cancellable departure timer",
         "The visible countdown used after a battleground reports a winner. Cancel suppresses departure for that run.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoReleaseInBattleground",
-        "Auto release after death", 20, -516, false,
+        "Auto release after death", 20, -500, false,
         "Automatically releases your spirit in battlegrounds. Arenas and world or dungeon deaths remain manual.")
 
-    Label(parent, "Battleground Keybinds", 378, -396, 13)
+    Label(parent, "Battleground Keybinds", 378, -380, 13)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "trackEnemyFlagCarrier",
-        "Track enemy flag carrier", 378, -428, true,
+        "Track enemy flag carrier", 378, -412, true,
         "Tracks the enemy carrying your faction's flag for the Target Enemy Flag Carrier keybind under Automation Utilities.")
     local auraID = Core.GetSetting("core", "dropAuraSpellID", ResolvedDefault(AutoCoreConfig, "dropAuraSpellID", 0))
     local auraChoices = { { text = "No extra aura", value = 0 } }
@@ -1734,7 +1748,7 @@ pageBuilders["Groups & Queues"] = function(parent)
     if auraID > 0 and not activeAuraIDs[auraID] then
         table.insert(auraChoices, { text = "Saved aura (" .. auraID .. ")", value = auraID })
     end
-    local auraButton = ChoiceButton(parent, "Removable aura", 378, -456, 310,
+    local auraButton = ChoiceButton(parent, "Removable aura", 378, -440, 310,
         auraChoices, auraID, function(value)
             SetSettingWithoutRefresh("core", "dropAuraSpellID", value)
         end)
@@ -1760,7 +1774,7 @@ pageBuilders["Action Bars"] = function(parent)
     local selected = AAB.GetSelectedProfile()
     local options = AAB.GetOptions()
 
-    SectionCard(parent, 12, -82, 700, 210)
+    FitSectionCard(parent, 12, -82, 700, -234)
     Label(parent, "SAVED LAYOUTS", 26, -98, 13)
     local profileChoices = {}
     for _, name in ipairs(names) do table.insert(profileChoices, { text = name, value = name }) end
@@ -1820,9 +1834,9 @@ pageBuilders["Action Bars"] = function(parent)
     end)
     AddTooltip(rankToggle, "Spell ranks", "When enabled, restoring a spell uses the highest learned rank. When disabled, AutoActionBars first tries the rank that was saved.")
 
-    SectionCard(parent, 12, -306, 700, 254)
-    Label(parent, "SPECIALIZATION AUTOMATION", 26, -322, 13)
-    local specLabel = Label(parent, "Current: " .. tostring(specName) .. " (" .. tostring(specID) .. ")", 26, -352)
+    FitSectionCard(parent, 12, -260, 700, -484)
+    Label(parent, "SPECIALIZATION AUTOMATION", 26, -276, 13)
+    local specLabel = Label(parent, "Current: " .. tostring(specName) .. " (" .. tostring(specID) .. ")", 26, -306)
     specLabel:SetTextColor(Unpack(TEXT))
 
     local assignment = AAB.GetSpecAssignment(specID)
@@ -1832,39 +1846,44 @@ pageBuilders["Action Bars"] = function(parent)
         { text = "Specialization default", value = "default" },
     }
     for _, name in ipairs(names) do table.insert(assignmentChoices, { text = name, value = name }) end
-    ChoiceButton(parent, "Auto restore", 26, -382, 330, assignmentChoices, assignmentValue, function(value)
+    ChoiceButton(parent, "Auto restore", 26, -336, 330, assignmentChoices, assignmentValue, function(value)
         if value == "off" then value = nil end
         local ok, err = AAB.SetSpecProfile(specID, value)
         if not ok then Alert(err) else MarkSaved() end
     end)
 
-    local autoSave = Check(parent, "Auto-save this specialization before switching", 26, -426, assignment.autoSave == true, function(value)
+    local autoSave = Check(parent, "Auto-save this specialization before switching", 26, -380, assignment.autoSave == true, function(value)
         AAB.GetSpecAssignment(specID).autoSave = value
         MarkSaved()
     end)
     AddTooltip(autoSave, "Auto-save", "Captures the current bars as this specialization's private default when an Ascension specialization cast begins.")
 
-    Button(parent, "Save Spec Default", 26, -468, 150, function()
+    Button(parent, "Save Spec Default", 26, -422, 150, function()
         AAB.SaveSpecDefault(specID)
         MarkSaved()
     end)
-    local restoreDefault = Button(parent, "Restore Spec Default", 186, -468, 160, function()
+    local restoreDefault = Button(parent, "Restore Spec Default", 186, -422, 160, function()
         local ok, err = AAB.RestoreSpecDefault(specID)
         if not ok then Alert(err) end
     end)
     EmphasizeButton(restoreDefault, BRAND)
 
-    local note = Label(parent, "Slots 121-132 are possession/vehicle controls and are intentionally left untouched. Restores are blocked in combat.", 26, -516)
+    local note = Label(parent, "Slots 121-132 are possession/vehicle controls and are intentionally left untouched. Restores are blocked in combat.", 26, -470)
     note:SetWidth(650)
     note:SetTextColor(Unpack(TEXT_MUTED))
 end
 
 pageBuilders.Quest = function(parent)
-    SectionCard(parent, 12, -76, 340, 154)
-    SectionCard(parent, 370, -76, 342, 154)
-    SectionCard(parent, 12, -242, 700, 270)
-    SectionCard(parent, 12, -518, 700, 110)
+    FitSectionCard(parent, 12, -76, 340, -218)
+    FitSectionCard(parent, 370, -76, 342, -218)
+    FitSectionCard(parent, 12, -244, 700, -424)
+    FitSectionCard(parent, 12, -450, 700, -557)
     PageHeader(parent, "Quest", "Control quest interactions first, then tune optional map and minimap guidance.")
+    local quickAbandonButton = Button(parent, "Quick Abandon", 540, -20, 160, function() OpenQuickAbandonWindow() end)
+    AddTooltip(quickAbandonButton, "Quick Abandon",
+        "Reviews your quest log and lists quests worth abandoning in bulk - always keeping Prestige and Mentorship "
+        .. "quests, plus whatever the options in that window say to keep. Shows the list and asks for confirmation "
+        .. "before abandoning anything.")
     Label(parent, "Quest Acceptance", 28, -84, 13)
     Label(parent, "Completion and Display", 390, -84, 13)
 
@@ -1907,22 +1926,15 @@ pageBuilders.Quest = function(parent)
         leftControls.acceptTrivialQuests, leftControls.autoSelectRewards)
     BindToggleDependency(rightControls.turnInQuests,
         rightControls.turnInDailyQuests, rightControls.turnInPvPQuests)
-    -- Keep the actions inside the lower card instead of touching its top edge.
-    local quickAbandonButton = Button(parent, "Quick Abandon", 28, -258, 160, function() OpenQuickAbandonWindow() end)
-    AddTooltip(quickAbandonButton, "Quick Abandon",
-        "Reviews your quest log and lists quests worth abandoning in bulk - always keeping Prestige and Mentorship "
-        .. "quests, plus whatever the options in that window say to keep. Shows the list and asks for confirmation "
-        .. "before abandoning anything.")
-
     -- These settings are always visible. Two equal-width columns keep every
     -- track aligned: world map on the left, minimap on the right. Config keys
     -- still say "pin" because they are saved-variable
     -- names, but all user-facing labels say "icon".
-    Label(parent, "Map and Minimap Icons", 28, -296, 13)
-    ScalarCheck(parent, "quest", AutoQuestConfig, "useElvUIQuestMarkers", "Use ElvUI nameplate icons", 472, -292, false,
+    Label(parent, "Map and Minimap Icons", 28, -260, 13)
+    ScalarCheck(parent, "quest", AutoQuestConfig, "useElvUIQuestMarkers", "Use ElvUI nameplate icons", 472, -256, false,
         "On uses ElvUI's quest icons and hides the addon's nameplate badges. Off uses the addon's kill, loot, and interaction badges and disables ElvUI's NPC quest icons. If ElvUI is unavailable, the addon badges remain active.")
     local leftX, rightX = 28, 388
-    local firstRow, secondRow, thirdRow = -322, -370, -418
+    local firstRow, secondRow, thirdRow = -286, -334, -382
 
     ScalarSlider(parent, "quest", AutoQuestConfig, "worldPinSize", nil, leftX, firstRow, 24, 8, 40,
         "Pixel size of objective icons on the world map.", "World Map Icon Size", 306)
@@ -1941,31 +1953,31 @@ pageBuilders.Quest = function(parent)
 
     -- Group progress travels through invisible PARTY/RAID addon messages.
     -- Keep the controls in the owning Quest page; AutoBuff has its own module.
-    Label(parent, "Group Questing", 28, -526, 13)
-    local syncToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "groupQuestSync", "Sync party progress", 20, -548, false,
+    Label(parent, "Group Questing", 28, -458, 13)
+    local syncToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "groupQuestSync", "Sync party progress", 20, -480, false,
         "Shares quest and objective changes through hidden addon messages. Hovering quest items only reads the local cache and never sends traffic.")
-    local raidToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "groupQuestSyncRaid", "Include raid groups", 246, -548, false,
+    local raidToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "groupQuestSyncRaid", "Include raid groups", 246, -480, false,
         "Also synchronizes quest progress in raids. Off by default to keep large-group traffic deliberate.")
-    local tooltipToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "showGroupQuestTooltips", "Progress in item tooltips", 472, -548, true,
+    local tooltipToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "showGroupQuestTooltips", "Progress in item tooltips", 472, -480, true,
         "Shows each group member's cached progress when hovering an item required by one of your active quests.")
-    ScalarCheck(parent, "quest", AutoQuestConfig, "autoShareQuests", "Share newly accepted quests", 20, -574, false,
+    ScalarCheck(parent, "quest", AutoQuestConfig, "autoShareQuests", "Share newly accepted quests", 20, -506, false,
         "Automatically pushes a newly accepted, shareable quest to your party. Quests are not automatically pushed in raids.")
-    ScalarCheck(parent, "quest", AutoQuestConfig, "autoAcceptSharedQuests", "Accept shared quests", 246, -574, false,
+    ScalarCheck(parent, "quest", AutoQuestConfig, "autoAcceptSharedQuests", "Accept shared quests", 246, -506, false,
         "Accepts party-shared quests when normal AutoQuest acceptance is enabled. High-risk title patterns remain manual.")
-    ScalarCheck(parent, "quest", AutoQuestConfig, "announceQuestCompletion", "Announce quest turn-ins", 472, -574, true,
+    ScalarCheck(parent, "quest", AutoQuestConfig, "announceQuestCompletion", "Announce quest turn-ins", 472, -506, true,
         "Announces after your quest reward is claimed and the quest is successfully removed from your log. Reload and synchronization never announce.")
-    ScalarCheck(parent, "quest", AutoQuestConfig, "announceObjectiveCompletion", "Announce completed steps", 20, -600, true,
+    ScalarCheck(parent, "quest", AutoQuestConfig, "announceObjectiveCompletion", "Announce completed steps", 20, -532, true,
         "Announces completed objectives with a skull for kills, diamond for loot, triangle for interactions, and star for scripted events. Progress updates remain silent.")
     local announcementChannel = string.upper(tostring(Core.GetSetting("quest", "questAnnouncementChannel",
         ResolvedDefault(AutoQuestConfig, "questAnnouncementChannel", "GROUP")) or "GROUP"))
-    local channelButton = ChoiceButton(parent, "Channel", 246, -600, 206, {
+    local channelButton = ChoiceButton(parent, "Channel", 246, -532, 206, {
         { text = "Party (raid if enabled)", value = "GROUP" },
         { text = "Emote", value = "EMOTE" },
         { text = "Say", value = "SAY" },
     }, announcementChannel, function(value)
         SetSettingWithoutRefresh("quest", "questAnnouncementChannel", value)
     end)
-    ScalarCheck(parent, "quest", AutoQuestConfig, "cheerQuestCompletion", "Cheer on quest turn-in", 472, -600, false,
+    ScalarCheck(parent, "quest", AutoQuestConfig, "cheerQuestCompletion", "Cheer on quest turn-in", 472, -532, false,
         "Plays your character's cheer emote once after a quest is successfully turned in.")
     AddTooltip(channelButton, "Announcement channel",
         "Party is the default. Raid announcements remain off unless Include raid groups is enabled. Emote and Say are nearby-only alternatives and also work while solo.")
