@@ -179,6 +179,7 @@ AutoQuestConfig = {
     disableOnShift = true,
     enabled = true,
     mapPins = true,
+    showPatrolPaths = true,
     acceptTrivialQuests = true,
     quickAbandonKeepComplete = true,
     quickAbandonKeepDaily = true,

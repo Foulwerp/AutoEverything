@@ -15,6 +15,8 @@ local serviceByZone
 local combinedByZone = {}
 local worldPins, minimapPins = {}, {}
 local worldRouteLines, minimapRouteLines = {}, {}
+local highlightedRouteEntityID
+local RefreshRouteHighlight
 local refreshPending, refreshAt = false, 0
 local playerMap = { name = nil, key = nil, x = nil, y = nil }
 local buildStats = { activeQuests=0, matchedQuests=0, points=0, servicePoints=0 }
@@ -185,6 +187,11 @@ local function AddLocation(zoneID, zoneName, floor, record, coord, questID, ques
         item = record.item, progress = progress,
     }
     return true
+end
+
+local function PathsEnabled()
+    return Enabled() and AutoCore.GetSetting("quest", "showPatrolPaths",
+        AutoQuestConfig and AutoQuestConfig.showPatrolPaths) ~= false
 end
 
 -- Service pages may expose many sampled positions for an NPC that patrols.
@@ -678,6 +685,8 @@ local iconColors = {
     talentunlearner={0.75,0.45,1}, tabardvendor={1,0.3,0.25},
     stablemaster={0.8,0.85,0.95}, trainer={1,0.9,0.55}, vendor={1,0.55,0.3},
 }
+local ROUTE_COLOR = { 0.62, 0.65, 0.68 }
+local ROUTE_HIGHLIGHT_COLOR = { 1, 0.82, 0.25 }
 
 local headingText = {
     kill = "Kill",
@@ -760,6 +769,29 @@ local function ConfigurePin(pin, cluster, size)
     pin.icon:SetVertexColor(1, 1, 1, 1)
 end
 
+local function RouteEntityForPin(pin)
+    local cluster = pin and pin.cluster
+    for _, point in ipairs(cluster and cluster.members or {}) do
+        if point.isService and point.routeEndpoint and point.entityID then
+            return tonumber(point.entityID) or point.entityID
+        end
+    end
+end
+
+local function ShowPinDetails(pin)
+    highlightedRouteEntityID = RouteEntityForPin(pin)
+    if RefreshRouteHighlight then RefreshRouteHighlight(pin) end
+    ShowPinTooltip(pin)
+end
+
+local function HidePinDetails(pin)
+    GameTooltip_Hide()
+    if highlightedRouteEntityID ~= nil then
+        highlightedRouteEntityID = nil
+        if RefreshRouteHighlight then RefreshRouteHighlight(pin) end
+    end
+end
+
 local function ClusterOffset(cluster, size)
     if not cluster.overlapCount or cluster.overlapCount <= 1 then return 0, 0 end
     local angle = (cluster.overlapIndex - 1) * (2 * math.pi / cluster.overlapCount)
@@ -774,8 +806,8 @@ local function NewPin(parent, minimap)
     pin:EnableMouse(true)
     pin.icon = pin:CreateTexture(nil, "ARTWORK")
     pin.icon:SetAllPoints(pin)
-    pin:SetScript("OnEnter", ShowPinTooltip)
-    pin:SetScript("OnLeave", GameTooltip_Hide)
+    pin:SetScript("OnEnter", ShowPinDetails)
+    pin:SetScript("OnLeave", HidePinDetails)
     pin:Hide()
     return pin
 end
@@ -795,12 +827,14 @@ local function RoutePixel(pool, index, parent, anchor, x, y, color, size)
         pixel = nil
     end
     if not pixel then
-        pixel = parent:CreateTexture(nil, "ARTWORK")
+        -- World-map tiles also use ARTWORK. OVERLAY keeps the route visible
+        -- regardless of the order in which the legacy client rebuilds tiles.
+        pixel = parent:CreateTexture(nil, "OVERLAY")
         pool[index] = pixel
     end
     pixel:SetWidth(size)
     pixel:SetHeight(size)
-    pixel:SetTexture(color[1], color[2], color[3], 0.78)
+    pixel:SetTexture(color[1], color[2], color[3], 0.92)
     pixel:ClearAllPoints()
     pixel:SetPoint("CENTER", parent, anchor, x, y)
     pixel:Show()
@@ -811,7 +845,7 @@ local function DrawRouteSegment(pool, count, limit, parent, anchor,
     if count >= limit or (x1 == x2 and y1 == y2) then return count end
     local dx, dy = x2 - x1, y2 - y1
     local length = math.sqrt(dx * dx + dy * dy)
-    local steps = math.max(1, math.ceil(length / 2.25))
+    local steps = math.max(1, math.ceil(length / 5))
     for step = 0, steps do
         if count >= limit then break end
         local progress = step / steps
@@ -824,17 +858,21 @@ end
 
 local function DrawWorldRoutes(zone, parent, currentFloor)
     HideRouteLines(worldRouteLines)
+    if not PathsEnabled() then return end
     local width, height = parent:GetWidth(), parent:GetHeight()
     local count = 0
     for _, route in ipairs(zone.routes or {}) do
         if route.floor == 0 or currentFloor == 0 or route.floor == currentFloor then
-            local color = iconColors[route.kind] or iconColors.scout
+            local highlighted = highlightedRouteEntityID ~= nil
+                and tonumber(route.entityID) == tonumber(highlightedRouteEntityID)
+            local color = highlighted and ROUTE_HIGHLIGHT_COLOR or ROUTE_COLOR
+            local size = highlighted and 6 or 4.5
             for _, segment in ipairs(route.segments or {}) do
                 local first, last = segment.first, segment.last
                 count = DrawRouteSegment(worldRouteLines, count, 1500, parent, "TOPLEFT",
                     first.x * width / 100, -first.y * height / 100,
                     last.x * width / 100, -last.y * height / 100,
-                    color, 3)
+                    color, size)
                 if count >= 1500 then break end
             end
         end
@@ -1066,13 +1104,17 @@ end
 
 local function DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, facing, rotate)
     HideRouteLines(minimapRouteLines)
+    if not PathsEnabled() then return end
     local count = 0
     local scale = mapRadius / radius
     local visibleRadius = radiusLimit * scale
     local visibleRadiusSq = visibleRadius * visibleRadius
     local cosFacing, sinFacing = math.cos(facing), math.sin(facing)
     for _, route in ipairs(zone.routes or {}) do
-        local color = iconColors[route.kind] or iconColors.scout
+        local highlighted = highlightedRouteEntityID ~= nil
+            and tonumber(route.entityID) == tonumber(highlightedRouteEntityID)
+        local color = highlighted and ROUTE_HIGHLIGHT_COLOR or ROUTE_COLOR
+        local dotSize = highlighted and 5 or 3.5
         for _, segment in ipairs(route.segments or {}) do
             local first, last = segment.first, segment.last
             local dx1 = (first.x / 100 - playerMap.x) * size[1]
@@ -1090,11 +1132,34 @@ local function DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, fac
                 visibleRadiusSq)
             if dx1 then
                 count = DrawRouteSegment(minimapRouteLines, count, 600, Minimap, "CENTER",
-                    dx1, dy1, dx2, dy2, color, 3)
+                    dx1, dy1, dx2, dy2, color, dotSize)
             end
             if count >= 600 then break end
         end
         if count >= 600 then break end
+    end
+end
+
+RefreshRouteHighlight = function(pin)
+    if pin and pin:GetParent() == Minimap then
+        local zone = playerMap.key and ZoneForKey(playerMap.key)
+        local size = zone and PhysicalZoneSize(zone, playerMap.key)
+        if not size then return end
+        local radius = MinimapRadius()
+        local radiusLimit = radius * (MinimapPinRadiusPercent() / 100)
+        local facing = GetPlayerFacing and GetPlayerFacing() or 0
+        local rotate = GetCVar and GetCVar("rotateMinimap") == "1"
+        local mapRadius = math.min(Minimap:GetWidth(), Minimap:GetHeight()) / 2 - 10
+        DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, facing, rotate)
+        return
+    end
+
+    local parent = WorldMapDetailFrame or WorldMapButton
+    local mapName = CurrentMapName()
+    local zone = mapName and ZoneForKey(NormalizeZone(mapName))
+    if parent and zone then
+        local currentFloor = GetCurrentMapDungeonLevel and GetCurrentMapDungeonLevel() or 0
+        DrawWorldRoutes(zone, parent, currentFloor)
     end
 end
 

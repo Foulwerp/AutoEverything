@@ -1925,6 +1925,14 @@ pageBuilders.Quest = function(parent)
     -- still say "pin" because they are saved-variable
     -- names, but all user-facing labels say "icon".
     Label(parent, "Map and Minimap Icons", 28, -260, 13)
+    local patrolPaths = ScalarCheck(parent, "quest", AutoQuestConfig, "showPatrolPaths", "Show patrol paths", 290, -256, true,
+        "Shows grey dotted paths for service NPCs with recorded patrol locations. Hover a route endpoint icon to highlight that NPC's path.")
+    patrolPaths:SetOnChanged(function()
+        if AutoQuest and AutoQuest.Map then
+            AutoQuest.Map.UpdateWorldMap()
+            AutoQuest.Map.UpdateMinimap()
+        end
+    end)
     ScalarCheck(parent, "quest", AutoQuestConfig, "useElvUIQuestMarkers", "Use ElvUI nameplate icons", 472, -256, false,
         "On uses ElvUI's quest icons and hides the addon's nameplate badges. Off uses the addon's kill, loot, and interaction badges and disables ElvUI's NPC quest icons. If ElvUI is unavailable, the addon badges remain active.")
     local leftX, rightX = 28, 388
@@ -1974,7 +1982,7 @@ pageBuilders.Quest = function(parent)
     end)
     AddTooltip(serviceIcons, "Service icons",
         "Choose any combination of service NPC icons for both the world map and minimap. Choose None to hide every service icon while keeping quest-objective icons visible.")
-    BindToggleDependency(rightControls.mapPins, serviceIcons)
+    BindToggleDependency(rightControls.mapPins, patrolPaths, serviceIcons)
 
     -- Group progress travels through invisible PARTY/RAID addon messages.
     -- Keep the controls in the owning Quest page; AutoBuff has its own module.
