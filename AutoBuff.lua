@@ -230,6 +230,7 @@ end
 local function AddUnit(units, unit, isSelf)
     if UnitIsConnected and not UnitIsConnected(unit) then return end
     if UnitIsDeadOrGhost and UnitIsDeadOrGhost(unit) then return end
+    if UnitIsTrivial and UnitIsTrivial(unit) then return end
     if UnitCanAssist and not UnitCanAssist("player", unit) then return end
     local record = UnitRecord(unit, isSelf)
     if record then table.insert(units, record) end
