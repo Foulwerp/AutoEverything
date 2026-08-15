@@ -20,6 +20,7 @@ local currentMissing = {}
 local currentCandidate = nil
 local rejectedTrivialTargets = {}
 local lastBuffAttempt = nil
+local castReadyAt = nil
 local window, castButton, statusText
 local roleRows = {}
 local roleOverflowText
@@ -37,6 +38,7 @@ local WINDOW_CONTENT_WIDTH = WINDOW_WIDTH - (WINDOW_INSET * 2)
 local ROLE_NAME_WIDTH = 118
 local ROLE_BUTTON_SIZE = 24
 local ROLE_BUTTON_GAP = 4
+local CAST_DELAY_SECONDS = 1
 
 local function Default(key, fallback)
     local value = AutoBuffConfig and AutoBuffConfig[key]
@@ -551,8 +553,12 @@ local function CreateWindow()
             name = currentCandidate.name,
             at = GetTime(),
         }
+        castReadyAt = GetTime() + CAST_DELAY_SECONDS
     end)
-    castButton:SetScript("PostClick", function() ScheduleScan(0.2) end)
+    castButton:SetScript("PostClick", function(self)
+        self:Disable()
+        ScheduleScan(0)
+    end)
 
     roleOverflowText = window:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     roleOverflowText:SetPoint("BOTTOMLEFT", WINDOW_INSET + 2, 6)
@@ -600,8 +606,13 @@ local function PaintWindow()
         castButton:SetAttribute("type", "spell")
         castButton:SetAttribute("spell", currentCandidate.spell)
         castButton:SetAttribute("unit", currentCandidate.unit)
-        castButton:SetText("Buff " .. currentCandidate.name)
-        castButton:Enable()
+        if castReadyAt and GetTime() < castReadyAt then
+            castButton:SetText("Waiting for global cooldown")
+            castButton:Disable()
+        else
+            castButton:SetText("Buff " .. currentCandidate.name)
+            castButton:Enable()
+        end
     else
         castButton:SetAttribute("type", nil)
         castButton:SetAttribute("spell", nil)
@@ -697,6 +708,10 @@ events:SetScript("OnEvent", function(self, event, arg1)
 end)
 
 events:SetScript("OnUpdate", function(self, elapsed)
+    if castReadyAt and GetTime() >= castReadyAt then
+        castReadyAt = nil
+        ScheduleScan(0)
+    end
     if AB.db and AB.db.enabled == true and not InCombat() then
         periodicElapsed = periodicElapsed + (elapsed or 0)
         if periodicElapsed >= 2 then
