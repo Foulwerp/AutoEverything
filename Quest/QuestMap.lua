@@ -196,7 +196,7 @@ end
 
 -- Service pages may expose many sampled positions for an NPC that patrols.
 -- Split disconnected samples first so separate static spawns are not joined
--- across a zone, then retain each connected group's sampled path nodes with
+-- across a zone, then derive one smooth centerline per connected group with
 -- service pins only at its two endpoints.
 local SERVICE_GROUP_LINK_SQ = 25
 local SERVICE_ROUTE_MIN_SPAN_SQ = 2.25
@@ -268,6 +268,86 @@ local function RepresentativeServicePoint(group)
     return best
 end
 
+local function TreeFarthest(adjacency, startIndex)
+    local farthest, farthestDistance = startIndex, 0
+    local parent = {}
+    local stack = { { index=startIndex, from=0, distance=0 } }
+    while #stack > 0 do
+        local entry = table.remove(stack)
+        parent[entry.index] = entry.from
+        if entry.distance > farthestDistance then
+            farthest, farthestDistance = entry.index, entry.distance
+        end
+        for _, edge in ipairs(adjacency[entry.index] or {}) do
+            if edge.index ~= entry.from then
+                stack[#stack + 1] = {
+                    index=edge.index, from=entry.index,
+                    distance=entry.distance + edge.distance,
+                }
+            end
+        end
+    end
+    return farthest, parent
+end
+
+-- The database contains dense, unordered samples with small side clusters.
+-- Build a minimum spanning tree, keep its longest end-to-end path, then apply
+-- a light three-point smoothing pass. This yields one stable patrol centerline
+-- without connecting distant branches or drawing every noisy sample.
+local function ServiceRoutePath(group)
+    local adjacency, connected, nearest, nearestSq = {}, { [1]=true }, {}, {}
+    for index = 1, #group do adjacency[index] = {} end
+    for index = 2, #group do
+        local dx, dy = group[1].x - group[index].x, group[1].y - group[index].y
+        nearest[index], nearestSq[index] = 1, dx * dx + dy * dy
+    end
+    for _ = 2, #group do
+        local bestTo, bestDistanceSq
+        for index = 1, #group do
+            if not connected[index] and (not bestDistanceSq or nearestSq[index] < bestDistanceSq) then
+                bestTo, bestDistanceSq = index, nearestSq[index]
+            end
+        end
+        if not bestTo or bestDistanceSq > SERVICE_GROUP_LINK_SQ then break end
+        local bestFrom, distance = nearest[bestTo], math.sqrt(bestDistanceSq)
+        connected[bestTo] = true
+        adjacency[bestFrom][#adjacency[bestFrom] + 1] = { index=bestTo, distance=distance }
+        adjacency[bestTo][#adjacency[bestTo] + 1] = { index=bestFrom, distance=distance }
+        for index, point in ipairs(group) do
+            if not connected[index] then
+                local dx, dy = group[bestTo].x - point.x, group[bestTo].y - point.y
+                local distanceSq = dx * dx + dy * dy
+                if distanceSq < nearestSq[index] then
+                    nearest[index], nearestSq[index] = bestTo, distanceSq
+                end
+            end
+        end
+    end
+
+    local first = TreeFarthest(adjacency, 1)
+    local last, parent = TreeFarthest(adjacency, first)
+    local reversed, index = {}, last
+    while index and index ~= 0 do
+        reversed[#reversed + 1] = group[index]
+        if index == first then break end
+        index = parent[index]
+    end
+    local path = {}
+    for reverseIndex = #reversed, 1, -1 do path[#path + 1] = reversed[reverseIndex] end
+    if #path < 3 then return path end
+
+    local smoothed = { path[1] }
+    for pathIndex = 2, #path - 1 do
+        local previous, point, following = path[pathIndex - 1], path[pathIndex], path[pathIndex + 1]
+        smoothed[#smoothed + 1] = {
+            x=previous.x * 0.25 + point.x * 0.5 + following.x * 0.25,
+            y=previous.y * 0.25 + point.y * 0.5 + following.y * 0.25,
+        }
+    end
+    smoothed[#smoothed + 1] = path[#path]
+    return smoothed
+end
+
 local function AddServicePoint(zone, service, location, point, routeEndpoint)
     zone.points[#zone.points + 1] = {
         x=point.x, y=point.y, floor=tonumber(location.floor) or 0,
@@ -279,15 +359,16 @@ end
 
 local function AddServiceLocation(zone, service, location)
     for _, group in ipairs(ServiceCoordinateGroups(location.coords)) do
-        local first, last, spanSq = FarthestServicePoints(group)
+        local _, _, spanSq = FarthestServicePoints(group)
         if #group >= 3 and spanSq >= SERVICE_ROUTE_MIN_SPAN_SQ then
+            local path = ServiceRoutePath(group)
             zone.routes[#zone.routes + 1] = {
-                points=group,
+                points=path,
                 floor=tonumber(location.floor) or 0,
                 kind=service.kind, entityID=service.id, name=service.name,
             }
-            AddServicePoint(zone, service, location, first, true)
-            AddServicePoint(zone, service, location, last, true)
+            AddServicePoint(zone, service, location, path[1], true)
+            AddServicePoint(zone, service, location, path[#path], true)
         elseif #group > 0 then
             AddServicePoint(zone, service, location, RepresentativeServicePoint(group), false)
         end
@@ -809,6 +890,42 @@ local function RoutePixel(pool, index, parent, anchor, x, y, color, size, alpha)
     pixel:Show()
 end
 
+local function DrawEvenRouteDots(pool, count, limit, parent, anchor,
+    points, color, size, alpha, spacing, visible)
+    if not points or not points[1] then return count end
+    local placed = {}
+    local minimumDistanceSq = (spacing * 0.7) * (spacing * 0.7)
+    local function AddDot(x, y)
+        if count >= limit or (visible and not visible(x, y)) then return end
+        for _, point in ipairs(placed) do
+            local dx, dy = point.x - x, point.y - y
+            if dx * dx + dy * dy < minimumDistanceSq then return end
+        end
+        placed[#placed + 1] = { x=x, y=y }
+        count = count + 1
+        RoutePixel(pool, count, parent, anchor, x, y, color, size, alpha)
+    end
+
+    AddDot(points[1].x, points[1].y)
+    local distanceSinceDot = 0
+    for index = 2, #points do
+        local first, last = points[index - 1], points[index]
+        local dx, dy = last.x - first.x, last.y - first.y
+        local length = math.sqrt(dx * dx + dy * dy)
+        if length > 0 then
+            local offset = spacing - distanceSinceDot
+            while offset <= length do
+                local progress = offset / length
+                AddDot(first.x + dx * progress, first.y + dy * progress)
+                if count >= limit then return count end
+                offset = offset + spacing
+            end
+            distanceSinceDot = (distanceSinceDot + length) % spacing
+        end
+    end
+    return count
+end
+
 local function DrawWorldRoutes(zone, parent, currentFloor)
     HideRouteDots(worldRouteDots)
     if not PathsEnabled() then return end
@@ -820,13 +937,15 @@ local function DrawWorldRoutes(zone, parent, currentFloor)
                 and tonumber(route.entityID) == tonumber(highlightedRouteEntityID)
             local color = highlighted and ROUTE_HIGHLIGHT_COLOR or ROUTE_COLOR
             local size, alpha = highlighted and 5 or 3, highlighted and 0.9 or 0.45
+            local screenPoints = {}
             for _, point in ipairs(route.points or {}) do
-                count = count + 1
-                RoutePixel(worldRouteDots, count, parent, "TOPLEFT",
-                    point.x * width / 100, -point.y * height / 100,
-                    color, size, alpha)
-                if count >= 1500 then break end
+                screenPoints[#screenPoints + 1] = {
+                    x=point.x * width / 100,
+                    y=-point.y * height / 100,
+                }
             end
+            count = DrawEvenRouteDots(worldRouteDots, count, 1500, parent, "TOPLEFT",
+                screenPoints, color, size, alpha, 8)
         end
         if count >= 1500 then break end
     end
@@ -1043,12 +1162,14 @@ local function DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, fac
     local scale = mapRadius / radius
     local visibleRadius = radiusLimit * scale
     local visibleRadiusSq = visibleRadius * visibleRadius
+    local function Visible(x, y) return x * x + y * y <= visibleRadiusSq end
     local cosFacing, sinFacing = math.cos(facing), math.sin(facing)
     for _, route in ipairs(zone.routes or {}) do
         local highlighted = highlightedRouteEntityID ~= nil
             and tonumber(route.entityID) == tonumber(highlightedRouteEntityID)
         local color = highlighted and ROUTE_HIGHLIGHT_COLOR or ROUTE_COLOR
         local dotSize, alpha = highlighted and 4 or 2.5, highlighted and 0.9 or 0.45
+        local screenPoints = {}
         for _, point in ipairs(route.points or {}) do
             local dx = (point.x / 100 - playerMap.x) * size[1]
             local dy = (point.y / 100 - playerMap.y) * size[2]
@@ -1057,13 +1178,10 @@ local function DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, fac
                     dx * sinFacing + dy * cosFacing
             end
             local x, y = dx * scale, -dy * scale
-            if x * x + y * y <= visibleRadiusSq then
-                count = count + 1
-                RoutePixel(minimapRouteDots, count, Minimap, "CENTER",
-                    x, y, color, dotSize, alpha)
-            end
-            if count >= 600 then break end
+            screenPoints[#screenPoints + 1] = { x=x, y=y }
         end
+        count = DrawEvenRouteDots(minimapRouteDots, count, 600, Minimap, "CENTER",
+            screenPoints, color, dotSize, alpha, 8, Visible)
         if count >= 600 then break end
     end
 end
