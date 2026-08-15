@@ -772,7 +772,10 @@ local function RefreshWindow()
             row:Show()
         else row:Hide() end
     end
-    if RefreshSellGrid then RefreshSellGrid() end
+    -- The selected bag stack is temporarily locked while an auction is being
+    -- created. Rescanning it here would remove the selection and reset both
+    -- quantity controls in the middle of a multisell.
+    if RefreshSellGrid and not posting then RefreshSellGrid() end
 end
 Auction.Refresh = RefreshWindow
 
@@ -1255,9 +1258,13 @@ local function PostValidated(entry, unitPrice)
         ClearCursor(); posting.skipped = posting.skipped + 1; Warn("Auction posting API is unavailable."); return
     end
     ClickAuctionSellItemButton()
+    -- StartAuction may dispatch multisell progress immediately. Publish the
+    -- waiting state first so those events cannot be missed and strand the
+    -- queue until its timeout.
     posting.multisellExpected = numStacks > 1 and numStacks or nil
-    StartAuction(bid, buyout, duration, stackSize, numStacks)
     posting.waiting, posting.sentAt, posting.current = true, GetTime(), entry
+    StartAuction(bid, buyout, duration, stackSize, numStacks)
+    if not posting then return end
     RefreshWindow()
 end
 
@@ -1516,8 +1523,14 @@ local function RefreshManualActive()
     -- The review field is the full listing buyout, while pricing safeguards
     -- retain a unit price internally.
     if manual.priceInput then manual.priceInput:SetValue((entry.manualPrice or entry.suggested or 0) * entry.count) end
-    if manual.countBox then manual.countBox:SetText(tostring(entry.count)) end
-    if manual.stacksBox then manual.stacksBox:SetText(tostring(entry.numStacks)) end
+    -- Background auction and bag refreshes must not replace a value while the
+    -- player is typing it. The focus-lost handlers validate and commit it.
+    if manual.countBox and not manual.countBox:HasFocus() then
+        manual.countBox:SetText(tostring(entry.count))
+    end
+    if manual.stacksBox and not manual.stacksBox:HasFocus() then
+        manual.stacksBox:SetText(tostring(entry.numStacks))
+    end
 end
 
 local function ManualPriceNotice(entry)
