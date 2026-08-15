@@ -2116,6 +2116,7 @@ pageBuilders.Buff = function(parent)
         buffScroll:SetVerticalScroll(value)
     end
     local function BindBuffWheel(control)
+        control:EnableMouse(true)
         control:EnableMouseWheel(true)
         control:SetScript("OnMouseWheel", function(_, delta)
             ScrollBuffsBy(delta > 0 and -60 or 60)
@@ -2172,6 +2173,7 @@ pageBuilders["Buff Assignments"] = function(parent)
     AddTooltip(back, "Back to Auto Buff", "Return to spell and targeting configuration.")
 
     Label(parent, "Player", 30, -90, 13)
+    Label(parent, "Detected", 284, -90, 13)
     Label(parent, "Assigned role", 380, -90, 13)
 
     local members = AutoBuff and AutoBuff.GetGroupMembers and AutoBuff.GetGroupMembers() or {}
@@ -2195,6 +2197,7 @@ pageBuilders["Buff Assignments"] = function(parent)
         scroll:SetVerticalScroll(value)
     end
     local function BindAssignmentWheel(control)
+        control:EnableMouse(true)
         control:EnableMouseWheel(true)
         control:SetScript("OnMouseWheel", function(_, delta)
             ScrollBy(delta > 0 and -68 or 68)
@@ -2213,9 +2216,13 @@ pageBuilders["Buff Assignments"] = function(parent)
         row:SetVertexColor(COLORS.surfaceRaised[1], COLORS.surfaceRaised[2], COLORS.surfaceRaised[3], index % 2 == 0 and 0.30 or 0.18)
 
         local name = Label(child, member.name .. (member.isSelf and "  (You)" or ""), 8, y - 2)
-        name:SetWidth(330)
+        name:SetWidth(240)
         name:SetJustifyH("LEFT")
         local inferred = member.inferredRole and member.inferredRole ~= "unknown" and member.inferredRole or "Inspecting..."
+        local detected = Label(child, TitleCase(inferred), 260, y - 2)
+        detected:SetWidth(84)
+        detected:SetJustifyH("LEFT")
+        detected:SetTextColor(Unpack(member.roleSetting == "auto" and BRAND or TEXT_MUTED))
         local roleChoices = {
             { text = "Auto (" .. inferred .. ")", value = "auto" },
             { text = "Unassigned", value = "none" },

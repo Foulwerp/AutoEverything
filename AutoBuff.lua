@@ -511,15 +511,26 @@ local function CreateRoleRow(index)
     return row
 end
 
-local function PaintRoleButton(button, selected)
+local function PaintRoleButton(button, state)
     local UI = AutoCore and AutoCore.UI
     if not UI or not button then return end
-    if selected then
+    local font = button:GetFontString()
+    if state == "inferred" then
+        button:SetBackdropColor(UI.Colors.brandDim[1], UI.Colors.brandDim[2], UI.Colors.brandDim[3], 0.9)
+        button:SetBackdropBorderColor(UI.Unpack(UI.Colors.brand))
+        if font then font:SetTextColor(UI.Unpack(UI.Colors.text)) end
+    elseif state == "automatic" then
+        button:SetBackdropColor(UI.Colors.surfaceRaised[1], UI.Colors.surfaceRaised[2], UI.Colors.surfaceRaised[3], 1)
+        button:SetBackdropBorderColor(UI.Unpack(UI.Colors.textMuted))
+        if font then font:SetTextColor(UI.Unpack(UI.Colors.textMuted)) end
+    elseif state == "selected" then
         button:SetBackdropColor(UI.Colors.selected[1], UI.Colors.selected[2], UI.Colors.selected[3], 1)
         button:SetBackdropBorderColor(UI.Unpack(UI.Colors.brand))
+        if font then font:SetTextColor(UI.Unpack(UI.Colors.text)) end
     else
         button:SetBackdropColor(UI.Colors.control[1], UI.Colors.control[2], UI.Colors.control[3], 1)
         button:SetBackdropBorderColor(UI.Unpack(UI.Colors.border))
+        if font then font:SetTextColor(UI.Unpack(UI.Colors.textMuted)) end
     end
 end
 
@@ -535,7 +546,16 @@ local function PaintRoleRows()
                 and member.inferredRole or "inspecting"
             row.name:SetText(member.name)
             row.buttons.auto.roleTitle = "Automatic (" .. inferred .. ")"
-            for role, button in pairs(row.buttons) do PaintRoleButton(button, role == member.roleSetting) end
+            for role, button in pairs(row.buttons) do
+                local state
+                if member.roleSetting == "auto" then
+                    if role == "auto" then state = "automatic"
+                    elseif role == member.inferredRole then state = "inferred" end
+                elseif role == member.roleSetting then
+                    state = "selected"
+                end
+                PaintRoleButton(button, state)
+            end
             row:Show()
         else
             row.memberName = nil
