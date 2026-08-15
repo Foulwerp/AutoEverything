@@ -589,7 +589,7 @@ PaintRoleRows = function()
         roleScrollSlider:SetHeight(math.max(24, (shown * ROLE_ROW_HEIGHT) - 4))
         roleScrollSlider:SetMinMaxValues(1, maximumFirst)
         roleScrollUpdating = true
-        roleScrollSlider:SetValue(maximumFirst - roleFirstIndex + 1)
+        roleScrollSlider:SetValue(roleFirstIndex)
         roleScrollUpdating = false
         roleScrollSlider:Show()
     else
@@ -697,15 +697,40 @@ local function CreateWindow()
     roleScrollSlider:SetThumbTexture("Interface\\Buttons\\WHITE8X8")
     local scrollThumb = roleScrollSlider:GetThumbTexture()
     if scrollThumb then
-        scrollThumb:SetVertexColor(0.31, 0.59, 0.92, 0.95)
-        scrollThumb:SetSize(12, 26)
+        local pillWidth = 12
+        local pillHeight = 26
+        local capHeight = pillWidth / 2
+        local circleTexture = UI and UI.Textures and UI.Textures.circle
+            or "Interface\\TALENTFRAME\\talentsmasknodecircle"
+        scrollThumb:SetSize(pillWidth, pillHeight)
+        scrollThumb:SetVertexColor(1, 1, 1, 0)
+
+        local thumbTop = roleScrollSlider:CreateTexture(nil, "OVERLAY")
+        thumbTop:SetTexture(circleTexture)
+        thumbTop:SetTexCoord(0, 1, 0, 0.5)
+        thumbTop:SetSize(pillWidth, capHeight)
+        thumbTop:SetPoint("TOP", scrollThumb, "TOP", 0, 0)
+        thumbTop:SetVertexColor(0.31, 0.59, 0.92, 0.95)
+
+        local thumbBottom = roleScrollSlider:CreateTexture(nil, "OVERLAY")
+        thumbBottom:SetTexture(circleTexture)
+        thumbBottom:SetTexCoord(0, 1, 0.5, 1)
+        thumbBottom:SetSize(pillWidth, capHeight)
+        thumbBottom:SetPoint("BOTTOM", scrollThumb, "BOTTOM", 0, 0)
+        thumbBottom:SetVertexColor(0.31, 0.59, 0.92, 0.95)
+
+        local thumbCenter = roleScrollSlider:CreateTexture(nil, "OVERLAY")
+        thumbCenter:SetTexture("Interface\\Buttons\\WHITE8X8")
+        thumbCenter:SetPoint("TOPLEFT", thumbTop, "BOTTOMLEFT", 0, 0)
+        thumbCenter:SetPoint("BOTTOMRIGHT", thumbBottom, "TOPRIGHT", 0, 0)
+        thumbCenter:SetVertexColor(0.31, 0.59, 0.92, 0.95)
     end
     roleScrollSlider:SetScript("OnValueChanged", function(_, value)
         if roleScrollUpdating then return end
         local members = RosterUnits()
         local shown = math.min(#members, MAX_WINDOW_ROLES)
         local maximumFirst = math.max(1, #members - shown + 1)
-        roleFirstIndex = maximumFirst - math.floor(value + 0.5) + 1
+        roleFirstIndex = math.max(1, math.min(math.floor(value + 0.5), maximumFirst))
         PaintRoleRows()
     end)
     roleScrollSlider:SetScript("OnMouseWheel", function(_, delta)
