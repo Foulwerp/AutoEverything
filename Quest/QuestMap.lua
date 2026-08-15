@@ -14,6 +14,7 @@ local activePointKeys = {}
 local serviceByZone
 local combinedByZone = {}
 local worldPins, minimapPins = {}, {}
+local worldRouteDots, minimapRouteDots = {}, {}
 local refreshPending, refreshAt = false, 0
 local playerMap = { name = nil, key = nil, x = nil, y = nil }
 local buildStats = { activeQuests=0, matchedQuests=0, points=0, servicePoints=0 }
@@ -186,6 +187,106 @@ local function AddLocation(zoneID, zoneName, floor, record, coord, questID, ques
     return true
 end
 
+-- Service pages may expose many sampled positions for an NPC that patrols.
+-- Split disconnected samples first so separate static spawns are not joined
+-- across a zone, then reduce each connected group to either one stationary
+-- pin or the two farthest patrol endpoints plus a route segment.
+local SERVICE_GROUP_LINK_SQ = 25
+local SERVICE_ROUTE_MIN_SPAN_SQ = 2.25
+
+local function ServiceCoordinateGroups(coords)
+    local points = {}
+    for _, coord in ipairs(coords or {}) do
+        local x, y = tonumber(coord[1]), tonumber(coord[2])
+        if x and y then points[#points + 1] = { x=x, y=y } end
+    end
+
+    local groups, assigned = {}, {}
+    for startIndex = 1, #points do
+        if not assigned[startIndex] then
+            local group, queue = {}, { startIndex }
+            assigned[startIndex] = true
+            local queueIndex = 1
+            while queueIndex <= #queue do
+                local pointIndex = queue[queueIndex]
+                queueIndex = queueIndex + 1
+                local point = points[pointIndex]
+                group[#group + 1] = point
+                for candidateIndex = 1, #points do
+                    if not assigned[candidateIndex] then
+                        local candidate = points[candidateIndex]
+                        local dx, dy = point.x - candidate.x, point.y - candidate.y
+                        if dx * dx + dy * dy <= SERVICE_GROUP_LINK_SQ then
+                            assigned[candidateIndex] = true
+                            queue[#queue + 1] = candidateIndex
+                        end
+                    end
+                end
+            end
+            groups[#groups + 1] = group
+        end
+    end
+    return groups
+end
+
+local function FarthestServicePoints(group)
+    local first, last, farthestSq = group[1], group[1], 0
+    for left = 1, #group do
+        for right = left + 1, #group do
+            local dx = group[left].x - group[right].x
+            local dy = group[left].y - group[right].y
+            local distanceSq = dx * dx + dy * dy
+            if distanceSq > farthestSq then
+                first, last, farthestSq = group[left], group[right], distanceSq
+            end
+        end
+    end
+    return first, last, farthestSq
+end
+
+local function RepresentativeServicePoint(group)
+    local centerX, centerY = 0, 0
+    for _, point in ipairs(group) do
+        centerX, centerY = centerX + point.x, centerY + point.y
+    end
+    centerX, centerY = centerX / #group, centerY / #group
+    local best, bestDistanceSq
+    for _, point in ipairs(group) do
+        local dx, dy = point.x - centerX, point.y - centerY
+        local distanceSq = dx * dx + dy * dy
+        if not bestDistanceSq or distanceSq < bestDistanceSq then
+            best, bestDistanceSq = point, distanceSq
+        end
+    end
+    return best
+end
+
+local function AddServicePoint(zone, service, location, point, routeEndpoint)
+    zone.points[#zone.points + 1] = {
+        x=point.x, y=point.y, floor=tonumber(location.floor) or 0,
+        kind=service.kind, entityID=service.id,
+        name=service.name, isService=true,
+        routeEndpoint=routeEndpoint and true or nil,
+    }
+end
+
+local function AddServiceLocation(zone, service, location)
+    for _, group in ipairs(ServiceCoordinateGroups(location.coords)) do
+        local first, last, spanSq = FarthestServicePoints(group)
+        if #group >= 3 and spanSq >= SERVICE_ROUTE_MIN_SPAN_SQ then
+            zone.routes[#zone.routes + 1] = {
+                x1=first.x, y1=first.y, x2=last.x, y2=last.y,
+                floor=tonumber(location.floor) or 0,
+                kind=service.kind, entityID=service.id, name=service.name,
+            }
+            AddServicePoint(zone, service, location, first, true)
+            AddServicePoint(zone, service, location, last, true)
+        elseif #group > 0 then
+            AddServicePoint(zone, service, location, RepresentativeServicePoint(group), false)
+        end
+    end
+end
+
 local function BuildServiceIndex()
     if serviceByZone then return end
     serviceByZone = {}
@@ -200,21 +301,12 @@ local function BuildServiceIndex()
             if key ~= "" then
                 local zone = serviceByZone[key]
                 if not zone then
-                    zone = { name=location.zone, zoneIDs={}, questIDs={}, points={} }
+                    zone = { name=location.zone, zoneIDs={}, questIDs={}, points={}, routes={} }
                     serviceByZone[key] = zone
                 end
                 local numericZoneID = tonumber(location.zoneID)
                 if numericZoneID then zone.zoneIDs[numericZoneID] = true end
-                for _, coord in ipairs(location.coords or {}) do
-                    local x, y = tonumber(coord[1]), tonumber(coord[2])
-                    if x and y then
-                        zone.points[#zone.points + 1] = {
-                            x=x, y=y, floor=tonumber(location.floor) or 0,
-                            kind=service.kind, entityID=service.id,
-                            name=service.name, isService=true,
-                        }
-                    end
-                end
+                AddServiceLocation(zone, service, location)
             end
         end
     end
@@ -229,7 +321,7 @@ local function ZoneForKey(key)
     if not serviceZone then return questZone end
     local zone = {
         name=questZone.name or serviceZone.name,
-        zoneIDs={}, questIDs=questZone.questIDs, points={},
+        zoneIDs={}, questIDs=questZone.questIDs, points={}, routes={},
     }
     for zoneID in pairs(serviceZone.zoneIDs or {}) do zone.zoneIDs[zoneID] = true end
     for zoneID in pairs(questZone.zoneIDs or {}) do zone.zoneIDs[zoneID] = true end
@@ -237,6 +329,7 @@ local function ZoneForKey(key)
     -- Active quest objectives always receive world-map pins before the static
     -- service catalog if the user's pin cap is reached in a crowded city.
     for _, point in ipairs(serviceZone.points or {}) do zone.points[#zone.points + 1] = point end
+    for _, route in ipairs(serviceZone.routes or {}) do zone.routes[#zone.routes + 1] = route end
     combinedByZone[key] = zone
     return zone
 end
@@ -488,9 +581,9 @@ function QuestMap.RebuildIndex()
     AddConfirmedLocations(resolverObjectives)
 end
 
--- Every exposed spawn coordinate gets its own pin. Records are merged only
--- when the website supplied the exact same coordinate for the same pin type
--- (for example, one NPC progressing two active quests).
+-- Every exposed quest-objective coordinate gets its own pin. Service patrols
+-- have already been reduced to endpoints above. Records are merged only when
+-- they share the exact same coordinate and pin type.
 local function GroupExactPoints(points)
     local groups, byCoordinate, serviceCoordinates = {}, {}, {}
     for _, point in ipairs(points or {}) do
@@ -657,6 +750,61 @@ local function HidePins(pool)
     for _, pin in ipairs(pool) do pin:Hide(); pin.cluster = nil end
 end
 
+local function HideRouteDots(pool)
+    for _, dot in ipairs(pool) do dot:Hide() end
+end
+
+local function RouteDot(pool, index, parent, anchor, x, y, color, size)
+    local dot = pool[index]
+    if dot and dot:GetParent() ~= parent then
+        dot:Hide()
+        dot = nil
+    end
+    if not dot then
+        dot = parent:CreateTexture(nil, "ARTWORK")
+        pool[index] = dot
+    end
+    dot:SetWidth(size)
+    dot:SetHeight(size)
+    dot:SetTexture(color[1], color[2], color[3], 0.72)
+    dot:ClearAllPoints()
+    dot:SetPoint("CENTER", parent, anchor, x, y)
+    dot:Show()
+end
+
+local function DrawRouteSegment(pool, count, limit, parent, anchor,
+    x1, y1, x2, y2, color, spacing, dotSize, visible)
+    local dx, dy = x2 - x1, y2 - y1
+    local length = math.sqrt(dx * dx + dy * dy)
+    local steps = math.max(1, math.ceil(length / spacing))
+    for step = 1, steps - 1 do
+        if count >= limit then break end
+        local progress = step / steps
+        local x, y = x1 + dx * progress, y1 + dy * progress
+        if not visible or visible(x, y) then
+            count = count + 1
+            RouteDot(pool, count, parent, anchor, x, y, color, dotSize)
+        end
+    end
+    return count
+end
+
+local function DrawWorldRoutes(zone, parent, currentFloor)
+    HideRouteDots(worldRouteDots)
+    local width, height = parent:GetWidth(), parent:GetHeight()
+    local count = 0
+    for _, route in ipairs(zone.routes or {}) do
+        if route.floor == 0 or currentFloor == 0 or route.floor == currentFloor then
+            local color = iconColors[route.kind] or iconColors.scout
+            count = DrawRouteSegment(worldRouteDots, count, 1500, parent, "TOPLEFT",
+                route.x1 * width / 100, -route.y1 * height / 100,
+                route.x2 * width / 100, -route.y2 * height / 100,
+                color, 3, 2.5)
+        end
+        if count >= 1500 then break end
+    end
+end
+
 local function CurrentMapName()
     local mapID = GetCurrentMapAreaID and GetCurrentMapAreaID()
     local name = mapID and GetMapName and GetMapName(mapID)
@@ -677,6 +825,7 @@ end
 
 function QuestMap.UpdateWorldMap()
     HidePins(worldPins)
+    HideRouteDots(worldRouteDots)
     if not Enabled() or not WorldMapFrame or not WorldMapFrame:IsShown() then return end
     local parent = WorldMapDetailFrame or WorldMapButton
     if not parent or parent:GetWidth() <= 0 or parent:GetHeight() <= 0 then return end
@@ -688,6 +837,7 @@ function QuestMap.UpdateWorldMap()
     local shown = 0
     local maxPins = MaxWorldPins()
     local pinSize = WorldPinSize()
+    DrawWorldRoutes(zone, parent, currentFloor)
     if not zone.exactPoints then zone.exactPoints = GroupExactPoints(zone.points) end
     for _, cluster in ipairs(zone.exactPoints) do
         if shown >= maxPins then break end
@@ -859,8 +1009,36 @@ local function PhysicalZoneSize(zone, key)
     end
 end
 
+local function DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, facing, rotate)
+    HideRouteDots(minimapRouteDots)
+    local count = 0
+    local scale = mapRadius / radius
+    local visibleRadius = radiusLimit * scale
+    local visibleRadiusSq = visibleRadius * visibleRadius
+    local function OnMinimap(x, y) return x * x + y * y <= visibleRadiusSq end
+    local cosFacing, sinFacing = math.cos(facing), math.sin(facing)
+    for _, route in ipairs(zone.routes or {}) do
+        local dx1 = (route.x1 / 100 - playerMap.x) * size[1]
+        local dy1 = (route.y1 / 100 - playerMap.y) * size[2]
+        local dx2 = (route.x2 / 100 - playerMap.x) * size[1]
+        local dy2 = (route.y2 / 100 - playerMap.y) * size[2]
+        if rotate then
+            dx1, dy1 = dx1 * cosFacing - dy1 * sinFacing,
+                dx1 * sinFacing + dy1 * cosFacing
+            dx2, dy2 = dx2 * cosFacing - dy2 * sinFacing,
+                dx2 * sinFacing + dy2 * cosFacing
+        end
+        local color = iconColors[route.kind] or iconColors.scout
+        count = DrawRouteSegment(minimapRouteDots, count, 600, Minimap, "CENTER",
+            dx1 * scale, -dy1 * scale, dx2 * scale, -dy2 * scale,
+            color, 3, 2.5, OnMinimap)
+        if count >= 600 then break end
+    end
+end
+
 function QuestMap.UpdateMinimap()
     HidePins(minimapPins)
+    HideRouteDots(minimapRouteDots)
     if not Enabled() then minimapStatus = "disabled"; return end
     if not Minimap then minimapStatus = "Minimap frame unavailable"; return end
     if not playerMap.key or not playerMap.x then minimapStatus = "player map position unavailable"; return end
@@ -871,6 +1049,10 @@ function QuestMap.UpdateMinimap()
 
     local radius = MinimapRadius()
     local radiusLimit = radius * (MinimapPinRadiusPercent() / 100)
+    local facing = GetPlayerFacing and GetPlayerFacing() or 0
+    local rotate = GetCVar and GetCVar("rotateMinimap") == "1"
+    local mapRadius = math.min(Minimap:GetWidth(), Minimap:GetHeight()) / 2 - 10
+    DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, facing, rotate)
     local candidates = {}
     if not zone.exactPoints then zone.exactPoints = GroupExactPoints(zone.points) end
     for _, cluster in ipairs(zone.exactPoints) do
@@ -892,9 +1074,6 @@ function QuestMap.UpdateMinimap()
         return a.distance < b.distance
     end)
 
-    local facing = GetPlayerFacing and GetPlayerFacing() or 0
-    local rotate = GetCVar and GetCVar("rotateMinimap") == "1"
-    local mapRadius = math.min(Minimap:GetWidth(), Minimap:GetHeight()) / 2 - 10
     local pinSize = MinimapPinSize()
     local visibleCount = math.min(#candidates, MaxMinimapPins())
     minimapStatus = tostring(visibleCount) .. " nearby pins shown from " .. tostring(#zone.exactPoints) .. " zone locations"
@@ -1010,6 +1189,8 @@ frame:SetScript("OnUpdate", function(_, elapsed)
         if frame.pinsWereEnabled ~= false then
             HidePins(worldPins)
             HidePins(minimapPins)
+            HideRouteDots(worldRouteDots)
+            HideRouteDots(minimapRouteDots)
             frame.pinsWereEnabled = false
         end
         return
