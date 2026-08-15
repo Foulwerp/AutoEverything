@@ -1276,7 +1276,7 @@ local function PostNext()
     local entry = table.remove(queue, 1)
     posting.current = entry
     local liveKey = MarketItemKey(entry.link, entry.itemType)
-    local cached = not entry.manualPrice and liveKey and posting.livePrices and posting.livePrices[liveKey]
+    local cached = liveKey and posting.livePrices and posting.livePrices[liveKey]
     if cached and GetTime() - cached.checkedAt <= 60 then
         PostValidated(entry, cached.unitPrice)
         return
@@ -1309,7 +1309,7 @@ local function PostNext()
         if unsafe and entry.manualPrice and manual.warning then
             manual.warning:SetText(unsafe .. ". Manual post continued at your reviewed price.")
         end
-        if not entry.manualPrice and liveKey then
+        if liveKey then
             posting.livePrices = posting.livePrices or {}
             posting.livePrices[liveKey] = { unitPrice = price, checkedAt = GetTime() }
         end
@@ -1559,8 +1559,9 @@ local function ApplyManualQuantity()
     local count = tonumber(manual.countBox:GetText())
     -- Empty, zero, and invalid entries are a single item, not an unusable row.
     entry.count = math.max(1, math.min(entry.available or 1, math.floor(count or 1)))
-    entry.numStacks = math.max(1, math.min(tonumber(entry.numStacks) or 1,
-        math.floor((entry.available or 1) / entry.count)))
+    -- Choosing a stack size means "post all complete stacks" by default. The
+    -- adjacent Stacks field can still be lowered afterward for a partial run.
+    entry.numStacks = math.max(1, math.floor((entry.available or 1) / entry.count))
     RefreshManualActive()
     if RefreshSellGrid then RefreshSellGrid() end
 end
@@ -1798,26 +1799,36 @@ local function StartManualPost()
     if posting or scan or marketQuery then Warn("Wait for current Auction House work to finish."); return end
     ScanSellInventory()
     queue = {}
+    local livePrices = {}
     for _, entry in pairs(manual.entries) do
         local link = GetContainerItemLink(entry.bag, entry.slot)
         local _, available, locked = GetContainerItemInfo(entry.bag, entry.slot)
         local stackSize = math.min(entry.count, tonumber(available) or 0)
         local numStacks = math.max(1, math.min(tonumber(entry.numStacks) or 1,
             math.floor((tonumber(available) or 0) / math.max(1, stackSize))))
-        local count = stackSize * numStacks
         local price = math.max(1, math.floor(tonumber(entry.manualPrice) or tonumber(entry.suggested) or 0))
-        if link == entry.link and not locked and count > 0 and price > 0 then
-            queue[#queue + 1] = { bag = entry.bag, slot = entry.slot, link = entry.link, itemID = entry.itemID,
-                itemType = entry.itemType, name = entry.name, count = count,
-                stackSize = stackSize, numStacks = numStacks, unitPrice = price,
-                manualPrice = price, duration = tonumber(manual.duration) or Setting("duration", 2) }
+        if link == entry.link and not locked and stackSize > 0 and price > 0 then
+            -- Ascension's native multisell can stall for a long time. Queue
+            -- each auction separately and advance on its owned-list update;
+            -- the first live check is reused for the remaining identical
+            -- stacks during this posting run.
+            for _ = 1, numStacks do
+                queue[#queue + 1] = { bag = entry.bag, slot = entry.slot, link = entry.link,
+                    itemID = entry.itemID, itemType = entry.itemType, name = entry.name,
+                    count = stackSize, stackSize = stackSize, numStacks = 1, unitPrice = price,
+                    manualPrice = price, duration = tonumber(manual.duration) or Setting("duration", 2) }
+            end
+            local liveKey = MarketItemKey(entry.link, entry.itemType)
+            if liveKey and manual.lastLiveCheck and GetTime() - manual.lastLiveCheck <= 60 then
+                livePrices[liveKey] = { unitPrice = price, checkedAt = manual.lastLiveCheck }
+            end
         end
     end
     table.sort(queue, function(a, b) return a.name < b.name end)
     if #queue == 0 then Warn("Select an auctionable bag item with a reviewed price before posting."); return end
-    -- Each item receives its own fresh market query in PostNext before the AH
-    -- API is called, so review prices cannot become stale during a bulk post.
-    posting = { waiting = false, nextAt = GetTime(), posted = 0, skipped = 0, livePrices = {} }
+    -- A Check Live result remains valid briefly; otherwise PostNext performs
+    -- one fresh query and shares it across every identical queued stack.
+    posting = { waiting = false, nextAt = GetTime(), posted = 0, skipped = 0, livePrices = livePrices }
     UpdateWorkerState(); RefreshWindow()
 end
 
@@ -2925,7 +2936,10 @@ local function CreateWindow()
     local stack = Button(sell, "Max", 50); stack:SetPoint("LEFT", manual.countBox, "RIGHT", 6, 0)
     stack:SetScript("OnClick", function()
         local e = manual.activeKey and manual.entries[manual.activeKey]
-        if e then e.count, e.numStacks = e.available or 1, 1; RefreshManualActive(); RefreshSellGrid() end
+        if e then
+            e.numStacks = math.max(1, math.floor((e.available or 1) / math.max(1, e.count)))
+            RefreshManualActive(); RefreshSellGrid()
+        end
     end)
     local stacksLabel = sell:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); stacksLabel:SetPoint("TOPLEFT", 320, -236); stacksLabel:SetText("Stacks")
     manual.stacksBox = EditBox(sell, 54, true); manual.stacksBox:SetPoint("TOPLEFT", 320, -253); manual.stacksBox:SetText("1")
@@ -2947,7 +2961,8 @@ local function CreateWindow()
     duration:SetPoint("LEFT", manualPost, "RIGHT", 8, 0)
     local sellMessageWidth = math.max(math.floor(contentWidth * 0.62), contentWidth - 340)
     manual.summary = sell:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); manual.summary:SetPoint("BOTTOMLEFT", 4, 23); manual.summary:SetWidth(sellMessageWidth); manual.summary:SetJustifyH("LEFT")
-    AddHelp(manual.countBox, "Stack size", "Number of items in each auction. Max uses the full selected bag stack as one auction.")
+    AddHelp(manual.countBox, "Stack size", "Number of items in each auction. Changing this automatically selects every complete stack available.")
+    AddHelp(stack, "Maximum stacks", "Sets Stacks to the maximum number of complete auctions available at the chosen stack size.")
     AddHelp(manual.stacksBox, "Number of stacks", "How many auctions of this stack size to create. The total cannot exceed the selected bag stack.")
     manual.warning = sell:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); manual.warning:SetPoint("BOTTOMLEFT", 4, 6); manual.warning:SetWidth(sellMessageWidth); manual.warning:SetJustifyH("LEFT"); manual.warning:SetText("Manual prices are advisory-checked and never blocked.")
     local sellFooter = AddScanFooter(sell); sellFooter:SetWidth(contentWidth - sellMessageWidth - 16)
@@ -3276,13 +3291,13 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2)
             posting.waiting = false
             posting.posted = posting.posted + expected
             posting.multisellExpected = nil
-            posting.nextAt = GetTime() + 0.35
+            posting.nextAt = GetTime() + 0.1
         end
     elseif event == "AUCTION_OWNED_LIST_UPDATE" and posting and posting.waiting
         and not posting.multisellExpected then
         posting.waiting = false
         posting.posted = posting.posted + 1
-        posting.nextAt = GetTime() + 0.35
+        posting.nextAt = GetTime() + 0.1
     end
 end)
 ProcessAuctionWork = function()
