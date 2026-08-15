@@ -673,6 +673,55 @@ end
 
 HookUpgradeTooltips()
 
+-- GameTooltip has Blizzard's comparison OnUpdate handler, but ItemRefTooltip
+-- does not on this client.  Item links from chat and other hyperlink sources
+-- are displayed in ItemRefTooltip, so give it the same modifier/CVar-driven
+-- equipped-item comparison behavior as ordinary hovered item tooltips.
+local function HideTooltipComparisons(tooltip)
+    if not tooltip or not tooltip.shoppingTooltips then return end
+    for _, frame in pairs(tooltip.shoppingTooltips) do
+        if frame then frame:Hide() end
+    end
+end
+
+local function EnableLinkTooltipComparison(tooltip)
+    if not tooltip or not tooltip.HookScript or tooltip.__autoUpgradeLinkCompareHooked then return end
+    tooltip.__autoUpgradeLinkCompareHooked = true
+
+    tooltip:HookScript("OnUpdate", function(self, elapsed)
+        self.__autoUpgradeLinkCompareElapsed = (self.__autoUpgradeLinkCompareElapsed or 0) + elapsed
+        if self.__autoUpgradeLinkCompareElapsed < 0.05 then return end
+        self.__autoUpgradeLinkCompareElapsed = 0
+
+        local link
+        if self.GetItem then
+            link = select(2, self:GetItem())
+        end
+        local compareItems = IsModifiedClick and IsModifiedClick("COMPAREITEMS")
+        if not compareItems and GetCVarBool then
+            compareItems = GetCVarBool("alwaysCompareItems")
+        end
+
+        if link and compareItems then
+            if self.__autoUpgradeLinkComparing ~= link and GameTooltip_ShowCompareItem then
+                HideTooltipComparisons(self)
+                GameTooltip_ShowCompareItem(self)
+                self.__autoUpgradeLinkComparing = link
+            end
+        elseif self.__autoUpgradeLinkComparing then
+            HideTooltipComparisons(self)
+            self.__autoUpgradeLinkComparing = nil
+        end
+    end)
+    tooltip:HookScript("OnHide", function(self)
+        HideTooltipComparisons(self)
+        self.__autoUpgradeLinkComparing = nil
+        self.__autoUpgradeLinkCompareElapsed = 0
+    end)
+end
+
+EnableLinkTooltipComparison(ItemRefTooltip)
+
 -- ElvUI 7.27 uses GameTooltip.comparing for its Shift-to-compare handler.
 -- Blizzard uses that same field for always-compare, so ElvUI hides Blizzard's
 -- panel every 0.2 seconds. Install the fix at runtime rather than changing
@@ -718,6 +767,7 @@ elvUIFixFrame:SetScript("OnEvent", function(self)
     -- Comparison frames and tooltip replacements supplied by other addons are
     -- guaranteed to exist by login.
     HookUpgradeTooltips()
+    EnableLinkTooltipComparison(ItemRefTooltip)
     FixElvUIAlwaysCompareFlicker()
     self:UnregisterEvent("PLAYER_LOGIN")
 end)
