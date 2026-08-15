@@ -24,6 +24,11 @@ local castReadyAt = nil
 local window, castButton, statusText
 local roleRows = {}
 local roleOverflowText
+local roleScrollSlider
+local roleFirstIndex = 1
+local roleScrollUpdating = false
+local PaintRoleRows
+local ScrollRoleRows
 
 local MAX_WINDOW_ROLES = 8
 local BASE_WINDOW_HEIGHT = 88
@@ -31,10 +36,13 @@ local ROLE_ROW_HEIGHT = 24
 -- Blizzard character names are capped at 12 characters. The compact side
 -- window shows only the character portion (not the realm), so 118 px leaves
 -- enough room at the addon's narrow UI font while keeping all five role
--- buttons inside a 278 px-wide panel.
-local WINDOW_WIDTH = 278
+-- buttons beside a narrow raid-roster scrollbar.
+local WINDOW_WIDTH = 298
 local WINDOW_INSET = 8
+local ROLE_SCROLLBAR_WIDTH = 14
+local ROLE_SCROLLBAR_GAP = 4
 local WINDOW_CONTENT_WIDTH = WINDOW_WIDTH - (WINDOW_INSET * 2)
+    - ROLE_SCROLLBAR_WIDTH - ROLE_SCROLLBAR_GAP
 local ROLE_NAME_WIDTH = 118
 local ROLE_BUTTON_SIZE = 24
 local ROLE_BUTTON_GAP = 4
@@ -472,6 +480,11 @@ local function CreateRoleRow(index)
     local row = CreateFrame("Frame", nil, window)
     row:SetSize(WINDOW_CONTENT_WIDTH, ROLE_ROW_HEIGHT - 2)
     row:SetPoint("TOPLEFT", WINDOW_INSET, -80 - ((index - 1) * ROLE_ROW_HEIGHT))
+    row:EnableMouse(true)
+    row:EnableMouseWheel(true)
+    row:SetScript("OnMouseWheel", function(_, delta)
+        if ScrollRoleRows then ScrollRoleRows(delta > 0 and -1 or 1) end
+    end)
 
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.name:SetPoint("LEFT", 2, 0)
@@ -500,6 +513,10 @@ local function CreateRoleRow(index)
         ApplyRoleButtonSkin(button)
         button:SetScript("OnEnter", RoleTooltip)
         button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        button:EnableMouseWheel(true)
+        button:SetScript("OnMouseWheel", function(_, delta)
+            if ScrollRoleRows then ScrollRoleRows(delta > 0 and -1 or 1) end
+        end)
         button:SetScript("OnClick", function(self)
             if not row.memberName then return end
             local ok, err = AB.SetPlayerRole(row.memberName, roleValue)
@@ -534,12 +551,14 @@ local function PaintRoleButton(button, state)
     end
 end
 
-local function PaintRoleRows()
+PaintRoleRows = function()
     local members = RosterUnits()
     local shown = math.min(#members, MAX_WINDOW_ROLES)
+    local maximumFirst = math.max(1, #members - shown + 1)
+    roleFirstIndex = math.max(1, math.min(roleFirstIndex, maximumFirst))
     for index = 1, MAX_WINDOW_ROLES do
         local row = roleRows[index] or CreateRoleRow(index)
-        local member = members[index]
+        local member = members[roleFirstIndex + index - 1]
         if member then
             row.memberName = member.fullName or member.name
             local inferred = member.inferredRole and member.inferredRole ~= "unknown"
@@ -564,13 +583,31 @@ local function PaintRoleRows()
     end
 
     if #members > shown then
-        roleOverflowText:SetText("+" .. (#members - shown) .. " more in /ae > Auto Buff > Group Assignments")
+        local lastIndex = math.min(#members, roleFirstIndex + shown - 1)
+        roleOverflowText:SetText(roleFirstIndex .. "-" .. lastIndex .. " of " .. #members)
         roleOverflowText:Show()
+        roleScrollSlider:SetHeight(math.max(24, (shown * ROLE_ROW_HEIGHT) - 4))
+        roleScrollSlider:SetMinMaxValues(1, maximumFirst)
+        roleScrollUpdating = true
+        roleScrollSlider:SetValue(maximumFirst - roleFirstIndex + 1)
+        roleScrollUpdating = false
+        roleScrollSlider:Show()
     else
         roleOverflowText:Hide()
+        roleScrollSlider:Hide()
     end
     local overflowHeight = #members > shown and 18 or 0
     window:SetHeight(BASE_WINDOW_HEIGHT + shown * ROLE_ROW_HEIGHT + overflowHeight)
+end
+
+ScrollRoleRows = function(delta)
+    local members = RosterUnits()
+    local shown = math.min(#members, MAX_WINDOW_ROLES)
+    local maximumFirst = math.max(1, #members - shown + 1)
+    local nextIndex = math.max(1, math.min(roleFirstIndex + delta, maximumFirst))
+    if nextIndex == roleFirstIndex then return end
+    roleFirstIndex = nextIndex
+    PaintRoleRows()
 end
 
 local function CreateWindow()
@@ -580,10 +617,14 @@ local function CreateWindow()
     window:SetFrameStrata("MEDIUM")
     window:SetMovable(true)
     window:EnableMouse(true)
+    window:EnableMouseWheel(true)
     window:RegisterForDrag("LeftButton")
     window:SetClampedToScreen(true)
     window:SetScript("OnDragStart", function(self) if not InCombat() then self:StartMoving() end end)
     window:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); SaveWindowPosition() end)
+    window:SetScript("OnMouseWheel", function(_, delta)
+        if ScrollRoleRows then ScrollRoleRows(delta > 0 and -1 or 1) end
+    end)
 
     local UI = AutoCore and AutoCore.UI
     if UI and UI.Backdrop then UI.Backdrop(window, UI.Colors.window, 0.96) end
@@ -636,6 +677,41 @@ local function CreateWindow()
     roleOverflowText:SetWidth(WINDOW_CONTENT_WIDTH - 4)
     roleOverflowText:SetJustifyH("LEFT")
     roleOverflowText:Hide()
+
+    roleScrollSlider = CreateFrame("Slider", nil, window)
+    roleScrollSlider:SetOrientation("VERTICAL")
+    roleScrollSlider:SetWidth(ROLE_SCROLLBAR_WIDTH)
+    roleScrollSlider:EnableMouseWheel(true)
+    roleScrollSlider:SetPoint("TOPLEFT", window, "TOPLEFT",
+        WINDOW_INSET + WINDOW_CONTENT_WIDTH + ROLE_SCROLLBAR_GAP, -82)
+    roleScrollSlider:SetValueStep(1)
+    if roleScrollSlider.SetObeyStepOnDrag then roleScrollSlider:SetObeyStepOnDrag(true) end
+
+    local scrollTrack = roleScrollSlider:CreateTexture(nil, "BACKGROUND")
+    scrollTrack:SetTexture("Interface\\Buttons\\WHITE8X8")
+    scrollTrack:SetVertexColor(0.18, 0.19, 0.22, 0.85)
+    scrollTrack:SetPoint("TOP", 0, 0)
+    scrollTrack:SetPoint("BOTTOM", 0, 0)
+    scrollTrack:SetWidth(6)
+
+    roleScrollSlider:SetThumbTexture("Interface\\Buttons\\WHITE8X8")
+    local scrollThumb = roleScrollSlider:GetThumbTexture()
+    if scrollThumb then
+        scrollThumb:SetVertexColor(0.31, 0.59, 0.92, 0.95)
+        scrollThumb:SetSize(12, 26)
+    end
+    roleScrollSlider:SetScript("OnValueChanged", function(_, value)
+        if roleScrollUpdating then return end
+        local members = RosterUnits()
+        local shown = math.min(#members, MAX_WINDOW_ROLES)
+        local maximumFirst = math.max(1, #members - shown + 1)
+        roleFirstIndex = maximumFirst - math.floor(value + 0.5) + 1
+        PaintRoleRows()
+    end)
+    roleScrollSlider:SetScript("OnMouseWheel", function(_, delta)
+        if ScrollRoleRows then ScrollRoleRows(delta > 0 and -1 or 1) end
+    end)
+    roleScrollSlider:Hide()
 
     if RegisterStateDriver then
         pcall(RegisterStateDriver, castButton, "visibility", "[combat] hide; show")
