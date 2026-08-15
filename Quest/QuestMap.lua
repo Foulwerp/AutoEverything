@@ -104,6 +104,7 @@ local function MaxMinimapPins() return Setting("maxMinimapPins", 150) end
 -- Use direct database facts where available, then the client-reported type of
 -- the exact live objective. Unknown types are deliberately not guessed.
 local function RecordKind(record, objective)
+    if tonumber(record.type) == -1 then return "scout" end
     if tonumber(record.type) == 2 then return "object" end
     if record.item then return "loot" end
 
@@ -362,10 +363,11 @@ function QuestMap.RebuildIndex()
                     -- after all database relationships have been considered.
                     if objective and kind and not objective.done then
                         local progress = ExtractProgress(objective.text)
-                        if recordType == 2 then
-                            -- Game objects aren't cross-referenced like NPCs -
-                            -- their spawn coords are inline on the record itself.
-                            -- Every one is a real distinct spot - one pin each.
+                        if recordType == 2 or recordType == -1 then
+                            -- Game objects and mapped events aren't
+                            -- cross-referenced like NPCs - their coords are
+                            -- inline on the record itself. Every coordinate is
+                            -- a real distinct spot - one pin each.
                             for _, coord in ipairs(record.coords or {}) do
                                 if AddLocation(record.zoneID, record.zone, record.floor,
                                     record, coord, matchQuestID, title, kind, progress)
@@ -424,23 +426,25 @@ local function GroupExactPoints(points)
     return groups
 end
 
--- Kill/loot/interact only - quest starters and turn-ins are out of scope for
+-- Kill/loot/interact/scout only - quest starters and turn-ins are out of scope for
 -- this database (the client already marks those when in range; see the
 -- module docstring in build_ascension_quest_db_deep.py).
 local iconTextures = {
     kill = "Interface\\AddOns\\AutoEverything\\Media\\Icons\\QuestSkull.tga",
     loot = "Interface\\AddOns\\AutoEverything\\Media\\Icons\\QuestLootBag.tga",
     object = "Interface\\AddOns\\AutoEverything\\Media\\Icons\\Interact.tga",
+    scout = "Interface\\AddOns\\AutoEverything\\Media\\Icons\\QuestScout.tga",
 }
 
 local iconColors = {
-    kill={1,0.3,0.3}, loot={0.35,1,0.45}, object={0.45,0.8,1},
+    kill={1,0.3,0.3}, loot={0.35,1,0.45}, object={0.45,0.8,1}, scout={1,0.75,0.25},
 }
 
 local headingText = {
     kill = "Kill",
     loot = "Item",
     object = "Interact",
+    scout = "Scout",
 }
 
 -- Phrases a single objective as a short sentence ("Kill Defias Bandit",
@@ -452,6 +456,8 @@ local function DescribeObjective(cluster, point)
         return point.item and ("Loot " .. point.item .. " from " .. name) or ("Loot from " .. name)
     elseif cluster.kind == "object" then
         return "Use " .. name
+    elseif cluster.kind == "scout" then
+        return name
     else
         return "Kill " .. name
     end

@@ -92,6 +92,9 @@ end
 -- Use direct database facts where available, then the client-reported type of
 -- the exact live objective. Unknown types are deliberately not guessed.
 local function RecordKind(record, objective)
+    -- Mapped events are coordinate-only objectives and never belong on unit
+    -- nameplates, even when their numeric event ID happens to match an NPC ID.
+    if tonumber(record.type) == -1 then return nil end
     if tonumber(record.type) == 2 then return "talk" end
     if record.item then return "loot" end
 
