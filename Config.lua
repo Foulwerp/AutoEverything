@@ -13,7 +13,6 @@ AutoCoreConfig = {
     autoAcceptLFGRoleCheck = false,
     lfgAutoRole = "current",             -- current, tank, healer, or damage
     autoAcceptLFGProposal = false,
-    autoAcceptBattlegroundPop = false,
     autoLeaveCompletedBattleground = false,
     autoExitCompletedDungeon = false,
     autoLeaveDungeonParty = false,

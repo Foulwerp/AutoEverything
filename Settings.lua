@@ -1707,16 +1707,13 @@ pageBuilders["Groups & Queues"] = function(parent)
     BindToggleDependency(dungeonExit, dungeonPartyLeave, dungeonRequeue)
 
     Label(parent, "Battleground", 20, -380, 13)
-    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptBattlegroundPop",
-        "Accept queue pop", 20, -412, false,
-        "Accepts a confirmed battleground queue slot immediately.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoLeaveCompletedBattleground",
-        "Leave after completion", 20, -440, false,
+        "Leave after completion", 20, -412, false,
         "After the battlefield reports a winner, shows a countdown with Cancel before leaving.")
 
     local leaveDelay = Core.GetSetting("core", "activityLeaveDelay",
         ResolvedDefault(AutoCoreConfig, "activityLeaveDelay", 3))
-    local delayButton = ChoiceButton(parent, "Departure timer", 20, -468, 310, {
+    local delayButton = ChoiceButton(parent, "Departure timer", 20, -440, 310, {
         { text = "3 seconds", value = 3 },
         { text = "5 seconds", value = 5 },
         { text = "10 seconds", value = 10 },
@@ -1726,7 +1723,7 @@ pageBuilders["Groups & Queues"] = function(parent)
     AddTooltip(delayButton, "Cancellable departure timer",
         "The visible countdown used after a battleground reports a winner. Cancel suppresses departure for that run.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "autoReleaseInBattleground",
-        "Auto release after death", 20, -500, false,
+        "Auto release after death", 20, -468, false,
         "Automatically releases your spirit in battlegrounds. Arenas and world or dungeon deaths remain manual.")
 
     Label(parent, "Battleground Keybinds", 378, -380, 13)

@@ -111,7 +111,6 @@ eventFrame:RegisterEvent("CHAT_MSG_BG_SYSTEM_ALLIANCE")
 eventFrame:RegisterEvent("CHAT_MSG_BG_SYSTEM_HORDE")
 eventFrame:RegisterEvent("CHAT_MSG_BG_SYSTEM_NEUTRAL")
 
-local acceptedBattlefield = {}
 local battlegroundCompletionHandled = false
 local dungeonCompletionHandled = false
 local pendingDungeonRequeue = false
@@ -164,22 +163,6 @@ local function MaybeStartDungeonRequeue()
         "Automatic dungeon requeue cancelled.")
 end
 
-local function ScanBattlefieldQueues()
-    if not GetBattlefieldStatus then return end
-    for i = 1, (MAX_BATTLEFIELD_QUEUES or 3) do
-        local status = GetBattlefieldStatus(i)
-        if status == "confirm" and Setting("autoAcceptBattlegroundPop", false) then
-            if not acceptedBattlefield[i] and AcceptBattlefieldPort then
-                acceptedBattlefield[i] = true
-                AcceptBattlefieldPort(i, true)
-                if StaticPopup_Hide then StaticPopup_Hide("CONFIRM_BATTLEFIELD_ENTRY") end
-            end
-        elseif status ~= "confirm" then
-            acceptedBattlefield[i] = nil
-        end
-    end
-end
-
 local function CheckBattlegroundCompletion()
     local inInstance, instanceType = IsInInstance()
     if not inInstance or instanceType ~= "pvp" then
@@ -225,7 +208,6 @@ eventFrame:SetScript("OnEvent", function(_, event, message)
             end
         end
     elseif event == "UPDATE_BATTLEFIELD_STATUS" then
-        ScanBattlefieldQueues()
         CheckBattlegroundCompletion()
     elseif event == "UPDATE_BATTLEFIELD_SCORE" then
         CheckBattlegroundCompletion()
@@ -233,7 +215,6 @@ eventFrame:SetScript("OnEvent", function(_, event, message)
         if countdown.active then StopCountdown(false) end
         local inInstance, instanceType = IsInInstance()
         if not inInstance or instanceType ~= "party" then dungeonCompletionHandled = false end
-        ScanBattlefieldQueues()
         CheckBattlegroundCompletion()
         MaybeStartDungeonRequeue()
     elseif event == "PARTY_MEMBERS_CHANGED" then
