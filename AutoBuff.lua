@@ -39,6 +39,7 @@ local ROLE_NAME_WIDTH = 118
 local ROLE_BUTTON_SIZE = 24
 local ROLE_BUTTON_GAP = 4
 local CAST_DELAY_SECONDS = 1
+local TRIVIAL_ERROR_WINDOW_SECONDS = 0.75
 
 local function Default(key, fallback)
     local value = AutoBuffConfig and AutoBuffConfig[key]
@@ -676,20 +677,24 @@ events:SetScript("OnEvent", function(self, event, arg1)
     elseif event == "PLAYER_REGEN_ENABLED" then
         ScheduleScan(0)
     elseif event == "UI_ERROR_MESSAGE" then
-        local recentAttempt = lastBuffAttempt and (GetTime() - lastBuffAttempt.at) <= 2
-        if recentAttempt and lastBuffAttempt.identity
-            and IsTrivialTargetError(arg1)
-        then
-            rejectedTrivialTargets[lastBuffAttempt.identity] = true
-            if AutoCore and AutoCore.Info then
-                AutoCore.Info("Buff", "Skipping " .. tostring(lastBuffAttempt.name or "target")
-                    .. " after the client rejected the buff as trivial.")
+        local recentAttempt = lastBuffAttempt
+            and (GetTime() - lastBuffAttempt.at) <= TRIVIAL_ERROR_WINDOW_SECONDS
+        if recentAttempt then
+            if lastBuffAttempt.identity and IsTrivialTargetError(arg1) then
+                rejectedTrivialTargets[lastBuffAttempt.identity] = true
+                if AutoCore and AutoCore.Info then
+                    AutoCore.Info("Buff", "Skipping " .. tostring(lastBuffAttempt.name or "target")
+                        .. " after the client rejected the buff as trivial.")
+                end
+                ScheduleScan(0)
             end
             lastBuffAttempt = nil
-            ScheduleScan(0)
         end
     elseif event == "UNIT_AURA" then
         if arg1 == "player" or string.match(arg1 or "", "^party%d+$") or string.match(arg1 or "", "^raid%d+$") then
+            if lastBuffAttempt and lastBuffAttempt.identity == UnitIdentity(arg1) then
+                lastBuffAttempt = nil
+            end
             ScheduleScan()
         end
     else
@@ -710,6 +715,7 @@ end)
 events:SetScript("OnUpdate", function(self, elapsed)
     if castReadyAt and GetTime() >= castReadyAt then
         castReadyAt = nil
+        lastBuffAttempt = nil
         ScheduleScan(0)
     end
     if AB.db and AB.db.enabled == true and not InCombat() then
