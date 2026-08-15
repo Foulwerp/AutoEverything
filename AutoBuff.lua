@@ -62,6 +62,24 @@ local VALID_TARGETS = {
     all = true, self = true, group = true,
     caster = true, melee = true, tank = true, healer = true,
 }
+local TARGET_ORDER = { "all", "self", "group", "caster", "melee", "tank", "healer" }
+
+local function NormalizeTargets(value)
+    local selected = {}
+    if type(value) == "table" then
+        for key, child in pairs(value) do
+            local target = type(key) == "number" and child or (child and key or nil)
+            if VALID_TARGETS[target] then selected[target] = true end
+        end
+    elseif VALID_TARGETS[value] then
+        selected[value] = true
+    end
+    local result = {}
+    for _, target in ipairs(TARGET_ORDER) do
+        if selected[target] then result[#result + 1] = target end
+    end
+    return result
+end
 
 local function NormalizeName(name)
     name = strtrim(tostring(name or ""))
@@ -152,17 +170,25 @@ function AB.GetBuffs()
     return BuffList()
 end
 
+function AB.GetBuffTargets(entry)
+    if type(entry) ~= "table" then return {} end
+    return NormalizeTargets(entry.targets or entry.target or "all")
+end
+
 function AB.AddBuff(spell, target)
     spell = strtrim(tostring(spell or ""))
     if spell == "" then return false, "Choose a learned helpful spell." end
     if not LearnedSpell(spell) then return false, "That spell is not a learned helpful spell." end
 
+    local targets = NormalizeTargets(target or "all")
+    if #targets == 0 then return false, "Choose at least one target category." end
     local list = AutoCore.DeepCopy(BuffList())
-    if #list >= 8 then return false, "AutoBuff supports up to eight configured buffs per profile." end
     for _, entry in ipairs(list) do
-        if entry.spell == spell then return false, "That buff is already configured." end
+        if entry.spell == spell then
+            return false, "That buff is already configured; add categories in its Targets menu."
+        end
     end
-    table.insert(list, { spell = spell, target = target or "all" })
+    table.insert(list, { spell = spell, targets = targets })
     AutoCore.SetSetting("buff", "buffs", list)
     return true
 end
@@ -176,12 +202,15 @@ function AB.RemoveBuff(index)
 end
 
 function AB.SetBuffTarget(index, target)
-    if not VALID_TARGETS[target] then
-        return false, "Unknown target policy."
-    end
+    return AB.SetBuffTargets(index, target)
+end
+
+function AB.SetBuffTargets(index, targets)
+    targets = NormalizeTargets(targets)
     local list = AutoCore.DeepCopy(BuffList())
     if not list[index] then return false, "That buff no longer exists." end
-    list[index].target = target
+    list[index].target = nil
+    list[index].targets = targets
     AutoCore.SetSetting("buff", "buffs", list)
     return true
 end
@@ -316,13 +345,17 @@ local function GroupUnits()
 end
 
 local function TargetAllowed(entry, unit)
-    local policy = entry.target or "all"
-    if policy == "self" then return unit.isSelf end
-    if policy == "group" then return not unit.isSelf end
-    if policy == "caster" or policy == "melee" or policy == "tank" or policy == "healer" then
-        return unit.role == policy
+    for _, policy in ipairs(NormalizeTargets(entry.targets or entry.target or "all")) do
+        if policy == "all" then return true end
+        if policy == "self" and unit.isSelf then return true end
+        if policy == "group" and not unit.isSelf then return true end
+        if (policy == "caster" or policy == "melee" or policy == "tank" or policy == "healer")
+            and unit.role == policy
+        then
+            return true
+        end
     end
-    return true
+    return false
 end
 
 local function ReadAuraTimers(unit)
@@ -354,6 +387,20 @@ local function InSpellRange(spell, unit)
     return value == 1 or value == true
 end
 
+local function SpellCooldown(learned)
+    if not GetSpellCooldown or not learned then return 0, 0 end
+    local ok, start, duration, enabled = pcall(GetSpellCooldown, learned.index, SpellBookType())
+    if not ok then
+        ok, start, duration, enabled = pcall(GetSpellCooldown, learned.name)
+    end
+    if not ok or enabled == 0 or type(start) ~= "number" or type(duration) ~= "number"
+        or start <= 0 or duration <= 0
+    then
+        return 0, 0
+    end
+    return math.max(0, start + duration - GetTime()), duration
+end
+
 local function BuildMissing()
     local missing = {}
     local units = GroupUnits()
@@ -362,6 +409,7 @@ local function BuildMissing()
     for _, entry in ipairs(BuffList()) do
         local learned = type(entry) == "table" and LearnedSpell(entry.spell)
         if learned then
+            local cooldown, cooldownDuration = SpellCooldown(learned)
             for _, unit in ipairs(units) do
                 if TargetAllowed(entry, unit) then
                     local needed, remaining = NeedsBuff(auraTimers[unit.unit], learned.name)
@@ -373,6 +421,8 @@ local function BuildMissing()
                             name = unit.name,
                             remaining = remaining,
                             inRange = InSpellRange(learned.name, unit.unit),
+                            cooldown = cooldown,
+                            cooldownDuration = cooldownDuration,
                         })
                     end
                 end
@@ -384,7 +434,7 @@ end
 
 local function FirstCastable(missing)
     for _, entry in ipairs(missing) do
-        if entry.inRange then return entry end
+        if entry.inRange and (entry.cooldown or 0) <= 0 then return entry end
     end
     return nil
 end
@@ -619,9 +669,25 @@ local function PaintWindow()
         castButton:SetAttribute("spell", nil)
         castButton:SetAttribute("unit", nil)
         if #currentMissing > 0 then
-            local waiting = currentMissing[1]
-            statusText:SetText(waiting.name .. ": " .. waiting.spell .. "  -  out of range")
-            castButton:SetText("No target in range")
+            local waitingCooldown
+            for _, missing in ipairs(currentMissing) do
+                if missing.inRange and (missing.cooldown or 0) > 0
+                    and (not waitingCooldown or missing.cooldown < waitingCooldown.cooldown)
+                then
+                    waitingCooldown = missing
+                end
+            end
+            if waitingCooldown then
+                local seconds = math.max(0, waitingCooldown.cooldown)
+                local reason = (waitingCooldown.cooldownDuration or 0) <= 2
+                    and "global cooldown" or "spell cooldown"
+                statusText:SetText(waitingCooldown.spell .. "  -  " .. reason)
+                castButton:SetText("Waiting " .. string.format("%.1f", seconds) .. "s")
+            else
+                local waiting = currentMissing[1]
+                statusText:SetText(waiting.name .. ": " .. waiting.spell .. "  -  out of range")
+                castButton:SetText("No target in range")
+            end
         else
             statusText:SetText("Everyone is buffed")
             castButton:SetText("Buffs complete")
@@ -639,6 +705,17 @@ function AB.Scan()
     currentMissing = BuildMissing()
     currentCandidate = FirstCastable(currentMissing)
     PaintWindow()
+    if not currentCandidate then
+        local shortest
+        for _, missing in ipairs(currentMissing) do
+            if missing.inRange and (missing.cooldown or 0) > 0
+                and (not shortest or missing.cooldown < shortest)
+            then
+                shortest = missing.cooldown
+            end
+        end
+        if shortest then ScheduleScan(shortest + 0.05) end
+    end
 end
 
 function AB.GetStatus()
@@ -661,6 +738,8 @@ events:RegisterEvent("UNIT_AURA")
 events:RegisterEvent("UNIT_CLASSIFICATION_CHANGED")
 events:RegisterEvent("UI_ERROR_MESSAGE")
 events:RegisterEvent("SPELLS_CHANGED")
+events:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+events:RegisterEvent("SPELL_UPDATE_USABLE")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
 
@@ -672,6 +751,8 @@ events:SetScript("OnEvent", function(self, event, arg1)
     elseif event == "SPELLS_CHANGED" then
         availableBuffs = nil
         ScheduleScan(0.5)
+    elseif event == "SPELL_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_USABLE" then
+        ScheduleScan(0)
     elseif event == "PLAYER_REGEN_DISABLED" then
         PaintWindow()
     elseif event == "PLAYER_REGEN_ENABLED" then

@@ -2079,43 +2079,63 @@ pageBuilders.Buff = function(parent)
     if #learnedChoices == 0 then
         learnedChoices[1] = { text = "No helpful spells found", value = "" }
     end
-    local selectedTarget = "all"
     local targetChoices = {
         { text = "Everyone", value = "all" },
         { text = "Self only", value = "self" },
         { text = "Group only", value = "group" },
         { text = "Casters", value = "caster" },
-        { text = "Melee", value = "melee" },
+        { text = "Melee DPS", value = "melee" },
         { text = "Tanks", value = "tank" },
         { text = "Healers", value = "healer" },
     }
     ChoiceButton(parent, "Spell", 28, -266, 344, learnedChoices, selectedSpell, function(value) selectedSpell = value end)
-    ChoiceButton(parent, "Targets", 384, -266, 190, targetChoices, selectedTarget, function(value) selectedTarget = value end)
+    local addTargets = MultiChoiceEditor(parent, "Targets", 384, -266, 190,
+        targetChoices, { "all" }, "No targets", "all")
     local addButton = Button(parent, "Add", 586, -266, 106, function()
-        local ok, err = AutoBuff.AddBuff(selectedSpell, selectedTarget)
+        local ok, err = AutoBuff.AddBuff(selectedSpell, addTargets:GetSelected() or {})
         if not ok then Alert(err) end
     end)
     EmphasizeButton(addButton, BRAND)
     if selectedSpell == "" then addButton:Disable() end
-    AddTooltip(addButton, "Add buff", "Adds this learned helpful spell to the active profile. AutoBuff allows up to eight entries.")
+    AddTooltip(addButton, "Add buff", "Adds this learned helpful spell to the active profile. A buff can target any number of categories.")
 
     Label(parent, "Configured Buffs", 28, -340, 13)
     local buffs = AutoBuff and AutoBuff.GetBuffs and AutoBuff.GetBuffs() or {}
+    local buffScroll = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+    buffScroll:SetPoint("TOPLEFT", 20, -360)
+    buffScroll:SetSize(672, 240)
+    buffScroll:EnableMouseWheel(true)
+    local buffList = CreateFrame("Frame", nil, buffScroll)
+    buffList:SetWidth(646)
+    buffList:SetHeight(math.max(240, #buffs * 30 + 8))
+    buffScroll:SetScrollChild(buffList)
+    buffScroll:SetScript("OnMouseWheel", function(self, delta)
+        local maximum = math.max(0, buffList:GetHeight() - self:GetHeight())
+        local value = math.max(0, math.min(maximum,
+            (self:GetVerticalScroll() or 0) + (delta > 0 and -60 or 60)))
+        self:SetVerticalScroll(value)
+    end)
     if #buffs == 0 then
-        local empty = Label(parent, "No buffs configured. Add a learned helpful spell above.", 28, -374)
+        local empty = Label(buffList, "No buffs configured. Add a learned helpful spell above.", 8, -12)
         empty:SetTextColor(Unpack(TEXT_MUTED))
     end
     for index, entry in ipairs(buffs) do
         local rowIndex = index
-        local y = -366 - ((index - 1) * 30)
-        local spell = Label(parent, entry.spell or "Unknown spell", 28, y + 4)
-        spell:SetWidth(306)
+        local y = -4 - ((index - 1) * 30)
+        local spell = Label(buffList, entry.spell or "Unknown spell", 8, y - 4)
+        spell:SetWidth(300)
         spell:SetJustifyH("LEFT")
-        ChoiceButton(parent, "Targets", 350, y, 214, targetChoices, entry.target or "all", function(value)
-            local ok, err = AutoBuff.SetBuffTarget(rowIndex, value)
-            if not ok then Alert(err) end
+        local targets = MultiChoiceEditor(buffList, "Targets", 322, y, 214, targetChoices,
+            AutoBuff.GetBuffTargets(entry), "No targets", "all")
+        targets:SetOnSelectionChanged(function()
+            local list = Core.DeepCopy(AutoBuff.GetBuffs())
+            if not list[rowIndex] then return end
+            local selected = targets:GetSelected()
+            list[rowIndex].target = nil
+            list[rowIndex].targets = AutoBuff.GetBuffTargets({ targets=selected or {} })
+            SetSettingWithoutRefresh("buff", "buffs", list)
         end)
-        local remove = Button(parent, "Remove", 576, y, 116, function()
+        local remove = Button(buffList, "Remove", 548, y, 90, function()
             local ok, err = AutoBuff.RemoveBuff(rowIndex)
             if not ok then Alert(err) end
         end)
@@ -3259,7 +3279,7 @@ OpenQuickAbandonWindow = function()
     Refresh()
     RefreshWhitelist()
 end
-MultiChoiceEditor = function(parent, label, x, y, width, choices, initial, emptyText)
+MultiChoiceEditor = function(parent, label, x, y, width, choices, initial, emptyText, exclusiveValue)
     label = TitleCase(label)
     local selected = {}
     if type(initial) == "table" then for _, value in ipairs(initial) do selected[value] = true end
@@ -3317,7 +3337,13 @@ MultiChoiceEditor = function(parent, label, x, y, width, choices, initial, empty
                 text = MenuLabel(choice.text, selected[value] == true),
                 notCheckable = true, keepShownOnClick = true,
                 func = function()
-                    selected[value] = not selected[value] or nil
+                    if exclusiveValue and value == exclusiveValue then
+                        wipe(selected)
+                        selected[value] = true
+                    else
+                        if exclusiveValue then selected[exclusiveValue] = nil end
+                        selected[value] = not selected[value] or nil
+                    end
                     Changed()
                     Reopen()
                 end,
