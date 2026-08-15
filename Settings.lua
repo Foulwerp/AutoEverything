@@ -3860,7 +3860,12 @@ local function RulePage(spec)
             if not spec.safety then
                 local activationMode = Core.GetSetting("sell", "activationMode",
                     ResolvedDefault(AutoSellConfig, "activationMode", "automatic"))
-                local activationButton = ChoiceButton(parent, "Activation", 248, -48, 222, {
+                -- Keep merchant activation on the settings row below the rule
+                -- tabs. It previously shared the Never Sell tab's exact
+                -- position, leaving the two controls drawn on top of each
+                -- other. The wider two-column button also leaves room for the
+                -- selected mode and its dropdown arrow.
+                local activationButton = ChoiceButton(parent, "Activation", 20, -82, 330, {
                     { text = "When merchant opens", value = "automatic" },
                     { text = "Press Shift while open", value = "shift" },
                     { text = "Merchant window button", value = "manual" },
@@ -3870,12 +3875,10 @@ local function RulePage(spec)
                 end)
                 AddTooltip(activationButton, "Merchant activation",
                     "Automatic runs on opening. Shift mode starts a full verified sell-and-repair run when Shift is pressed at any time while the merchant remains open. Manual adds a Sell & Repair button to the merchant window.")
-                ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 20, -86, true,
+                ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 360, -86, true,
                     "Prints a chat message when AutoSell sells matching items.")
-                ScalarCheck(parent, "sell", AutoSellConfig, "learnVanity", "Learn vanity items", 190, -86, true,
+                ScalarCheck(parent, "sell", AutoSellConfig, "learnVanity", "Learn vanity items", 530, -86, true,
                     "Learns eligible mounts, pets, and vanity items before selling.")
-                ScalarCheck(parent, "sell", AutoSellConfig, "protectWeaponBench", "Protect weapon bench", 390, -86, true,
-                    "Keeps useful weapon comparisons from being sold automatically.")
 
                 local repairDefaults = ResolvedDefault(AutoSellConfig, "autoRepair", AutoSellConfig.autoRepair or {})
                 local repair = Core.DeepCopy(Core.GetSetting("sell", "autoRepair", repairDefaults)) or {}
@@ -3889,7 +3892,9 @@ local function RulePage(spec)
                 end
                 local repairEnabled = RepairToggle("enabled", "Auto repair", 20, true, "Repairs equipped and bagged gear when a merchant opens.")
                 local guildRepair = RepairToggle("useGuildBank", "Use guild funds", 190, true, "Uses guild repair funds when available, then falls back to personal gold.")
-                local repairMessages = RepairToggle("printMessages", "Announce repairs", 390, true, "Prints repair cost and funding source in chat.")
+                local repairMessages = RepairToggle("printMessages", "Announce repairs", 360, true, "Prints repair cost and funding source in chat.")
+                ScalarCheck(parent, "sell", AutoSellConfig, "protectWeaponBench", "Protect weapon bench", 530, -112, true,
+                    "Keeps useful weapon comparisons from being sold automatically.")
                 BindToggleDependency(repairEnabled, guildRepair, repairMessages)
             end
             local maximumSellQuality = Core.GetSetting("sell", "maxQuality", ResolvedDefault(AutoSellConfig, "maxQuality", 0))
