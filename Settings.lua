@@ -2037,6 +2037,55 @@ pageBuilders.Quest = function(parent)
     BindToggleDependency(syncToggle, raidToggle, tooltipToggle)
 end
 
+local function AttachVerticalScroll(parent, scroll, child, contentHeight,
+    viewportHeight, x, y, sliderHeight, wheelStep)
+    local maximum = math.max(0, contentHeight - viewportHeight)
+    child:SetHeight(math.max(viewportHeight, contentHeight))
+    if scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
+
+    local slider = Track(CreateFrame("Slider", nil, parent))
+    slider:SetPoint("TOPLEFT", x, y)
+    slider:SetSize(16, sliderHeight)
+    slider:SetOrientation("VERTICAL")
+    slider:SetMinMaxValues(0, maximum)
+    slider:SetValueStep(math.max(1, wheelStep or 30))
+    local track = slider:CreateTexture(nil, "BACKGROUND")
+    track:SetTexture(WHITE_TEX)
+    track:SetWidth(3)
+    track:SetPoint("TOP", 0, 0)
+    track:SetPoint("BOTTOM", 0, 0)
+    track:SetVertexColor(Unpack(BORDER))
+    slider:SetThumbTexture(WHITE_TEX)
+    local thumb = slider:GetThumbTexture()
+    if thumb then
+        thumb:SetSize(12, 24)
+        thumb:SetVertexColor(Unpack(BRAND))
+    end
+
+    slider:SetScript("OnValueChanged", function(_, value)
+        scroll:SetVerticalScroll(maximum - (value or maximum))
+    end)
+    slider:SetValue(maximum)
+
+    local function ScrollBy(delta)
+        local value = math.max(0, math.min(maximum,
+            (scroll:GetVerticalScroll() or 0) + delta))
+        scroll:SetVerticalScroll(value)
+        slider:SetValue(maximum - value)
+    end
+    local function BindWheel(control)
+        control:EnableMouse(true)
+        control:EnableMouseWheel(true)
+        control:SetScript("OnMouseWheel", function(_, delta)
+            ScrollBy(delta > 0 and -(wheelStep or 30) or (wheelStep or 30))
+        end)
+    end
+    BindWheel(scroll)
+    BindWheel(child)
+    if maximum <= 0 then slider:Hide() end
+    return ScrollBy, BindWheel
+end
+
 pageBuilders.Buff = function(parent)
     SectionCard(parent, 12, -76, 700, 140)
     SectionCard(parent, 12, -228, 700, 90)
@@ -2104,34 +2153,15 @@ pageBuilders.Buff = function(parent)
     local buffScroll = Track(CreateFrame("ScrollFrame", nil, parent))
     buffScroll:SetPoint("TOPLEFT", 24, -360)
     buffScroll:SetSize(638, 240)
-    buffScroll:EnableMouseWheel(true)
     local buffList = CreateFrame("Frame", nil, buffScroll)
     buffList:SetWidth(616)
-    buffList:SetHeight(math.max(240, #buffs * 30 + 8))
     buffScroll:SetScrollChild(buffList)
-    local function ScrollBuffsBy(delta)
-        local maximum = math.max(0, buffList:GetHeight() - buffScroll:GetHeight())
-        local value = math.max(0, math.min(maximum,
-            (buffScroll:GetVerticalScroll() or 0) + delta))
-        buffScroll:SetVerticalScroll(value)
-    end
-    local function BindBuffWheel(control)
-        control:EnableMouse(true)
-        control:EnableMouseWheel(true)
-        control:SetScript("OnMouseWheel", function(_, delta)
-            ScrollBuffsBy(delta > 0 and -60 or 60)
-        end)
-    end
-    BindBuffWheel(buffScroll)
-    BindBuffWheel(buffList)
-    local buffUp = Button(parent, "^", 668, -362, 20, function() ScrollBuffsBy(-120) end, 22)
-    local buffDown = Button(parent, "v", 668, -578, 20, function() ScrollBuffsBy(120) end, 22)
-    AddTooltip(buffUp, "Scroll buffs up", "Shows earlier configured buffs.")
-    AddTooltip(buffDown, "Scroll buffs down", "Shows later configured buffs.")
-    if buffList:GetHeight() <= buffScroll:GetHeight() then
-        buffUp:Disable()
-        buffDown:Disable()
-    end
+    local buffContentHeight = #buffs * 30 + 8
+    local ScrollBuffsBy, BindBuffWheel = AttachVerticalScroll(parent, buffScroll, buffList,
+        buffContentHeight, 240, 668, -390, 166, 60)
+    local previousBuffs = Button(parent, "Previous page", 488, -332, 98, function() ScrollBuffsBy(-240) end, 22)
+    local nextBuffs = Button(parent, "Next page", 594, -332, 98, function() ScrollBuffsBy(240) end, 22)
+    if buffContentHeight <= 240 then previousBuffs:Disable(); nextBuffs:Disable() end
     if #buffs == 0 then
         local empty = Label(buffList, "No buffs configured. Add a learned helpful spell above.", 8, -12)
         empty:SetTextColor(Unpack(TEXT_MUTED))
@@ -2185,26 +2215,13 @@ pageBuilders["Buff Assignments"] = function(parent)
 
     local scroll = Track(CreateFrame("ScrollFrame", nil, parent))
     scroll:SetPoint("TOPLEFT", 24, -112)
-    scroll:SetSize(664, 470)
-    scroll:EnableMouseWheel(true)
+    scroll:SetSize(638, 460)
     local child = CreateFrame("Frame", nil, scroll)
-    child:SetWidth(642)
-    child:SetHeight(math.max(470, #members * 34 + 8))
+    child:SetWidth(632)
     scroll:SetScrollChild(child)
-    local function ScrollBy(delta)
-        local maximum = math.max(0, child:GetHeight() - scroll:GetHeight())
-        local value = math.max(0, math.min(maximum, (scroll:GetVerticalScroll() or 0) + delta))
-        scroll:SetVerticalScroll(value)
-    end
-    local function BindAssignmentWheel(control)
-        control:EnableMouse(true)
-        control:EnableMouseWheel(true)
-        control:SetScript("OnMouseWheel", function(_, delta)
-            ScrollBy(delta > 0 and -68 or 68)
-        end)
-    end
-    BindAssignmentWheel(scroll)
-    BindAssignmentWheel(child)
+    local assignmentContentHeight = #members * 34 + 8
+    local ScrollBy, BindAssignmentWheel = AttachVerticalScroll(parent, scroll, child,
+        assignmentContentHeight, 460, 668, -144, 390, 68)
 
     for index, member in ipairs(members) do
         local memberName = member.fullName or member.name
@@ -2212,7 +2229,7 @@ pageBuilders["Buff Assignments"] = function(parent)
         local row = child:CreateTexture(nil, "BACKGROUND")
         row:SetTexture(WHITE_TEX)
         row:SetPoint("TOPLEFT", 0, y + 4)
-        row:SetSize(642, 30)
+        row:SetSize(632, 30)
         row:SetVertexColor(COLORS.surfaceRaised[1], COLORS.surfaceRaised[2], COLORS.surfaceRaised[3], index % 2 == 0 and 0.30 or 0.18)
 
         local name = Label(child, member.name .. (member.isSelf and "  (You)" or ""), 8, y - 2)
@@ -2238,10 +2255,9 @@ pageBuilders["Buff Assignments"] = function(parent)
         BindAssignmentWheel(roleButton)
     end
 
-    local up = Button(parent, "^", 668, -116, 20, function() ScrollBy(-136) end, 22)
-    local down = Button(parent, "v", 668, -556, 20, function() ScrollBy(136) end, 22)
-    AddTooltip(up, "Scroll up", "Shows earlier group members.")
-    AddTooltip(down, "Scroll down", "Shows later group members.")
+    local previousMembers = Button(parent, "Previous page", 480, -580, 102, function() ScrollBy(-460) end, 22)
+    local nextMembers = Button(parent, "Next page", 590, -580, 102, function() ScrollBy(460) end, 22)
+    if assignmentContentHeight <= 460 then previousMembers:Disable(); nextMembers:Disable() end
 
     local note = Label(parent, "Auto inspection requires a nearby inspectable player. Manual overrides are saved by player name; Unassigned receives only broad buffs.", 30, -628)
     note:SetWidth(650)
