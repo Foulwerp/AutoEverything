@@ -20,16 +20,14 @@ local buildStats = { activeQuests=0, matchedQuests=0, points=0, servicePoints=0 
 local minimapStatus = "not updated"
 local locationDebug = {}
 
-local selectableServiceKinds = {
-    auctioneer = true,
-    banker = true,
-    flightmaster = true,
+local defaultServiceKinds = {
+    "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
+    "innkeeper", "talentunlearner", "tabardvendor", "stablemaster", "trainer", "vendor",
 }
 
 local function ServiceKindEnabled(kind)
-    if not selectableServiceKinds[kind] then return true end
     local fallback = AutoQuestConfig and AutoQuestConfig.mapServiceIconTypes
-        or { "auctioneer", "banker", "flightmaster" }
+        or defaultServiceKinds
     local selected = AutoCore.GetSetting("quest", "mapServiceIconTypes", fallback)
     if type(selected) == "string" then return selected == kind end
     if type(selected) ~= "table" then return true end

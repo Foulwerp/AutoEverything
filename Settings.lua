@@ -1948,11 +1948,22 @@ pageBuilders.Quest = function(parent)
     local serviceIconChoices = {
         { text = "Auctioneer", value = "auctioneer" },
         { text = "Banker", value = "banker" },
+        { text = "Battlemaster", value = "battlemaster" },
         { text = "Flight Master", value = "flightmaster" },
+        { text = "Guild Master", value = "guildmaster" },
+        { text = "Innkeeper", value = "innkeeper" },
+        { text = "Stable Master", value = "stablemaster" },
+        { text = "Tabard Vendor", value = "tabardvendor" },
+        { text = "Talent Unlearner", value = "talentunlearner" },
+        { text = "Trainer", value = "trainer" },
+        { text = "Vendor", value = "vendor" },
     }
     local selectedServiceIcons = Core.GetSetting("quest", "mapServiceIconTypes",
         ResolvedDefault(AutoQuestConfig, "mapServiceIconTypes",
-            { "auctioneer", "banker", "flightmaster" }))
+            {
+                "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
+                "innkeeper", "talentunlearner", "tabardvendor", "stablemaster", "trainer", "vendor",
+            }))
     local serviceIcons = MultiChoiceEditor(parent, "Service Icons", leftX, thirdRow, 306,
         serviceIconChoices, selectedServiceIcons, "None")
     serviceIcons:SetOnSelectionChanged(function()
@@ -1962,7 +1973,7 @@ pageBuilders.Quest = function(parent)
         SetSettingWithoutRefresh("quest", "mapServiceIconTypes", selected)
     end)
     AddTooltip(serviceIcons, "Service icons",
-        "Choose any combination of Auctioneer, Banker, and Flight Master icons for both the world map and minimap. Choose None to hide all three.")
+        "Choose any combination of service NPC icons for both the world map and minimap. Choose None to hide every service icon while keeping quest-objective icons visible.")
     BindToggleDependency(rightControls.mapPins, serviceIcons)
 
     -- Group progress travels through invisible PARTY/RAID addon messages.
