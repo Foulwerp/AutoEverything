@@ -2101,20 +2101,36 @@ pageBuilders.Buff = function(parent)
 
     Label(parent, "Configured Buffs", 28, -340, 13)
     local buffs = AutoBuff and AutoBuff.GetBuffs and AutoBuff.GetBuffs() or {}
-    local buffScroll = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
-    buffScroll:SetPoint("TOPLEFT", 20, -360)
-    buffScroll:SetSize(672, 240)
+    local buffScroll = Track(CreateFrame("ScrollFrame", nil, parent))
+    buffScroll:SetPoint("TOPLEFT", 24, -360)
+    buffScroll:SetSize(638, 240)
     buffScroll:EnableMouseWheel(true)
     local buffList = CreateFrame("Frame", nil, buffScroll)
-    buffList:SetWidth(646)
+    buffList:SetWidth(616)
     buffList:SetHeight(math.max(240, #buffs * 30 + 8))
     buffScroll:SetScrollChild(buffList)
-    buffScroll:SetScript("OnMouseWheel", function(self, delta)
-        local maximum = math.max(0, buffList:GetHeight() - self:GetHeight())
+    local function ScrollBuffsBy(delta)
+        local maximum = math.max(0, buffList:GetHeight() - buffScroll:GetHeight())
         local value = math.max(0, math.min(maximum,
-            (self:GetVerticalScroll() or 0) + (delta > 0 and -60 or 60)))
-        self:SetVerticalScroll(value)
-    end)
+            (buffScroll:GetVerticalScroll() or 0) + delta))
+        buffScroll:SetVerticalScroll(value)
+    end
+    local function BindBuffWheel(control)
+        control:EnableMouseWheel(true)
+        control:SetScript("OnMouseWheel", function(_, delta)
+            ScrollBuffsBy(delta > 0 and -60 or 60)
+        end)
+    end
+    BindBuffWheel(buffScroll)
+    BindBuffWheel(buffList)
+    local buffUp = Button(parent, "^", 668, -362, 20, function() ScrollBuffsBy(-120) end, 22)
+    local buffDown = Button(parent, "v", 668, -578, 20, function() ScrollBuffsBy(120) end, 22)
+    AddTooltip(buffUp, "Scroll buffs up", "Shows earlier configured buffs.")
+    AddTooltip(buffDown, "Scroll buffs down", "Shows later configured buffs.")
+    if buffList:GetHeight() <= buffScroll:GetHeight() then
+        buffUp:Disable()
+        buffDown:Disable()
+    end
     if #buffs == 0 then
         local empty = Label(buffList, "No buffs configured. Add a learned helpful spell above.", 8, -12)
         empty:SetTextColor(Unpack(TEXT_MUTED))
@@ -2123,10 +2139,11 @@ pageBuilders.Buff = function(parent)
         local rowIndex = index
         local y = -4 - ((index - 1) * 30)
         local spell = Label(buffList, entry.spell or "Unknown spell", 8, y - 4)
-        spell:SetWidth(300)
+        spell:SetWidth(270)
         spell:SetJustifyH("LEFT")
-        local targets = MultiChoiceEditor(buffList, "Targets", 322, y, 214, targetChoices,
+        local targets = MultiChoiceEditor(buffList, "Targets", 284, y, 214, targetChoices,
             AutoBuff.GetBuffTargets(entry), "No targets", "all")
+        BindBuffWheel(targets)
         targets:SetOnSelectionChanged(function()
             local list = Core.DeepCopy(AutoBuff.GetBuffs())
             if not list[rowIndex] then return end
@@ -2135,10 +2152,11 @@ pageBuilders.Buff = function(parent)
             list[rowIndex].targets = AutoBuff.GetBuffTargets({ targets=selected or {} })
             SetSettingWithoutRefresh("buff", "buffs", list)
         end)
-        local remove = Button(buffList, "Remove", 548, y, 90, function()
+        local remove = Button(buffList, "Remove", 508, y, 100, function()
             local ok, err = AutoBuff.RemoveBuff(rowIndex)
             if not ok then Alert(err) end
         end)
+        BindBuffWheel(remove)
         AddTooltip(remove, "Remove " .. tostring(entry.spell), "Removes this buff from the active profile; it does not alter your spellbook.")
     end
 end
@@ -2171,6 +2189,19 @@ pageBuilders["Buff Assignments"] = function(parent)
     child:SetWidth(642)
     child:SetHeight(math.max(470, #members * 34 + 8))
     scroll:SetScrollChild(child)
+    local function ScrollBy(delta)
+        local maximum = math.max(0, child:GetHeight() - scroll:GetHeight())
+        local value = math.max(0, math.min(maximum, (scroll:GetVerticalScroll() or 0) + delta))
+        scroll:SetVerticalScroll(value)
+    end
+    local function BindAssignmentWheel(control)
+        control:EnableMouseWheel(true)
+        control:SetScript("OnMouseWheel", function(_, delta)
+            ScrollBy(delta > 0 and -68 or 68)
+        end)
+    end
+    BindAssignmentWheel(scroll)
+    BindAssignmentWheel(child)
 
     for index, member in ipairs(members) do
         local memberName = member.fullName or member.name
@@ -2193,18 +2224,13 @@ pageBuilders["Buff Assignments"] = function(parent)
             { text = "Tank", value = "tank" },
             { text = "Healer", value = "healer" },
         }
-        ChoiceButton(child, "Role", 354, y - 6, 272, roleChoices, member.roleSetting or "auto", function(value)
+        local roleButton = ChoiceButton(child, "Role", 354, y - 6, 272, roleChoices, member.roleSetting or "auto", function(value)
             local ok, err = AutoBuff.SetPlayerRole(memberName, value)
             if not ok then Alert(err) end
         end)
+        BindAssignmentWheel(roleButton)
     end
 
-    local function ScrollBy(delta)
-        local maximum = math.max(0, child:GetHeight() - scroll:GetHeight())
-        local value = math.max(0, math.min(maximum, (scroll:GetVerticalScroll() or 0) + delta))
-        scroll:SetVerticalScroll(value)
-    end
-    scroll:SetScript("OnMouseWheel", function(_, delta) ScrollBy(delta > 0 and -68 or 68) end)
     local up = Button(parent, "^", 668, -116, 20, function() ScrollBy(-136) end, 22)
     local down = Button(parent, "v", 668, -556, 20, function() ScrollBy(136) end, 22)
     AddTooltip(up, "Scroll up", "Shows earlier group members.")
