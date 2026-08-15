@@ -14,7 +14,7 @@ local activePointKeys = {}
 local serviceByZone
 local combinedByZone = {}
 local worldPins, minimapPins = {}, {}
-local worldRouteDots, minimapRouteDots = {}, {}
+local worldRouteLines, minimapRouteLines = {}, {}
 local refreshPending, refreshAt = false, 0
 local playerMap = { name = nil, key = nil, x = nil, y = nil }
 local buildStats = { activeQuests=0, matchedQuests=0, points=0, servicePoints=0 }
@@ -189,8 +189,8 @@ end
 
 -- Service pages may expose many sampled positions for an NPC that patrols.
 -- Split disconnected samples first so separate static spawns are not joined
--- across a zone, then reduce each connected group to either one stationary
--- pin or the two farthest patrol endpoints plus a route segment.
+-- across a zone, then turn each connected group into a point-to-point route
+-- with pins only at its two endpoints.
 local SERVICE_GROUP_LINK_SQ = 25
 local SERVICE_ROUTE_MIN_SPAN_SQ = 2.25
 
@@ -261,6 +261,35 @@ local function RepresentativeServicePoint(group)
     return best
 end
 
+-- Spawn samples are packed in coordinate order, not travel order. Starting at
+-- one of the two farthest endpoints and repeatedly taking the nearest unused
+-- sample produces a stable path that follows the recorded patrol instead of
+-- cutting straight across it.
+local function OrderedServiceRoute(group, first, last)
+    local ordered, used = { first }, {}
+    for index, point in ipairs(group) do
+        if point == first then used[index] = true; break end
+    end
+    while #ordered < #group - 1 do
+        local current = ordered[#ordered]
+        local bestIndex, bestDistanceSq
+        for index, point in ipairs(group) do
+            if not used[index] and point ~= last then
+                local dx, dy = point.x - current.x, point.y - current.y
+                local distanceSq = dx * dx + dy * dy
+                if not bestDistanceSq or distanceSq < bestDistanceSq then
+                    bestIndex, bestDistanceSq = index, distanceSq
+                end
+            end
+        end
+        if not bestIndex then break end
+        used[bestIndex] = true
+        ordered[#ordered + 1] = group[bestIndex]
+    end
+    if last ~= first then ordered[#ordered + 1] = last end
+    return ordered
+end
+
 local function AddServicePoint(zone, service, location, point, routeEndpoint)
     zone.points[#zone.points + 1] = {
         x=point.x, y=point.y, floor=tonumber(location.floor) or 0,
@@ -274,13 +303,14 @@ local function AddServiceLocation(zone, service, location)
     for _, group in ipairs(ServiceCoordinateGroups(location.coords)) do
         local first, last, spanSq = FarthestServicePoints(group)
         if #group >= 3 and spanSq >= SERVICE_ROUTE_MIN_SPAN_SQ then
+            local points = OrderedServiceRoute(group, first, last)
             zone.routes[#zone.routes + 1] = {
-                x1=first.x, y1=first.y, x2=last.x, y2=last.y,
+                points=points,
                 floor=tonumber(location.floor) or 0,
                 kind=service.kind, entityID=service.id, name=service.name,
             }
-            AddServicePoint(zone, service, location, first, true)
-            AddServicePoint(zone, service, location, last, true)
+            AddServicePoint(zone, service, location, points[1], true)
+            AddServicePoint(zone, service, location, points[#points], true)
         elseif #group > 0 then
             AddServicePoint(zone, service, location, RepresentativeServicePoint(group), false)
         end
@@ -750,56 +780,62 @@ local function HidePins(pool)
     for _, pin in ipairs(pool) do pin:Hide(); pin.cluster = nil end
 end
 
-local function HideRouteDots(pool)
-    for _, dot in ipairs(pool) do dot:Hide() end
+local function HideRouteLines(pool)
+    for _, line in ipairs(pool) do line:Hide() end
 end
 
-local function RouteDot(pool, index, parent, anchor, x, y, color, size)
-    local dot = pool[index]
-    if dot and dot:GetParent() ~= parent then
-        dot:Hide()
-        dot = nil
+local function RouteLine(pool, index, parent, anchor, x1, y1, x2, y2, color, thickness)
+    local line = pool[index]
+    if line and line:GetParent() ~= parent then
+        line:Hide()
+        line = nil
     end
-    if not dot then
-        dot = parent:CreateTexture(nil, "ARTWORK")
-        pool[index] = dot
+    if not line then
+        line = parent:CreateTexture(nil, "ARTWORK")
+        pool[index] = line
     end
-    dot:SetWidth(size)
-    dot:SetHeight(size)
-    dot:SetTexture(color[1], color[2], color[3], 0.72)
-    dot:ClearAllPoints()
-    dot:SetPoint("CENTER", parent, anchor, x, y)
-    dot:Show()
+    local dx, dy = x2 - x1, y2 - y1
+    line:SetWidth(math.sqrt(dx * dx + dy * dy))
+    line:SetHeight(thickness)
+    line:SetTexture(color[1], color[2], color[3], 0.78)
+    line:ClearAllPoints()
+    line:SetPoint("CENTER", parent, anchor, (x1 + x2) / 2, (y1 + y2) / 2)
+    if line.SetRotation then
+        local angle
+        if dx == 0 then
+            angle = dy >= 0 and math.pi / 2 or -math.pi / 2
+        else
+            angle = math.atan(dy / dx)
+            if dx < 0 then angle = angle + math.pi end
+        end
+        line:SetRotation(angle)
+    end
+    line:Show()
 end
 
 local function DrawRouteSegment(pool, count, limit, parent, anchor,
-    x1, y1, x2, y2, color, spacing, dotSize, visible)
-    local dx, dy = x2 - x1, y2 - y1
-    local length = math.sqrt(dx * dx + dy * dy)
-    local steps = math.max(1, math.ceil(length / spacing))
-    for step = 1, steps - 1 do
-        if count >= limit then break end
-        local progress = step / steps
-        local x, y = x1 + dx * progress, y1 + dy * progress
-        if not visible or visible(x, y) then
-            count = count + 1
-            RouteDot(pool, count, parent, anchor, x, y, color, dotSize)
-        end
-    end
+    x1, y1, x2, y2, color, thickness)
+    if count >= limit or (x1 == x2 and y1 == y2) then return count end
+    count = count + 1
+    RouteLine(pool, count, parent, anchor, x1, y1, x2, y2, color, thickness)
     return count
 end
 
 local function DrawWorldRoutes(zone, parent, currentFloor)
-    HideRouteDots(worldRouteDots)
+    HideRouteLines(worldRouteLines)
     local width, height = parent:GetWidth(), parent:GetHeight()
     local count = 0
     for _, route in ipairs(zone.routes or {}) do
         if route.floor == 0 or currentFloor == 0 or route.floor == currentFloor then
             local color = iconColors[route.kind] or iconColors.scout
-            count = DrawRouteSegment(worldRouteDots, count, 1500, parent, "TOPLEFT",
-                route.x1 * width / 100, -route.y1 * height / 100,
-                route.x2 * width / 100, -route.y2 * height / 100,
-                color, 3, 2.5)
+            for index = 2, #(route.points or {}) do
+                local first, last = route.points[index - 1], route.points[index]
+                count = DrawRouteSegment(worldRouteLines, count, 1500, parent, "TOPLEFT",
+                    first.x * width / 100, -first.y * height / 100,
+                    last.x * width / 100, -last.y * height / 100,
+                    color, 2.5)
+                if count >= 1500 then break end
+            end
         end
         if count >= 1500 then break end
     end
@@ -825,7 +861,7 @@ end
 
 function QuestMap.UpdateWorldMap()
     HidePins(worldPins)
-    HideRouteDots(worldRouteDots)
+    HideRouteLines(worldRouteLines)
     if not Enabled() or not WorldMapFrame or not WorldMapFrame:IsShown() then return end
     local parent = WorldMapDetailFrame or WorldMapButton
     if not parent or parent:GetWidth() <= 0 or parent:GetHeight() <= 0 then return end
@@ -1009,36 +1045,61 @@ local function PhysicalZoneSize(zone, key)
     end
 end
 
+local function ClipRouteSegment(x1, y1, x2, y2, radiusSq)
+    local dx, dy = x2 - x1, y2 - y1
+    local a = dx * dx + dy * dy
+    if a == 0 then return nil end
+    local b = 2 * (x1 * dx + y1 * dy)
+    local c = x1 * x1 + y1 * y1 - radiusSq
+    local discriminant = b * b - 4 * a * c
+    if discriminant < 0 then return nil end
+    local root = math.sqrt(discriminant)
+    local enter = (-b - root) / (2 * a)
+    local leave = (-b + root) / (2 * a)
+    local first = math.max(0, math.min(enter, leave))
+    local last = math.min(1, math.max(enter, leave))
+    if first > last then return nil end
+    return x1 + dx * first, y1 + dy * first,
+        x1 + dx * last, y1 + dy * last
+end
+
 local function DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, facing, rotate)
-    HideRouteDots(minimapRouteDots)
+    HideRouteLines(minimapRouteLines)
     local count = 0
     local scale = mapRadius / radius
     local visibleRadius = radiusLimit * scale
     local visibleRadiusSq = visibleRadius * visibleRadius
-    local function OnMinimap(x, y) return x * x + y * y <= visibleRadiusSq end
     local cosFacing, sinFacing = math.cos(facing), math.sin(facing)
     for _, route in ipairs(zone.routes or {}) do
-        local dx1 = (route.x1 / 100 - playerMap.x) * size[1]
-        local dy1 = (route.y1 / 100 - playerMap.y) * size[2]
-        local dx2 = (route.x2 / 100 - playerMap.x) * size[1]
-        local dy2 = (route.y2 / 100 - playerMap.y) * size[2]
-        if rotate then
-            dx1, dy1 = dx1 * cosFacing - dy1 * sinFacing,
-                dx1 * sinFacing + dy1 * cosFacing
-            dx2, dy2 = dx2 * cosFacing - dy2 * sinFacing,
-                dx2 * sinFacing + dy2 * cosFacing
-        end
         local color = iconColors[route.kind] or iconColors.scout
-        count = DrawRouteSegment(minimapRouteDots, count, 600, Minimap, "CENTER",
-            dx1 * scale, -dy1 * scale, dx2 * scale, -dy2 * scale,
-            color, 3, 2.5, OnMinimap)
+        for index = 2, #(route.points or {}) do
+            local first, last = route.points[index - 1], route.points[index]
+            local dx1 = (first.x / 100 - playerMap.x) * size[1]
+            local dy1 = (first.y / 100 - playerMap.y) * size[2]
+            local dx2 = (last.x / 100 - playerMap.x) * size[1]
+            local dy2 = (last.y / 100 - playerMap.y) * size[2]
+            if rotate then
+                dx1, dy1 = dx1 * cosFacing - dy1 * sinFacing,
+                    dx1 * sinFacing + dy1 * cosFacing
+                dx2, dy2 = dx2 * cosFacing - dy2 * sinFacing,
+                    dx2 * sinFacing + dy2 * cosFacing
+            end
+            dx1, dy1, dx2, dy2 = ClipRouteSegment(
+                dx1 * scale, -dy1 * scale, dx2 * scale, -dy2 * scale,
+                visibleRadiusSq)
+            if dx1 then
+                count = DrawRouteSegment(minimapRouteLines, count, 600, Minimap, "CENTER",
+                    dx1, dy1, dx2, dy2, color, 2.5)
+            end
+            if count >= 600 then break end
+        end
         if count >= 600 then break end
     end
 end
 
 function QuestMap.UpdateMinimap()
     HidePins(minimapPins)
-    HideRouteDots(minimapRouteDots)
+    HideRouteLines(minimapRouteLines)
     if not Enabled() then minimapStatus = "disabled"; return end
     if not Minimap then minimapStatus = "Minimap frame unavailable"; return end
     if not playerMap.key or not playerMap.x then minimapStatus = "player map position unavailable"; return end
@@ -1189,8 +1250,8 @@ frame:SetScript("OnUpdate", function(_, elapsed)
         if frame.pinsWereEnabled ~= false then
             HidePins(worldPins)
             HidePins(minimapPins)
-            HideRouteDots(worldRouteDots)
-            HideRouteDots(minimapRouteDots)
+            HideRouteLines(worldRouteLines)
+            HideRouteLines(minimapRouteLines)
             frame.pinsWereEnabled = false
         end
         return
