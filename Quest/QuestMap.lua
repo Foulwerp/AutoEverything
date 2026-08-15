@@ -430,10 +430,10 @@ end
 -- this database (the client already marks those when in range; see the
 -- module docstring in build_ascension_quest_db_deep.py).
 local iconTextures = {
-    kill = "Interface\\AddOns\\AutoEverything\\Media\\Icons\\QuestSkull.tga",
-    loot = "Interface\\AddOns\\AutoEverything\\Media\\Icons\\QuestLootBag.tga",
-    object = "Interface\\AddOns\\AutoEverything\\Media\\Icons\\Interact.tga",
-    scout = "Interface\\AddOns\\AutoEverything\\Media\\Icons\\QuestScout.tga",
+    kill = "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga",
+    loot = "Interface\\AddOns\\AutoEverything\\Images\\QuestLootBag.tga",
+    object = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
+    scout = "Interface\\AddOns\\AutoEverything\\Images\\QuestScout.tga",
 }
 
 local iconColors = {

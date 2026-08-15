@@ -379,8 +379,8 @@ local function GetMarker(plate)
     marker:EnableMouse(false)
 
     -- Same icons/colors as the QuestMap world/minimap pins for consistency.
-    marker.kill = NewBadge(marker, "Interface\\AddOns\\AutoEverything\\Media\\Icons\\QuestSkull.tga", 30)
-    marker.loot = NewBadge(marker, "Interface\\AddOns\\AutoEverything\\Media\\Icons\\QuestLootBag.tga", 30)
+    marker.kill = NewBadge(marker, "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga", 30)
+    marker.loot = NewBadge(marker, "Interface\\AddOns\\AutoEverything\\Images\\QuestLootBag.tga", 30)
     -- "Speak with" objectives, using Blizzard's own chat bubble artwork.
     -- Comes only from live tooltip evidence, never an inferred database kind.
     marker.talk = NewBadge(marker, "Interface\\WorldMap\\ChatBubble_64.PNG", 30)

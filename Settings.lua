@@ -4345,7 +4345,7 @@ local function CreateMainFrame()
     Backdrop(frame)
 
     local brandIcon = frame:CreateTexture(nil, "ARTWORK")
-    brandIcon:SetTexture("Interface\\AddOns\\AutoEverything\\Textures\\AutoEverythingIcon.tga")
+    brandIcon:SetTexture("Interface\\AddOns\\AutoEverything\\Images\\AutoEverythingIcon.tga")
     brandIcon:SetSize(34, 34)
     brandIcon:SetPoint("TOPLEFT", 18, -12)
 

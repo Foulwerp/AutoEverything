@@ -13,7 +13,7 @@ button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 button:RegisterForDrag("LeftButton")
 
 local icon = button:CreateTexture(nil, "BACKGROUND")
-icon:SetTexture("Interface\\AddOns\\AutoEverything\\Textures\\AutoEverythingIcon.tga")
+icon:SetTexture("Interface\\AddOns\\AutoEverything\\Images\\AutoEverythingIcon.tga")
 icon:SetWidth(20)
 icon:SetHeight(20)
 icon:SetPoint("CENTER", 0, 1)

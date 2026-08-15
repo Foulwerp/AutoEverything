@@ -35,7 +35,7 @@ UI.Textures = {
 -- This font is optional in development builds. ApplyFont restores the font
 -- object it inherited when the bundled asset is unavailable rather than
 -- leaving text blank on clients that reject a missing font path.
-UI.Font = "Interface\\AddOns\\AutoEverything\\Media\\Fonts\\PTSansNarrow.ttf"
+UI.Font = "Interface\\AddOns\\AutoEverything\\Fonts\\PTSansNarrow.ttf"
 
 function UI.Unpack(color, alpha)
     return color[1], color[2], color[3], alpha or 1
