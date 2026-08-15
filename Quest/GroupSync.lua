@@ -185,7 +185,7 @@ end
 local function EncodeObjective(questKey, index, objective)
     return table.concat({
         "O", questKey, tostring(index), objective.finished and "1" or "0",
-        CleanField(objective.text, 125),
+        CleanField(objective.text, 125), CleanField(objective.type, 12),
     }, SEP)
 end
 
@@ -441,8 +441,19 @@ local function ReceiveMessage(prefix, message, channel, sender)
     elseif kind == "O" and fields[2] and tonumber(fields[3]) then
         local key, index = fields[2], tonumber(fields[3])
         local quest = member.quests[key] or { key = key, title = "Unknown quest", objectives = {} }
-        quest.objectives[index] = { finished = fields[4] == "1", text = fields[5] or ("Objective " .. index) }
+        quest.objectives[index] = {
+            finished = fields[4] == "1",
+            text = fields[5] or ("Objective " .. index),
+            type = fields[6] or "",
+        }
         member.quests[key] = quest
+    end
+
+    -- Group objective badges are built by QuestMarkers, which loads after
+    -- this file. Refresh whenever a snapshot/delta changes remote quest data;
+    -- RequestRefresh is deliberately cheap and coalesces rapid objective rows.
+    if kind == "B" or kind == "E" or kind == "X" or kind == "Q" or kind == "O" then
+        if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
     end
 end
 
@@ -511,10 +522,41 @@ local function MemberRowsForQuest(key, itemName)
     return rows
 end
 
+local function QuestKeysForItem(itemID)
+    local keys, seen = {}, {}
+    for _, key in ipairs(itemQuestKeys[itemID] or {}) do
+        keys[#keys + 1] = key
+        seen[key] = true
+    end
+    for _, member in pairs(memberQuests) do
+        if member.completeSnapshot then
+            for key, quest in pairs(member.quests or {}) do
+                if not seen[key] then
+                    for _, questItemID in ipairs((QuestByTitle and QuestByTitle[quest.title]) or {}) do
+                        if tonumber(questItemID) == itemID then
+                            keys[#keys + 1] = key
+                            seen[key] = true
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return keys
+end
+
+local function QuestForKey(key)
+    if localQuests[key] then return localQuests[key] end
+    for _, member in pairs(memberQuests) do
+        if member.quests and member.quests[key] then return member.quests[key] end
+    end
+end
+
 local function AddTooltipProgress(tooltip, link)
     if not tooltip or Setting("showGroupQuestTooltips", true) == false or not SyncActive() then return end
     local itemID = link and tonumber(string.match(link, "item:(%-?%d+)"))
-    local questKeys = itemID and itemQuestKeys[itemID]
+    local questKeys = itemID and QuestKeysForItem(itemID)
     if not questKeys or #questKeys == 0 then return end
 
     local marker = tostring(itemID) .. ":" .. table.concat(questKeys, ",")
@@ -525,7 +567,7 @@ local function AddTooltipProgress(tooltip, link)
     tooltip:AddLine(" ")
     tooltip:AddLine("AutoQuest Group Progress", 0.35, 0.65, 1)
     for _, key in ipairs(questKeys) do
-        local quest = localQuests[key]
+        local quest = QuestForKey(key)
         if quest then
             tooltip:AddLine(quest.title, 1, 0.82, 0.2)
             for _, row in ipairs(MemberRowsForQuest(key, itemName)) do

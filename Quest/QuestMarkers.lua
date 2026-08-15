@@ -162,11 +162,11 @@ local function ObjectiveForQuestItem(objectives, itemName)
     if #itemObjectives == 1 then return itemObjectives[1] end
 end
 
-local function AddMatch(index, key, kind, questTitle, itemName, remaining)
+local function AddMatch(index, key, kind, questTitle, itemName, remaining, memberName)
     if key == nil or key == "" then return end
     local match = index[key]
     if not match then
-        match = { kill=false, loot=false, quests={}, items={} }
+        match = { kill=false, loot=false, quests={}, items={}, members={} }
         index[key] = match
     end
     match[kind] = true
@@ -177,6 +177,65 @@ local function AddMatch(index, key, kind, questTitle, itemName, remaining)
         -- One kill can progress multiple objectives; show how many kills are
         -- needed before all matching objectives are finished.
         match[countKey] = math.max(match[countKey] or 0, remaining)
+    end
+    if memberName and memberName ~= "" then
+        local progress = match.members[memberName]
+        if not progress then progress = {}; match.members[memberName] = progress end
+        if remaining and remaining > 0 then
+            progress[kind] = math.max(progress[kind] or 0, remaining)
+        elseif progress[kind] == nil then
+            progress[kind] = true
+        end
+    end
+end
+
+local function IndexQuestTargets(title, questID, objectives, memberName)
+    local resolved = AutoQuest.ResolveQuestEntries(questID, title)
+    for _, match in ipairs(resolved) do
+        for _, record in ipairs(match.entry.records or {}) do
+            local done, remaining, objective = ObjectiveStatus(objectives, record)
+            local kind = RecordKind(record, objective)
+            if objective and kind and not done then
+                AddMatch(activeByNPC, tonumber(record.id), kind, title, record.item, remaining, memberName)
+                AddMatch(activeByName, string.lower(record.name or ""), kind, title, record.item, remaining, memberName)
+            end
+        end
+    end
+
+    if not SpawnStore then return end
+    local relationshipQuestIDs, seenQuestIDs = {}, {}
+    local function AddRelationshipQuestID(value)
+        value = tonumber(value)
+        if value and not seenQuestIDs[value] then
+            seenQuestIDs[value] = true
+            relationshipQuestIDs[#relationshipQuestIDs + 1] = value
+        end
+    end
+    AddRelationshipQuestID(questID)
+    for _, match in ipairs(resolved) do AddRelationshipQuestID(match.id) end
+
+    local npcObjective = ObjectiveForQuestNPC(objectives)
+    local npcDone, npcRemaining = ParseProgress(npcObjective)
+    local npcKind = RecordKind({}, npcObjective)
+    for _, relationshipQuestID in ipairs(relationshipQuestIDs) do
+        if npcObjective and npcKind and not npcDone then
+            for _, npcID in ipairs(SpawnStore.GetObjectiveNPCs(relationshipQuestID) or {}) do
+                AddMatch(activeByNPC, tonumber(npcID), npcKind, title, nil, npcRemaining, memberName)
+            end
+        end
+
+        for _, source in ipairs(SpawnStore.GetQuestItemSources(relationshipQuestID) or {}) do
+            local itemObjective = ObjectiveForQuestItem(objectives, source.itemName)
+            local itemDone, itemRemaining = ParseProgress(itemObjective)
+            if itemObjective and not itemDone then
+                for _, npcID in ipairs(source.npcIDs or {}) do
+                    AddMatch(
+                        activeByNPC, tonumber(npcID), "loot", title,
+                        source.itemName, itemRemaining, memberName
+                    )
+                end
+            end
+        end
     end
 end
 
@@ -201,59 +260,30 @@ function Markers.RebuildIndex()
                 }
             end
         end
-        -- Resolve by questID, falling back to title (the client may not return
-        -- a questID at all on 3.3.5). See AutoQuest.ResolveQuestEntries.
-        local resolved = (title and not isHeader) and AutoQuest.ResolveQuestEntries(questID, title) or {}
-        if title and not isHeader and #resolved > 0 and not Resolver.IsComplete(complete) then
-            for _, match in ipairs(resolved) do
-                for _, record in ipairs(match.entry.records or {}) do
-                    local done, remaining, objective = ObjectiveStatus(objectives, record)
-                    local kind = RecordKind(record, objective)
-                    if objective and kind and not done then
-                        AddMatch(activeByNPC, tonumber(record.id), kind, title, record.item, remaining)
-                        AddMatch(activeByName, string.lower(record.name or ""), kind, title, record.item, remaining)
-                    end
-                end
-            end
+        if title and not isHeader and not Resolver.IsComplete(complete) then
+            IndexQuestTargets(title, questID, objectives)
         end
+    end
 
-        -- The crawl also discovers targets through NPC "Objective of" and
-        -- item "Dropped by" relationships. These cover quests whose Mapper
-        -- record is absent or incomplete. Merge both relationship types by
-        -- NPC ID so a mixed objective can display both kill and loot badges.
-        if title and not isHeader and not Resolver.IsComplete(complete) and SpawnStore then
-            local relationshipQuestIDs, seenQuestIDs = {}, {}
-            local function AddRelationshipQuestID(value)
-                value = tonumber(value)
-                if value and not seenQuestIDs[value] then
-                    seenQuestIDs[value] = true
-                    relationshipQuestIDs[#relationshipQuestIDs + 1] = value
-                end
-            end
-            AddRelationshipQuestID(questID)
-            for _, match in ipairs(resolved) do AddRelationshipQuestID(match.id) end
-
-            local npcObjective = ObjectiveForQuestNPC(objectives)
-            local npcDone, npcRemaining = ParseProgress(npcObjective)
-            local npcKind = RecordKind({}, npcObjective)
-            for _, relationshipQuestID in ipairs(relationshipQuestIDs) do
-                if npcObjective and npcKind and not npcDone then
-                    for _, npcID in ipairs(SpawnStore.GetObjectiveNPCs(relationshipQuestID) or {}) do
-                        AddMatch(activeByNPC, tonumber(npcID), npcKind, title, nil, npcRemaining)
+    -- A synchronized member's objectives must participate even when the
+    -- local player does not have that quest. Only consume complete snapshots
+    -- so a multi-message refresh never flashes partial or misleading badges.
+    local sync = AutoQuest.GroupSync
+    local members = sync and sync.GetMemberQuestData and sync.GetMemberQuestData() or {}
+    for _, member in pairs(members) do
+        if member.completeSnapshot then
+            for key, quest in pairs(member.quests or {}) do
+                if not quest.complete then
+                    local objectives = {}
+                    for index, objective in ipairs(quest.objectives or {}) do
+                        objectives[index] = {
+                            text = objective.text or "",
+                            kind = objective.type or "",
+                            done = Resolver.ObjectiveIsComplete(objective.text, objective.finished),
+                        }
                     end
-                end
-
-                for _, source in ipairs(SpawnStore.GetQuestItemSources(relationshipQuestID) or {}) do
-                    local itemObjective = ObjectiveForQuestItem(objectives, source.itemName)
-                    local itemDone, itemRemaining = ParseProgress(itemObjective)
-                    if itemObjective and not itemDone then
-                        for _, npcID in ipairs(source.npcIDs or {}) do
-                            AddMatch(
-                                activeByNPC, tonumber(npcID), "loot", title,
-                                source.itemName, itemRemaining
-                            )
-                        end
-                    end
+                    local remoteQuestID = tonumber(string.match(key or "", "^I(%d+)$"))
+                    IndexQuestTargets(quest.title, remoteQuestID, objectives, member.name)
                 end
             end
         end
@@ -337,7 +367,7 @@ local function MatchUnit(unit)
             killRemaining = match.killRemaining,
             lootRemaining = match.lootRemaining
                 or (tooltipMatch and tooltipMatch.lootRemaining),
-            quests = match.quests, items = match.items,
+            quests = match.quests, items = match.items, members = match.members,
         }
         if not match.kill and not match.loot and not match.talk then match = nil end
     else
@@ -372,8 +402,8 @@ local function GetMarker(plate)
     -- UIParent avoids clipping and frame-level conflicts from any nameplate
     -- replacement addon. The marker remains anchored to the moving plate.
     local marker = CreateFrame("Frame", nil, UIParent)
-    marker:SetWidth(166)
-    marker:SetHeight(30)
+    marker:SetWidth(300)
+    marker:SetHeight(70)
     marker:SetPoint("LEFT", plate.unitFrame or plate, "RIGHT", -30, 0)
     marker:SetFrameStrata("HIGH")
     marker:SetFrameLevel(100)
@@ -385,6 +415,12 @@ local function GetMarker(plate)
     -- "Speak with" objectives, using Blizzard's own chat bubble artwork.
     -- Comes only from live tooltip evidence, never an inferred database kind.
     marker.talk = NewBadge(marker, "Interface\\WorldMap\\ChatBubble_64.PNG", 30)
+    marker.groupText = marker:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    if AutoCore.UI and AutoCore.UI.ApplyFont then AutoCore.UI.ApplyFont(marker.groupText, 10) end
+    marker.groupText:SetWidth(190)
+    marker.groupText:SetJustifyH("LEFT")
+    marker.groupText:SetTextColor(1, 0.82, 0.2, 1)
+    marker.groupText:Hide()
     marker:Hide()
 
     plate.AutoEverythingQuestMarker = marker
@@ -395,6 +431,7 @@ local function ResetMarker(marker)
     marker.kill:Hide(); marker.kill.count:Hide()
     marker.loot:Hide(); marker.loot.count:Hide()
     marker.talk:Hide(); marker.talk.count:Hide()
+    marker.groupText:Hide(); marker.groupText:SetText("")
 end
 
 local function ShowCount(icon, value)
@@ -402,6 +439,41 @@ local function ShowCount(icon, value)
         icon.count:SetText(value)
         icon.count:Show()
     end
+end
+
+local function GroupProgressLines(match)
+    local rows = {}
+    for name, progress in pairs(match.members or {}) do
+        local parts = {}
+        for _, kind in ipairs({ "kill", "loot", "talk" }) do
+            local value = progress[kind]
+            if value and (kind ~= "talk" or match.talk) then
+                if type(value) == "number" then
+                    parts[#parts + 1] = kind .. " " .. value
+                else
+                    parts[#parts + 1] = kind
+                end
+            end
+        end
+        if #parts == 1 then
+            local amount = string.match(parts[1], "(%d+)$")
+            rows[#rows + 1] = {
+                name = name,
+                text = amount and (amount .. " left") or parts[1],
+            }
+        elseif #parts > 1 then
+            rows[#rows + 1] = { name = name, text = table.concat(parts, ", ") }
+        end
+    end
+    table.sort(rows, function(a, b) return string.lower(a.name) < string.lower(b.name) end)
+
+    local lines = {}
+    local visible = math.min(#rows, 5)
+    for index = 1, visible do
+        lines[#lines + 1] = rows[index].name .. ": " .. rows[index].text
+    end
+    if #rows > visible then lines[#lines + 1] = "+" .. (#rows - visible) .. " more" end
+    return lines
 end
 
 local function UpdateUnit(unit, plate)
@@ -441,6 +513,13 @@ local function UpdateUnit(unit, plate)
     end
     if match.kill then ShowCount(marker.kill, match.killRemaining) end
     if match.loot then ShowCount(marker.loot, match.lootRemaining) end
+    local groupLines = GroupProgressLines(match)
+    if #groupLines > 0 then
+        marker.groupText:ClearAllPoints()
+        marker.groupText:SetPoint("LEFT", marker, "LEFT", (#icons * 34) + 2, 0)
+        marker.groupText:SetText(table.concat(groupLines, "\n"))
+        marker.groupText:Show()
+    end
     marker:Show()
 end
 
