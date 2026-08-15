@@ -231,6 +231,12 @@ local function ShouldSell(data, boundStatus, usable, playerLevel, location)
     if AutoCore.IsActiveQuestItem(data.id) then
         return false
     end
+    -- Keep the strongest pure-PvP/Bloodforged piece found for each slot.
+    if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
+        and AutoUpgrade.IsBestPvPSetItem(location and location.link, location)
+    then
+        return false
+    end
     -- Preserve the strongest bag candidates for each enabled weapon role.
     -- This lets a future one-hand/off-hand pair develop while a stronger
     -- two-hander is currently equipped.
@@ -748,19 +754,24 @@ SlashCmdList["AUTOSELL"] = function(msg)
                         -- 1. Active quest item?
                         if AutoCore.IsActiveQuestItem(data.id) then
                             verdict = "ACTIVE QUEST ITEM - protected (won't sell)"
-                        -- 2. Strategic weapon bench item?
+                        -- 2. Best PvP set item?
+                        elseif AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
+                            and AutoUpgrade.IsBestPvPSetItem(link, { link = link, bag = bag, slot = slot })
+                        then
+                            verdict = "BEST PVP SET - protected for its equipment slot"
+                        -- 3. Strategic weapon bench item?
                         elseif (not config or config.protectWeaponBench ~= false)
                             and AutoUpgrade and AutoUpgrade.IsWeaponBenchItem
                             and AutoUpgrade.IsWeaponBenchItem(link, { link = link, bag = bag, slot = slot })
                         then
                             verdict = "WEAPON BENCH CANDIDATE - protected for a future weapon set"
-                        -- 3. No vendor price?
+                        -- 4. No vendor price?
                         elseif not data.vendorPrice or data.vendorPrice <= 0 then
                             verdict = "no vendor price (can't be sold)"
-                        -- 4. No config loaded?
+                        -- 5. No config loaded?
                         elseif not config then
                             verdict = "AutoSellConfig not loaded"
-                        -- 5. Above the global safety ceiling?
+                        -- 6. Above the global safety ceiling?
                         elseif config.maxQuality ~= nil
                             and (data.quality == nil or data.quality > config.maxQuality)
                         then
@@ -778,7 +789,7 @@ SlashCmdList["AUTOSELL"] = function(msg)
                                 end
                             end
 
-                            -- 6. neverSell entries (print EVERY one)
+                            -- 7. neverSell entries (print EVERY one)
                             local neverHit = false
                             if config.never then
                                 for i, entry in ipairs(config.never) do
@@ -797,7 +808,7 @@ SlashCmdList["AUTOSELL"] = function(msg)
                             if neverHit then
                                 verdict = "in neverSell list - protected"
                             else
-                                -- 7. Rules (print EVERY one)
+                                -- 8. Rules (print EVERY one)
                                 local matchedRule = nil
                                 if config.rules then
                                     for i, rule in ipairs(config.rules) do

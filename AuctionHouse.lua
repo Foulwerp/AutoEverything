@@ -1040,6 +1040,9 @@ local function ShouldQueue(link, bag, slot)
     if not data or not data.id or data.itemType == "Quest" or data.itemType == "Key" then return false end
     if not IsMarketPriceEligible(link, data.itemType) then return false end
     if Core.IsActiveQuestItem(data.id) then return false end
+    if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
+        and AutoUpgrade.IsBestPvPSetItem(link, location)
+    then return false end
     local boundStatus, usable = Core.ScanTooltip(link, nil, location)
     if not IsAuctionableBinding(boundStatus) then return false end
     local playerLevel = UnitLevel("player") or 0
@@ -1224,6 +1227,12 @@ local function PostValidated(entry, unitPrice)
     local numStacks = math.max(1, math.floor(tonumber(entry.numStacks) or 1))
     local required = stackSize * numStacks
     if link ~= entry.link or count < required or locked then
+        posting.skipped = posting.skipped + 1
+        return
+    end
+    if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
+        and AutoUpgrade.IsBestPvPSetItem(link, { link=link, bag=entry.bag, slot=entry.slot })
+    then
         posting.skipped = posting.skipped + 1
         return
     end
@@ -1563,6 +1572,9 @@ local function IsManualSellable(link, bag, slot)
     local data = Core.GetItemData(link, { bag = bag, slot = slot, link = link })
     if not data or not data.id or data.itemType == "Quest" or data.itemType == "Key" then return false end
     if Core.IsActiveQuestItem(data.id) then return false end
+    if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
+        and AutoUpgrade.IsBestPvPSetItem(link, { link=link, bag=bag, slot=slot })
+    then return false end
     local bound = Core.ScanTooltip(link, nil, { bag = bag, slot = slot })
     return IsAuctionableBinding(bound)
 end

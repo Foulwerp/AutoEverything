@@ -1459,6 +1459,8 @@ function Core.GetTooltipSnapshot(link, location, weights)
         boundStatus = "unbound",
         usable = true,
         bloodforged = false,
+        pvpPower = 0,
+        pvePower = 0,
         stats = {},
     }
     if not SetTooltipItem(link, location) then return snapshot end
@@ -1491,6 +1493,13 @@ function Core.GetTooltipSnapshot(link, location, weights)
                     if lowered:find("bloodforged", 1, true) then
                         snapshot.bloodforged = true
                     end
+                    local powerText = lowered:match("([%d][%d,%.]*)") or ""
+                    local powerValue = tonumber((powerText:gsub(",", "")))
+                    if powerValue and lowered:find("pvp power", 1, true) then
+                        snapshot.pvpPower = math.max(snapshot.pvpPower, powerValue)
+                    elseif powerValue and lowered:find("pve power", 1, true) then
+                        snapshot.pvePower = math.max(snapshot.pvePower, powerValue)
+                    end
                     if column == 1 then
                         local req = str:match("Requires Level (%d+)")
                         if req then snapshot.reqLevel = tonumber(req) end
@@ -1509,6 +1518,42 @@ function Core.GetTooltipSnapshot(link, location, weights)
         end
     end
     return snapshot
+end
+
+-- Ascension's GetItemStats backport exposes PvP/PvE Power for item links,
+-- while Bloodforged is tooltip-only. Combine both sources so destructive
+-- modules share one conservative PvP-equipment classification.
+function Core.GetPvPItemInfo(link, location, tooltipSnapshot)
+    local snapshot = tooltipSnapshot or Core.GetTooltipSnapshot(link, location)
+    local pvpPower = tonumber(snapshot.pvpPower) or 0
+    local pvePower = tonumber(snapshot.pvePower) or 0
+
+    if type(GetItemStats) == "function" and link then
+        local supplied = {}
+        local ok, returned = pcall(GetItemStats, link, supplied)
+        local apiStats = ok and type(returned) == "table" and returned or supplied
+        for statKey, rawValue in pairs(apiStats or {}) do
+            local value = tonumber(rawValue)
+            local normalized = tostring(statKey):upper():gsub("[^A-Z]", "")
+            if value and value > 0 then
+                if normalized:find("PVPPOWER", 1, true) then
+                    pvpPower = math.max(pvpPower, value)
+                elseif normalized:find("PVEPOWER", 1, true) then
+                    pvePower = math.max(pvePower, value)
+                end
+            end
+        end
+    end
+
+    local bloodforged = snapshot.bloodforged and true or false
+    return {
+        bloodforged = bloodforged,
+        pvpPower = pvpPower,
+        pvePower = pvePower,
+        -- Pure PvP gear has PvP Power without PvE Power. Bloodforged remains
+        -- authoritative even when a custom item omits either numeric stat.
+        isPvPGear = bloodforged or (pvpPower > 0 and pvePower <= 0),
+    }
 end
 
 local function BuildDefaultProfile()

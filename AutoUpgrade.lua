@@ -213,6 +213,7 @@ end
 ----------------------------------------------------------------------
 local activeConfig = nil
 local setRecordCache = nil
+local pvpSetCache = nil
 
 GetActiveConfig = function()
     if not activeConfig then
@@ -284,6 +285,119 @@ end
 function AU.ClearConfigCache()
     activeConfig = nil
     setRecordCache = nil
+    pvpSetCache = nil
+end
+
+----------------------------------------------------------------------
+-- Best PvP set protection
+----------------------------------------------------------------------
+local PVP_SLOT_GROUPS = {
+    INVTYPE_HEAD="head", INVTYPE_NECK="neck", INVTYPE_SHOULDER="shoulder",
+    INVTYPE_CHEST="chest", INVTYPE_ROBE="chest", INVTYPE_WAIST="waist",
+    INVTYPE_LEGS="legs", INVTYPE_FEET="feet", INVTYPE_WRIST="wrist",
+    INVTYPE_HAND="hands", INVTYPE_CLOAK="back", INVTYPE_FINGER="finger",
+    INVTYPE_TRINKET="trinket", INVTYPE_WEAPON="onehand",
+    INVTYPE_WEAPONMAINHAND="mainhand", INVTYPE_WEAPONOFFHAND="offhand",
+    INVTYPE_2HWEAPON="twohand", INVTYPE_SHIELD="offhand",
+    INVTYPE_HOLDABLE="offhand", INVTYPE_RANGED="ranged",
+    INVTYPE_RANGEDRIGHT="ranged", INVTYPE_THROWN="ranged",
+    INVTYPE_RELIC="ranged",
+}
+
+local PVP_GROUP_CAPACITY = { finger=2, trinket=2, onehand=2 }
+
+local function PvPLocationKey(location)
+    if location and location.bag ~= nil and location.slot then
+        return "bag:" .. tostring(location.bag) .. ":" .. tostring(location.slot)
+    elseif location and location.invSlot then
+        return "inv:" .. tostring(location.invSlot)
+    end
+end
+
+local function MakePvPSetRecord(link, location, cfg)
+    if not link then return nil end
+    local _, _, _, iLevel, _, _, _, _, equipSlot = GetItemInfo(link)
+    local group = equipSlot and PVP_SLOT_GROUPS[equipSlot]
+    if not group then return nil end
+
+    local weights = cfg and cfg.weights or {}
+    local snapshot = AutoCore.GetTooltipSnapshot(link, location, weights)
+    local pvp = AutoCore.GetPvPItemInfo(link, location, snapshot)
+    if not pvp.isPvPGear or snapshot.usable == false then return nil end
+
+    local score = 0
+    for statName, value in pairs(snapshot.stats or {}) do
+        score = score + value * (weights[statName] or 0)
+    end
+    return {
+        link=link, location=location, locationKey=PvPLocationKey(location),
+        group=group, equipSlot=equipSlot, score=score,
+        pvpPower=pvp.pvpPower or 0, pvePower=pvp.pvePower or 0,
+        bloodforged=pvp.bloodforged, iLevel=tonumber(iLevel) or 0,
+    }
+end
+
+local function BuildPvPSetCache()
+    local cfg = GetActiveConfig() or { weights={} }
+    local groups, records = {}, {}
+    local function Add(link, location)
+        local record = MakePvPSetRecord(link, location, cfg)
+        if not record then return end
+        groups[record.group] = groups[record.group] or {}
+        table.insert(groups[record.group], record)
+        table.insert(records, record)
+    end
+
+    for invSlot = 1, 19 do
+        Add(GetInventoryItemLink("player", invSlot), { invSlot=invSlot })
+    end
+    for bag = 0, (NUM_BAG_SLOTS or 4) do
+        for slot = 1, GetContainerNumSlots(bag) do
+            local _, count, locked, _, _, _, link = GetContainerItemInfo(bag, slot)
+            if link and not locked and (tonumber(count) or 0) > 0 then
+                Add(link, { bag=bag, slot=slot })
+            end
+        end
+    end
+
+    local hasWeights = AutoCore.HasStatWeights and AutoCore.HasStatWeights(cfg.weights)
+    local protected, best = {}, {}
+    local function Better(a, b)
+        if hasWeights and a.score ~= b.score then return a.score > b.score end
+        if a.pvpPower ~= b.pvpPower then return a.pvpPower > b.pvpPower end
+        if a.iLevel ~= b.iLevel then return a.iLevel > b.iLevel end
+        if a.bloodforged ~= b.bloodforged then return a.bloodforged end
+        local aEquipped = a.location and a.location.invSlot ~= nil
+        local bEquipped = b.location and b.location.invSlot ~= nil
+        if aEquipped ~= bEquipped then return aEquipped end
+        return tostring(a.locationKey or a.link) < tostring(b.locationKey or b.link)
+    end
+    for group, candidates in pairs(groups) do
+        table.sort(candidates, Better)
+        local capacity = PVP_GROUP_CAPACITY[group] or 1
+        for index = 1, math.min(capacity, #candidates) do
+            local record = candidates[index]
+            best[#best + 1] = record
+            if record.locationKey then protected[record.locationKey] = true end
+        end
+    end
+    table.sort(best, function(a, b)
+        if a.group == b.group then return Better(a, b) end
+        return a.group < b.group
+    end)
+    pvpSetCache = { protected=protected, best=best, records=records }
+    return pvpSetCache
+end
+
+function AU.GetBestPvPSet()
+    return (pvpSetCache or BuildPvPSetCache()).best
+end
+
+function AU.IsBestPvPSetItem(link, location)
+    local key = PvPLocationKey(location)
+    if not link or not key then return false end
+    local cache = pvpSetCache or BuildPvPSetCache()
+    return cache.protected[key] == true
 end
 
 function AU.GetMode()
@@ -311,11 +425,9 @@ function AU.EvaluateItem(link, location, evaluation)
     local itemScore = evaluation and evaluation.itemScore
 
     -- PvP gear toggle: respect the user's setting for whether to allow equipping PvP gear.
-    local bloodforged = snapshot and snapshot.bloodforged
-    if bloodforged == nil and AutoCore.IsBloodforgedItem then
-        bloodforged = AutoCore.IsBloodforgedItem(link, location)
-    end
-    if bloodforged then
+    snapshot = snapshot or AutoCore.GetTooltipSnapshot(link, location, cfg.weights)
+    local pvpInfo = AutoCore.GetPvPItemInfo(link, location, snapshot)
+    if pvpInfo.isPvPGear then
         local score = itemScore or AutoCore.GetItemScore(link, cfg.weights, location) or 0
         if not cfg.pvpGearToggle then
             return false, score, 0, nil, "PvP gear is excluded from auto-equip (toggle disabled)"
@@ -698,11 +810,11 @@ local function MakeSetRecord(link, location, cfg, evaluation)
     if not equipSlot or equipSlot == "" then return nil end
     local snapshot = evaluation and evaluation.tooltipSnapshot
         or AutoCore.GetTooltipSnapshot(link, location, cfg.weights)
-    -- Only exclude Bloodforged items while they are candidates in bags. If a
-    -- Bloodforged item is already equipped, keep it in the current-set score
+    -- Only exclude PvP items while they are candidates in bags. If one is
+    -- already equipped, keep it in the current-set score
     -- so comparisons remain accurate and AutoUpgrade can still replace it.
     if location and location.bag ~= nil
-        and snapshot.bloodforged
+        and AutoCore.GetPvPItemInfo(link, location, snapshot).isPvPGear
     then
         if not cfg.pvpGearToggle then return nil end
     end
@@ -1102,10 +1214,9 @@ function AU.ScanBags(dryRun, manual)
                     if data then
                         local location = { bag = bag, slot = slot }
                         local excludedPvP = not cfg.pvpGearToggle
-                            and AutoCore.IsBloodforgedItem
-                            and AutoCore.IsBloodforgedItem(link, location)
+                            and AutoCore.GetPvPItemInfo(link, location).isPvPGear
                         if excludedPvP then
-                            -- Leave Bloodforged bag items manual unless the
+                            -- Leave Bloodforged/pure-PvP bag items manual unless the
                             -- player explicitly enables PvP gear upgrades.
                         elseif IsOptimizedHandSlot(data.equipSlot) then
                             -- Hand-slot items are evaluated globally as a
@@ -1237,6 +1348,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         or event == "PLAYER_LEVEL_UP" or event == "PLAYER_ENTERING_WORLD"
     then
         setRecordCache = nil
+        pvpSetCache = nil
     end
     if event == "ADDON_LOADED" then
         if arg1 == "AutoEverything" then
@@ -1318,6 +1430,24 @@ SlashCmdList["AUTOUPGRADE"] = function(msg)
         AU.ScanBags(false, true)
     elseif msg == "test" then
         AU.ScanBags(true, true)
+    elseif msg == "pvp" then
+        pvpSetCache = nil
+        local best = AU.GetBestPvPSet()
+        print("|cff00ff00AutoUpgrade PvP Set:|r " .. #best .. " protected piece(s)")
+        for _, record in ipairs(best) do
+            local location = record.location and record.location.invSlot
+                and ("equipped slot " .. record.location.invSlot)
+                or ("bag " .. tostring(record.location and record.location.bag)
+                    .. " slot " .. tostring(record.location and record.location.slot))
+            print("  " .. record.group .. ": " .. record.link
+                .. " |cff8b949e(" .. location
+                .. ", PvP " .. tostring(record.pvpPower)
+                .. ", PvE " .. tostring(record.pvePower)
+                .. ", score " .. string.format("%.1f", record.score) .. ")|r")
+        end
+        if #best == 0 then
+            print("  No usable Bloodforged or pure-PvP-Power equipment was found.")
+        end
     elseif msg == "debug" then
         -- Debug: scan every bag item and show exactly why each is or
         -- isn't an upgrade (quality gate, item level gate, required
@@ -1531,6 +1661,13 @@ SlashCmdList["AUTOUPGRADE"] = function(msg)
             print("|cffffcc00GetItemStats() API:|r not available on this client.")
         end
 
+        local pvpSnapshot = AutoCore.GetTooltipSnapshot(link, { bag=bag, slot=slot }, cfg and cfg.weights or {})
+        local pvpInfo = AutoCore.GetPvPItemInfo(link, { bag=bag, slot=slot }, pvpSnapshot)
+        print("|cffffcc00PvP-set classification:|r bloodforged=" .. tostring(pvpInfo.bloodforged)
+            .. " pvpPower=" .. tostring(pvpInfo.pvpPower)
+            .. " pvePower=" .. tostring(pvpInfo.pvePower)
+            .. " purePvPOrBloodforged=" .. tostring(pvpInfo.isPvPGear))
+
         -- UnitDamage("player") reflects your live, fully-scaled damage
         -- (buffs/attack power included) - only meaningful when this exact
         -- item is the one currently equipped in that hand, and only as a
@@ -1587,6 +1724,7 @@ SlashCmdList["AUTOUPGRADE"] = function(msg)
         print("  /autoupgrade notify off - Disable notify-only mode")
         print("  /autoupgrade scan       - Scan bags now")
         print("  /autoupgrade test       - Dry run")
+        print("  /autoupgrade pvp        - List the protected best PvP set")
         print("  /autoupgrade whoami     - Show profile and mode")
         print("  /autoupgrade debug      - Show detailed item decisions")
         print("  /autoupgrade stats      - Compare stat-reading methods for bag 0 slot 1")

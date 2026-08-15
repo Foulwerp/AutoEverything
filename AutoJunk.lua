@@ -132,8 +132,11 @@ local function FindCheapestJunk()
             if texture and link and not locked
                 and quality ~= nil and quality <= (cfg.maxQuality or 0)
             then
-                local data = AutoCore.GetItemData(link, { bag = bag, slot = slot })
-                if data and not AutoCore.IsActiveQuestItem(data.id) then
+                local location = { link=link, bag=bag, slot=slot }
+                local data = AutoCore.GetItemData(link, location)
+                local protectedPvP = AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
+                    and AutoUpgrade.IsBestPvPSetItem(link, location)
+                if data and not AutoCore.IsActiveQuestItem(data.id) and not protectedPvP then
                     local guid = GetContainerItemGUID and GetContainerItemGUID(bag, slot) or nil
                     local boundStatus, usable = AutoCore.ScanTooltip(link, guid, { bag = bag, slot = slot })
                     local matched = false
