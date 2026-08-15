@@ -11,6 +11,7 @@ local decoded = {}
 local decodedQuestNPCs = {}
 local decodedQuestItems = {}
 local decodedServices
+local decodedServiceFactions
 
 local serviceOrder = {
     "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
@@ -132,6 +133,17 @@ function Store.GetServices()
         and AutoQuest.ServiceNPCs or {}
     local names = type(AutoQuest.ServiceNPCNames) == "table"
         and AutoQuest.ServiceNPCNames or {}
+    if not decodedServiceFactions then
+        decodedServiceFactions = {}
+        local packedFactions = type(AutoQuest.ServiceNPCFactions) == "table"
+            and AutoQuest.ServiceNPCFactions or {}
+        for _, faction in ipairs({ "Alliance", "Horde", "Both", "Neither" }) do
+            for value in string.gmatch(packedFactions[faction] or "", "[^,]+") do
+                local npcID = tonumber(value)
+                if npcID and npcID > 0 then decodedServiceFactions[npcID] = faction end
+            end
+        end
+    end
     for _, kind in ipairs(serviceOrder) do
         local packed = packedServices[kind]
         if type(packed) == "string" then
@@ -142,6 +154,7 @@ function Store.GetServices()
                         id = npcID,
                         kind = kind,
                         name = names[npcID],
+                        faction = decodedServiceFactions[npcID],
                     }
                 end
             end
@@ -155,4 +168,5 @@ function Store.ClearCache()
     decodedQuestNPCs = {}
     decodedQuestItems = {}
     decodedServices = nil
+    decodedServiceFactions = nil
 end

@@ -172,8 +172,12 @@ end
 local function BuildServiceIndex()
     if serviceByZone then return end
     serviceByZone = {}
+    local playerFaction = UnitFactionGroup and UnitFactionGroup("player") or nil
     for _, service in ipairs(SpawnStore.GetServices() or {}) do
-        for _, location in ipairs(SpawnStore.Get(service.id) or {}) do
+        local available = service.faction == nil or service.faction == "Both"
+            or service.faction == playerFaction
+        if service.faction == "Neither" then available = false end
+        for _, location in ipairs(available and SpawnStore.Get(service.id) or {}) do
             local key = NormalizeZone(location.zone)
             if key ~= "" then
                 local zone = serviceByZone[key]
