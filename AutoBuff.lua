@@ -227,10 +227,16 @@ local function UnitRecord(unit, isSelf)
     }
 end
 
+local function IsTrivialGroupMember(unit, isSelf)
+    if isSelf then return false end
+    if UnitIsTrivial and UnitIsTrivial(unit) then return true end
+    return UnitClassification and UnitClassification(unit) == "trivial"
+end
+
 local function AddUnit(units, unit, isSelf)
     if UnitIsConnected and not UnitIsConnected(unit) then return end
     if UnitIsDeadOrGhost and UnitIsDeadOrGhost(unit) then return end
-    if UnitIsTrivial and UnitIsTrivial(unit) then return end
+    if IsTrivialGroupMember(unit, isSelf) then return end
     if UnitCanAssist and not UnitCanAssist("player", unit) then return end
     local record = UnitRecord(unit, isSelf)
     if record then table.insert(units, record) end
@@ -612,6 +618,7 @@ events:RegisterEvent("PLAYER_ENTERING_WORLD")
 events:RegisterEvent("PARTY_MEMBERS_CHANGED")
 events:RegisterEvent("RAID_ROSTER_UPDATE")
 events:RegisterEvent("UNIT_AURA")
+events:RegisterEvent("UNIT_CLASSIFICATION_CHANGED")
 events:RegisterEvent("SPELLS_CHANGED")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
