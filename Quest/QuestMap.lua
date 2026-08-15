@@ -20,6 +20,25 @@ local buildStats = { activeQuests=0, matchedQuests=0, points=0, servicePoints=0 
 local minimapStatus = "not updated"
 local locationDebug = {}
 
+local selectableServiceKinds = {
+    auctioneer = true,
+    banker = true,
+    flightmaster = true,
+}
+
+local function ServiceKindEnabled(kind)
+    if not selectableServiceKinds[kind] then return true end
+    local fallback = AutoQuestConfig and AutoQuestConfig.mapServiceIconTypes
+        or { "auctioneer", "banker", "flightmaster" }
+    local selected = AutoCore.GetSetting("quest", "mapServiceIconTypes", fallback)
+    if type(selected) == "string" then return selected == kind end
+    if type(selected) ~= "table" then return true end
+    for _, value in ipairs(selected) do
+        if value == kind then return true end
+    end
+    return false
+end
+
 -- Physical dimensions are needed to translate normalized zone coordinates to
 -- minimap yards. Unknown/custom maps still receive world-map pins.
 local zoneSizes = {
@@ -177,6 +196,7 @@ local function BuildServiceIndex()
         local available = service.faction == nil or service.faction == "Both"
             or service.faction == playerFaction
         if service.faction == "Neither" then available = false end
+        if not ServiceKindEnabled(service.kind) then available = false end
         for _, location in ipairs(available and SpawnStore.Get(service.id) or {}) do
             local key = NormalizeZone(location.zone)
             if key ~= "" then
@@ -908,6 +928,16 @@ function QuestMap.SetEnabled(enabled)
     UpdatePlayerLocation()
     QuestMap.UpdateMinimap()
     AutoCore.Info("Quest", "Quest map pins " .. (enabled and "enabled." or "disabled."))
+end
+
+function QuestMap.ApplyProfile()
+    -- Service locations are otherwise static and intentionally cached. A
+    -- profile switch or selector change must rebuild that cache immediately.
+    serviceByZone = nil
+    QuestMap.RebuildIndex()
+    QuestMap.UpdateWorldMap()
+    UpdatePlayerLocation()
+    QuestMap.UpdateMinimap()
 end
 
 function QuestMap.RequestRefresh()

@@ -1945,6 +1945,26 @@ pageBuilders.Quest = function(parent)
         "Maximum icons shown on the minimap at once, closest first.",
         "Minimap Max Icons", 306)
 
+    local serviceIconChoices = {
+        { text = "Auctioneer", value = "auctioneer" },
+        { text = "Banker", value = "banker" },
+        { text = "Flight Master", value = "flightmaster" },
+    }
+    local selectedServiceIcons = Core.GetSetting("quest", "mapServiceIconTypes",
+        ResolvedDefault(AutoQuestConfig, "mapServiceIconTypes",
+            { "auctioneer", "banker", "flightmaster" }))
+    local serviceIcons = MultiChoiceEditor(parent, "Service Icons", leftX, thirdRow, 306,
+        serviceIconChoices, selectedServiceIcons, "None")
+    serviceIcons:SetOnSelectionChanged(function()
+        local selected = serviceIcons:GetSelected()
+        if selected == nil then selected = {}
+        elseif type(selected) ~= "table" then selected = { selected } end
+        SetSettingWithoutRefresh("quest", "mapServiceIconTypes", selected)
+    end)
+    AddTooltip(serviceIcons, "Service icons",
+        "Choose any combination of Auctioneer, Banker, and Flight Master icons for both the world map and minimap. Choose None to hide all three.")
+    BindToggleDependency(rightControls.mapPins, serviceIcons)
+
     -- Group progress travels through invisible PARTY/RAID addon messages.
     -- Keep the controls in the owning Quest page; AutoBuff has its own module.
     Label(parent, "Group Questing", 28, -458, 13)
@@ -3281,6 +3301,12 @@ MultiChoiceEditor = function(parent, label, x, y, width, choices, initial, empty
         for value in pairs(selected) do table.insert(result, value) end
         table.sort(result, function(a, b) return tostring(a) < tostring(b) end)
         if #result == 0 then return nil elseif #result == 1 then return result[1] else return result end
+    end
+    function button:SetAvailable(available)
+        self.available = available and true or false
+        self:SetAlpha(self.available and 1 or 0.5)
+        if self.available then self:Enable() else self:Disable() end
+        if not self.available and openMenuButton == self and CloseOpenMenu then CloseOpenMenu() end
     end
     function button:SetOnSelectionChanged(callback) onSelectionChanged = callback end
     function button:RefreshChoices() Caption() end

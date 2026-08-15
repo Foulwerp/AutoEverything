@@ -216,6 +216,7 @@ function AQ.ApplyProfile()
     end
     if AQ.db.enabled == nil then AQ.db.enabled = (AutoQuestConfig or {}).enabled ~= false end
     if AQ.Markers and AQ.Markers.ApplyProfile then AQ.Markers.ApplyProfile() end
+    if AQ.Map and AQ.Map.ApplyProfile then AQ.Map.ApplyProfile() end
 end
 
 ----------------------------------------------------------------------

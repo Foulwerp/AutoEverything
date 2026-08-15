@@ -193,6 +193,7 @@ AutoQuestConfig = {
     maxWorldPins = 500,
     minimapPinRadiusPercent = 95,
     minimapPinSize = 16,
+    mapServiceIconTypes = { "auctioneer", "banker", "flightmaster" },
     nameplateMarkers = true,
     useElvUIQuestMarkers = false,
     turnInDailyQuests = false,
