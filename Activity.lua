@@ -5,6 +5,7 @@
 AutoActivity = AutoActivity or {}
 local Activity = AutoActivity
 local config = AutoCoreConfig or {}
+local UI = AutoCore and AutoCore.UI
 
 BINDING_HEADER_AUTOMATION_UTILITIES = "Automation Utilities"
 BINDING_NAME_AUTOMATION_TARGET_ENEMY_FLAG = "Target Enemy Flag Carrier"
@@ -23,25 +24,73 @@ end
 ----------------------------------------------------------------------
 local countdown = { active = false }
 local countdownFrame = CreateFrame("Frame", nil, UIParent)
-countdownFrame:SetSize(320, 104)
+countdownFrame:SetSize(340, 112)
 countdownFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 170)
 countdownFrame:SetFrameStrata("DIALOG")
-countdownFrame:SetBackdrop({
-    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-    tile = true, tileSize = 32, edgeSize = 32,
-    insets = { left = 11, right = 12, top = 12, bottom = 11 },
-})
+if countdownFrame.SetClampedToScreen then countdownFrame:SetClampedToScreen(true) end
+if UI and UI.Backdrop then
+    UI.Backdrop(countdownFrame, UI.Colors.window, 0.98)
+else
+    countdownFrame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    countdownFrame:SetBackdropColor(0.05, 0.07, 0.09, 0.98)
+    countdownFrame:SetBackdropBorderColor(0.19, 0.21, 0.24, 1)
+end
+
+local countdownAccent = countdownFrame:CreateTexture(nil, "BORDER")
+countdownAccent:SetTexture("Interface\\Buttons\\WHITE8X8")
+countdownAccent:SetPoint("TOPLEFT", 1, -1)
+countdownAccent:SetPoint("TOPRIGHT", -1, -1)
+countdownAccent:SetHeight(2)
+if UI then
+    countdownAccent:SetVertexColor(UI.Unpack(UI.Colors.brand))
+else
+    countdownAccent:SetVertexColor(0.35, 0.65, 1, 1)
+end
+
+local countdownDivider = countdownFrame:CreateTexture(nil, "BORDER")
+countdownDivider:SetTexture("Interface\\Buttons\\WHITE8X8")
+countdownDivider:SetPoint("TOPLEFT", 16, -44)
+countdownDivider:SetPoint("TOPRIGHT", -16, -44)
+countdownDivider:SetHeight(1)
+if UI then
+    countdownDivider:SetVertexColor(UI.Unpack(UI.Colors.border))
+else
+    countdownDivider:SetVertexColor(0.19, 0.21, 0.24, 1)
+end
 countdownFrame:Hide()
 
 local countdownTitle = countdownFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-countdownTitle:SetPoint("TOP", 0, -18)
+countdownTitle:SetPoint("TOPLEFT", 16, -14)
 local countdownText = countdownFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-countdownText:SetPoint("TOP", countdownTitle, "BOTTOM", 0, -8)
+countdownText:SetPoint("TOPLEFT", 16, -57)
 local cancelButton = CreateFrame("Button", nil, countdownFrame, "UIPanelButtonTemplate")
 cancelButton:SetSize(92, 22)
-cancelButton:SetPoint("BOTTOM", 0, 15)
+cancelButton:SetPoint("BOTTOMRIGHT", -16, 14)
 cancelButton:SetText("Cancel")
+
+if UI then
+    UI.ApplyFont(countdownTitle, 15)
+    UI.ApplyFont(countdownText, 12)
+    countdownTitle:SetTextColor(UI.Unpack(UI.Colors.text))
+    countdownText:SetTextColor(UI.Unpack(UI.Colors.textMuted))
+    UI.StripTemplateArt(cancelButton)
+    UI.Backdrop(cancelButton, UI.Colors.control, 1)
+    local cancelText = cancelButton:GetFontString()
+    UI.ApplyFont(cancelText, 12)
+    if cancelText then cancelText:SetTextColor(UI.Unpack(UI.Colors.text)) end
+    cancelButton:SetScript("OnEnter", function(self)
+        self:SetBackdropColor(UI.Unpack(UI.Colors.surfaceRaised))
+        self:SetBackdropBorderColor(UI.Unpack(UI.Colors.brand))
+    end)
+    cancelButton:SetScript("OnLeave", function(self)
+        self:SetBackdropColor(UI.Unpack(UI.Colors.control))
+        self:SetBackdropBorderColor(UI.Unpack(UI.Colors.border))
+    end)
+end
 
 local function StopCountdown(cancelled)
     local cancelMessage = countdown.cancelMessage
@@ -189,7 +238,6 @@ end)
 eventFrame:SetScript("OnEvent", function(_, event, message)
     if event == "LFG_PROPOSAL_SHOW" then
         dungeonCompletionHandled = false
-        if Setting("autoAcceptLFGProposal", false) and AcceptProposal then AcceptProposal() end
     elseif event == "LFG_COMPLETION_REWARD" then
         if not dungeonCompletionHandled and Setting("autoExitCompletedDungeon", false) then
             local inInstance, instanceType = IsInInstance()

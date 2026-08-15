@@ -1610,7 +1610,7 @@ end
 pageBuilders["Groups & Queues"] = function(parent)
     PageHeader(parent, "Groups & Queues", "Party prompts, Dungeon Finder flow, and battleground automation in one place.")
     FitSectionCard(parent, 12, -76, 340, -306)
-    FitSectionCard(parent, 370, -76, 342, -345)
+    FitSectionCard(parent, 370, -76, 342, -317)
     FitSectionCard(parent, 12, -372, 700, -513)
 
     Label(parent, "Party & Raid", 20, -84, 13)
@@ -1667,20 +1667,17 @@ pageBuilders["Groups & Queues"] = function(parent)
     }, role, function(value) SetSettingWithoutRefresh("core", "lfgAutoRole", value) end)
     AddTooltip(roleButton, "Role-check selection",
         "Keep current selection confirms the roles already checked in Dungeon Finder. A named role replaces them before confirmation.")
-    ScalarSettingRow(parent, "core", AutoCoreConfig, "autoAcceptLFGProposal",
-        "Accept dungeon queue pop", 378, -176, false,
-        "Accepts the Dungeon Finder proposal when a group is ready.")
     local dungeonExit = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoExitCompletedDungeon",
-        "Exit completed dungeon", 378, -204, false,
+        "Exit completed dungeon", 378, -176, false,
         "After the Dungeon Finder completion reward, shows a countdown with Cancel before teleporting out. Leaving the party is controlled separately below.")
     local dungeonPartyLeave = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoLeaveDungeonParty",
-        "Leave party when exiting", 408, -232, false,
+        "Leave party when exiting", 408, -204, false,
         "After teleporting out of a completed dungeon, leaves the current party. Only applies to automatic dungeon departure.")
     local dungeonExitDelay = Core.GetSetting("core", "dungeonExitDelay",
         ResolvedDefault(AutoCoreConfig, "dungeonExitDelay", 10))
     local shortDungeonDelays = { [5] = true, [10] = true, [15] = true, [20] = true, [30] = true }
     if not shortDungeonDelays[tonumber(dungeonExitDelay)] then dungeonExitDelay = 10 end
-    local dungeonDelayButton = ChoiceButton(parent, "Departure timer", 378, -260, 310, {
+    local dungeonDelayButton = ChoiceButton(parent, "Departure timer", 378, -232, 310, {
         { text = "5 seconds", value = 5 },
         { text = "10 seconds", value = 10 },
         { text = "15 seconds", value = 15 },
@@ -1690,12 +1687,12 @@ pageBuilders["Groups & Queues"] = function(parent)
     AddTooltip(dungeonDelayButton, "Dungeon departure timer",
         "Waits after completion before teleporting out. Cancel keeps you in the dungeon for the rest of that run so the group can continue.")
     local dungeonRequeue = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoRequeueDungeon",
-        "Requeue after exiting", 408, -292, false,
+        "Requeue after exiting", 408, -264, false,
         "After automatic dungeon departure and optional party leave, shows a second cancellable timer before rejoining the retained Dungeon Finder selection.")
     local dungeonRequeueDelay = Core.GetSetting("core", "dungeonRequeueDelay",
         ResolvedDefault(AutoCoreConfig, "dungeonRequeueDelay", 10))
     if not shortDungeonDelays[tonumber(dungeonRequeueDelay)] then dungeonRequeueDelay = 10 end
-    local requeueDelayButton = ChoiceButton(parent, "Requeue timer", 378, -320, 310, {
+    local requeueDelayButton = ChoiceButton(parent, "Requeue timer", 378, -292, 310, {
         { text = "5 seconds", value = 5 },
         { text = "10 seconds", value = 10 },
         { text = "15 seconds", value = 15 },
