@@ -42,6 +42,16 @@ local function Enabled()
     return MarkersRequested() and not (WantsElvUI() and ElvUIEngine())
 end
 
+local function GroupTooltipsRequested()
+    local sync = AutoQuest.GroupSync
+    local members = sync and sync.GetMemberQuestData and sync.GetMemberQuestData()
+    return AutoCore.GetSetting("quest", "groupQuestSync",
+            AutoQuestConfig and AutoQuestConfig.groupQuestSync) == true
+        and AutoCore.GetSetting("quest", "showGroupQuestTooltips",
+            AutoQuestConfig and AutoQuestConfig.showGroupQuestTooltips) ~= false
+        and type(members) == "table" and next(members) ~= nil
+end
+
 -- Mirrors the useful one-line command that previously had to be run by hand.
 -- Only the two NPC quest-icon switches are touched; all other ElvUI nameplate
 -- settings remain under the player's control.
@@ -168,11 +178,13 @@ local function ObjectiveForQuestItem(objectives, itemName)
     if #itemObjectives == 1 then return itemObjectives[1] end
 end
 
-local function AddMatch(index, key, kind, questTitle, itemName, remaining, memberName)
+local function AddMatch(index, key, kind, questTitle, itemName, remaining, memberName, objective)
     if key == nil or key == "" then return end
     local match = index[key]
     if not match then
-        match = { kill=false, loot=false, quests={}, items={}, members={} }
+        match = {
+            kill=false, loot=false, quests={}, items={}, members={}, memberSteps={},
+        }
         index[key] = match
     end
     match[kind] = true
@@ -192,6 +204,26 @@ local function AddMatch(index, key, kind, questTitle, itemName, remaining, membe
         elseif progress[kind] == nil then
             progress[kind] = true
         end
+        if objective then
+            local steps = match.memberSteps[memberName]
+            if not steps then steps = { seen = {} }; match.memberSteps[memberName] = steps end
+            local text = objective.text or questTitle or "Quest objective"
+            if objective.current and objective.required
+                and not string.find(text, "%d+%s*/%s*%d+")
+            then
+                text = text .. ": " .. objective.current .. "/" .. objective.required
+            end
+            local stepKey = table.concat({ questTitle or "", kind or "", text }, "\31")
+            if not steps.seen[stepKey] then
+                steps.seen[stepKey] = true
+                steps[#steps + 1] = {
+                    questTitle = questTitle,
+                    text = text,
+                    kind = kind,
+                    remaining = remaining,
+                }
+            end
+        end
     end
 end
 
@@ -202,8 +234,10 @@ local function IndexQuestTargets(title, questID, objectives, memberName)
             local done, remaining, objective = ObjectiveStatus(objectives, record)
             local kind = RecordKind(record, objective)
             if objective and kind and not done then
-                AddMatch(activeByNPC, tonumber(record.id), kind, title, record.item, remaining, memberName)
-                AddMatch(activeByName, string.lower(record.name or ""), kind, title, record.item, remaining, memberName)
+                AddMatch(activeByNPC, tonumber(record.id), kind, title, record.item,
+                    remaining, memberName, objective)
+                AddMatch(activeByName, string.lower(record.name or ""), kind, title,
+                    record.item, remaining, memberName, objective)
             end
         end
     end
@@ -226,7 +260,8 @@ local function IndexQuestTargets(title, questID, objectives, memberName)
     for _, relationshipQuestID in ipairs(relationshipQuestIDs) do
         if npcObjective and npcKind and not npcDone then
             for _, npcID in ipairs(SpawnStore.GetObjectiveNPCs(relationshipQuestID) or {}) do
-                AddMatch(activeByNPC, tonumber(npcID), npcKind, title, nil, npcRemaining, memberName)
+                AddMatch(activeByNPC, tonumber(npcID), npcKind, title, nil,
+                    npcRemaining, memberName, npcObjective)
             end
         end
 
@@ -237,7 +272,7 @@ local function IndexQuestTargets(title, questID, objectives, memberName)
                 for _, npcID in ipairs(source.npcIDs or {}) do
                     AddMatch(
                         activeByNPC, tonumber(npcID), "loot", title,
-                        source.itemName, itemRemaining, memberName
+                        source.itemName, itemRemaining, memberName, itemObjective
                     )
                 end
             end
@@ -248,7 +283,7 @@ end
 function Markers.RebuildIndex()
     activeByNPC, activeByName = {}, {}
     liveMatchCache = {}
-    if not Enabled() then return end
+    if not Enabled() and not GroupTooltipsRequested() then return end
     Resolver.BuildActive()
 
     local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
@@ -379,12 +414,34 @@ local function MatchUnit(unit)
             lootRemaining = match.lootRemaining
                 or (tooltipMatch and tooltipMatch.lootRemaining),
             quests = match.quests, items = match.items, members = match.members,
+            memberSteps = match.memberSteps,
         }
         if not match.kill and not match.loot and not match.talk then match = nil end
     else
         match = tooltipMatch
     end
     return match, npcID
+end
+
+function Markers.GetGroupTooltipRows(unit)
+    if not unit or not UnitExists(unit) or UnitIsPlayer(unit) then return {} end
+    if not GroupTooltipsRequested() then return {} end
+    if not next(activeByNPC) and not next(activeByName) then Markers.RebuildIndex() end
+    local match = MatchUnit(unit)
+    local rows = {}
+    for name, steps in pairs(match and match.memberSteps or {}) do
+        local row = { name = name, steps = {} }
+        for _, step in ipairs(steps) do row.steps[#row.steps + 1] = step end
+        table.sort(row.steps, function(a, b)
+            if (a.questTitle or "") ~= (b.questTitle or "") then
+                return (a.questTitle or "") < (b.questTitle or "")
+            end
+            return (a.text or "") < (b.text or "")
+        end)
+        if #row.steps > 0 then rows[#rows + 1] = row end
+    end
+    table.sort(rows, function(a, b) return string.lower(a.name) < string.lower(b.name) end)
+    return rows
 end
 
 
@@ -641,6 +698,10 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
 eventFrame:RegisterEvent("QUEST_WATCH_UPDATE")
 eventFrame:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
+eventFrame:RegisterEvent("QUEST_ITEM_UPDATE")
+eventFrame:RegisterEvent("QUEST_FINISHED")
+eventFrame:RegisterEvent("BAG_UPDATE")
+eventFrame:RegisterEvent("ITEM_PUSH")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 eventFrame:SetScript("OnEvent", function(_, event, unit)
@@ -660,26 +721,27 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
     end
 end)
 eventFrame:SetScript("OnUpdate", function(_, elapsed)
-    local enabled = Enabled()
-    if not enabled then
+    local visualEnabled = Enabled()
+    local indexEnabled = visualEnabled or GroupTooltipsRequested()
+    if not visualEnabled then
         if eventFrame.markersWereEnabled ~= false then
             for _, plate in pairs(visibleUnits) do
                 if plate.AutoEverythingQuestMarker then plate.AutoEverythingQuestMarker:Hide() end
             end
             eventFrame.markersWereEnabled = false
         end
-        return
     elseif eventFrame.markersWereEnabled == false then
         refreshPending, refreshAt = true, 0
     end
-    eventFrame.markersWereEnabled = true
+    if visualEnabled then eventFrame.markersWereEnabled = true end
+    if not indexEnabled then return end
     eventFrame.elapsed = (eventFrame.elapsed or 0) + math.min(elapsed or 0, 0.1)
     if refreshPending and GetTime() >= refreshAt then
         refreshPending = false
         Markers.RebuildIndex()
-        RefreshVisible()
+        if visualEnabled then RefreshVisible() end
         eventFrame.elapsed = 0
-    elseif eventFrame.elapsed >= 0.25 then
+    elseif visualEnabled and eventFrame.elapsed >= 0.25 then
         eventFrame.elapsed = 0
         RefreshVisible()
     end

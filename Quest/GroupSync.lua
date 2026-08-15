@@ -4,8 +4,8 @@
 -- AutoQuest extension for invisible party/raid quest synchronization.
 --
 -- Full snapshots are whispered only in response to a group request. Normal
--- PARTY/RAID traffic contains debounced deltas, so hovering an item is always
--- cache-only and never generates network traffic. WoW 3.3.5a / Lua 5.1.
+-- PARTY/RAID traffic contains debounced deltas, so hovering an item, NPC, or
+-- corpse is cache-only and never generates network traffic. WoW 3.3.5a / Lua 5.1.
 ----------------------------------------------------------------------
 
 AutoQuest = AutoQuest or {}
@@ -751,10 +751,53 @@ local function AddTooltipProgress(tooltip, link)
     tooltip:Show()
 end
 
+local function AddUnitTooltipProgress(tooltip)
+    if not tooltip or Setting("showGroupQuestTooltips", true) == false or not SyncActive() then return end
+    if not tooltip.GetUnit or not AQ.Markers or not AQ.Markers.GetGroupTooltipRows then return end
+    local _, unit = tooltip:GetUnit()
+    if not unit and UnitExists and UnitExists("mouseover") then unit = "mouseover" end
+    if not unit or not UnitExists(unit) or UnitIsPlayer(unit) then return end
+
+    local rows = AQ.Markers.GetGroupTooltipRows(unit)
+    if not rows or #rows == 0 then return end
+    local signatureParts = { tostring(UnitGUID and UnitGUID(unit) or UnitName(unit) or unit) }
+    for _, row in ipairs(rows) do
+        signatureParts[#signatureParts + 1] = row.name
+        for _, step in ipairs(row.steps or {}) do
+            signatureParts[#signatureParts + 1] = step.text or ""
+        end
+    end
+    local signature = table.concat(signatureParts, SEP)
+    if tooltip.__aeGroupUnitMarker == signature then return end
+    tooltip.__aeGroupUnitMarker = signature
+
+    tooltip:AddLine(" ")
+    tooltip:AddLine("Group Quest Progress", 0.35, 0.65, 1)
+    local shown, total, maximum = 0, 0, 12
+    for _, row in ipairs(rows) do total = total + #(row.steps or {}) end
+    for _, row in ipairs(rows) do
+        if shown >= maximum then break end
+        tooltip:AddLine("  " .. row.name, 1, 0.82, 0.2)
+        for _, step in ipairs(row.steps or {}) do
+            if shown >= maximum then break end
+            tooltip:AddLine("    " .. (step.text or "Quest objective"), 0.82, 0.82, 0.82, true)
+            shown = shown + 1
+        end
+    end
+    if shown < total then
+        tooltip:AddLine("  Additional group objectives omitted", 0.6, 0.6, 0.6)
+    end
+    tooltip:Show()
+end
+
 local function HookTooltip(tooltip)
     if not tooltip then return end
     if tooltip.HookScript then
-        tooltip:HookScript("OnTooltipCleared", function(self) self.__aeGroupQuestMarker = nil end)
+        tooltip:HookScript("OnTooltipCleared", function(self)
+            self.__aeGroupQuestMarker = nil
+            self.__aeGroupUnitMarker = nil
+        end)
+        tooltip:HookScript("OnTooltipSetUnit", function(self) AddUnitTooltipProgress(self) end)
     end
     if tooltip.SetBagItem then
         hooksecurefunc(tooltip, "SetBagItem", function(self, bag, slot)
@@ -803,6 +846,10 @@ driver:RegisterEvent("PLAYER_ENTERING_WORLD")
 driver:RegisterEvent("QUEST_LOG_UPDATE")
 driver:RegisterEvent("QUEST_WATCH_UPDATE")
 driver:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
+driver:RegisterEvent("QUEST_ITEM_UPDATE")
+driver:RegisterEvent("QUEST_FINISHED")
+driver:RegisterEvent("BAG_UPDATE")
+driver:RegisterEvent("ITEM_PUSH")
 driver:RegisterEvent("QUEST_ACCEPTED")
 driver:RegisterEvent("QUEST_ACCEPT_CONFIRM")
 driver:RegisterEvent("QUEST_PROGRESS")
@@ -827,6 +874,8 @@ driver:SetScript("OnEvent", function(self, event, ...)
         CleanupRoster()
     elseif event == "QUEST_LOG_UPDATE" or event == "QUEST_WATCH_UPDATE"
         or event == "UNIT_QUEST_LOG_CHANGED"
+        or event == "QUEST_ITEM_UPDATE" or event == "QUEST_FINISHED"
+        or event == "BAG_UPDATE" or event == "ITEM_PUSH"
     then
         ScheduleUpdate()
     elseif event == "QUEST_ACCEPTED" then

@@ -983,6 +983,10 @@ frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 frame:RegisterEvent("QUEST_LOG_UPDATE")
 frame:RegisterEvent("QUEST_WATCH_UPDATE")
 frame:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
+frame:RegisterEvent("QUEST_ITEM_UPDATE")
+frame:RegisterEvent("QUEST_FINISHED")
+frame:RegisterEvent("BAG_UPDATE")
+frame:RegisterEvent("ITEM_PUSH")
 frame:RegisterEvent("WORLD_MAP_UPDATE")
 frame:RegisterEvent("WORLD_MAP_NAME_UPDATE")
 frame:SetScript("OnEvent", function(_, event)
@@ -992,6 +996,8 @@ frame:SetScript("OnEvent", function(_, event)
         local delay = 0.5
         if event == "QUEST_LOG_UPDATE" or event == "QUEST_WATCH_UPDATE"
             or event == "UNIT_QUEST_LOG_CHANGED"
+            or event == "QUEST_ITEM_UPDATE" or event == "QUEST_FINISHED"
+            or event == "BAG_UPDATE" or event == "ITEM_PUSH"
         then
             delay = Resolver.QUEST_LOG_SETTLE_DELAY
         end

@@ -1980,11 +1980,11 @@ pageBuilders.Quest = function(parent)
     -- Keep the controls in the owning Quest page; AutoBuff has its own module.
     Label(parent, "Group Questing", 28, -458, 13)
     local syncToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "groupQuestSync", "Sync party progress", 20, -480, false,
-        "Shares quest and objective changes through hidden addon messages. Hovering quest items only reads the local cache and never sends traffic.")
+        "Shares quest and objective changes through hidden addon messages. Progress tooltips only read the local cache and never send traffic.")
     local raidToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "groupQuestSyncRaid", "Include raid groups", 246, -480, false,
         "Also synchronizes quest progress in raids. Off by default to keep large-group traffic deliberate.")
-    local tooltipToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "showGroupQuestTooltips", "Progress in item tooltips", 472, -480, true,
-        "Shows each group member's cached progress when hovering an item required by one of your active quests.")
+    local tooltipToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "showGroupQuestTooltips", "Progress in tooltips", 472, -480, true,
+        "Shows synchronized member progress on required item tooltips and on relevant NPCs or corpses you hover.")
     ScalarCheck(parent, "quest", AutoQuestConfig, "autoShareQuests", "Share newly accepted quests", 20, -506, false,
         "Automatically pushes a newly accepted, shareable quest to your party. Quests are not automatically pushed in raids.")
     ScalarCheck(parent, "quest", AutoQuestConfig, "autoAcceptSharedQuests", "Accept shared quests", 246, -506, false,
