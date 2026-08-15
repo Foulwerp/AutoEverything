@@ -10,6 +10,12 @@ local Store = AutoQuest.NPCSpawnStore
 local decoded = {}
 local decodedQuestNPCs = {}
 local decodedQuestItems = {}
+local decodedServices
+
+local serviceOrder = {
+    "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
+    "innkeeper", "talentunlearner", "tabardvendor", "stablemaster", "trainer", "vendor",
+}
 
 local function Decode(packed)
     local locations = {}
@@ -119,8 +125,34 @@ function Store.GetQuestItemSources(questID)
     return result
 end
 
+function Store.GetServices()
+    if decodedServices then return decodedServices end
+    decodedServices = {}
+    local packedServices = type(AutoQuest.ServiceNPCs) == "table"
+        and AutoQuest.ServiceNPCs or {}
+    local names = type(AutoQuest.ServiceNPCNames) == "table"
+        and AutoQuest.ServiceNPCNames or {}
+    for _, kind in ipairs(serviceOrder) do
+        local packed = packedServices[kind]
+        if type(packed) == "string" then
+            for value in string.gmatch(packed, "[^,]+") do
+                local npcID = tonumber(value)
+                if npcID and npcID > 0 then
+                    decodedServices[#decodedServices + 1] = {
+                        id = npcID,
+                        kind = kind,
+                        name = names[npcID],
+                    }
+                end
+            end
+        end
+    end
+    return decodedServices
+end
+
 function Store.ClearCache()
     decoded = {}
     decodedQuestNPCs = {}
     decodedQuestItems = {}
+    decodedServices = nil
 end

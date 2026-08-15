@@ -1908,7 +1908,7 @@ pageBuilders.Quest = function(parent)
         { "disableOnShift", "Hold Shift to pause automation",
             "Hold Shift while talking to an NPC to temporarily disable all AutoQuest automation for that interaction." },
         { "mapPins", "Show map icons",
-            "Shows kill/loot/interact objective locations on the world map and minimap, pulled from the AscensionQuestDB." },
+            "Shows quest objectives and known service NPCs on the world map and minimap using the bundled location database." },
     }
     local leftControls, rightControls = {}, {}
     local y = -108

@@ -1,7 +1,7 @@
 ----------------------------------------------------------------------
 -- QuestMap.lua
 -- ============
--- Active quest objective locations on the world map and minimap.
+-- Quest objective and service NPC locations on the world map and minimap.
 ----------------------------------------------------------------------
 AutoQuest = AutoQuest or {}
 AutoQuest.Map = AutoQuest.Map or {}
@@ -11,10 +11,12 @@ local SpawnStore = AutoQuest.NPCSpawnStore
 
 local activeByZone = {}
 local activePointKeys = {}
+local serviceByZone
+local combinedByZone = {}
 local worldPins, minimapPins = {}, {}
 local refreshPending, refreshAt = false, 0
 local playerMap = { name = nil, key = nil, x = nil, y = nil }
-local buildStats = { activeQuests=0, matchedQuests=0, points=0 }
+local buildStats = { activeQuests=0, matchedQuests=0, points=0, servicePoints=0 }
 local minimapStatus = "not updated"
 local locationDebug = {}
 
@@ -167,6 +169,56 @@ local function AddLocation(zoneID, zoneName, floor, record, coord, questID, ques
     return true
 end
 
+local function BuildServiceIndex()
+    if serviceByZone then return end
+    serviceByZone = {}
+    for _, service in ipairs(SpawnStore.GetServices() or {}) do
+        for _, location in ipairs(SpawnStore.Get(service.id) or {}) do
+            local key = NormalizeZone(location.zone)
+            if key ~= "" then
+                local zone = serviceByZone[key]
+                if not zone then
+                    zone = { name=location.zone, zoneIDs={}, questIDs={}, points={} }
+                    serviceByZone[key] = zone
+                end
+                local numericZoneID = tonumber(location.zoneID)
+                if numericZoneID then zone.zoneIDs[numericZoneID] = true end
+                for _, coord in ipairs(location.coords or {}) do
+                    local x, y = tonumber(coord[1]), tonumber(coord[2])
+                    if x and y then
+                        zone.points[#zone.points + 1] = {
+                            x=x, y=y, floor=tonumber(location.floor) or 0,
+                            kind=service.kind, entityID=service.id,
+                            name=service.name, isService=true,
+                        }
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function ZoneForKey(key)
+    if not key then return nil end
+    local cached = combinedByZone[key]
+    if cached then return cached end
+    local questZone, serviceZone = activeByZone[key], serviceByZone and serviceByZone[key]
+    if not questZone then return serviceZone end
+    if not serviceZone then return questZone end
+    local zone = {
+        name=questZone.name or serviceZone.name,
+        zoneIDs={}, questIDs=questZone.questIDs, points={},
+    }
+    for zoneID in pairs(serviceZone.zoneIDs or {}) do zone.zoneIDs[zoneID] = true end
+    for zoneID in pairs(questZone.zoneIDs or {}) do zone.zoneIDs[zoneID] = true end
+    for _, point in ipairs(questZone.points or {}) do zone.points[#zone.points + 1] = point end
+    -- Active quest objectives always receive world-map pins before the static
+    -- service catalog if the user's pin cap is reached in a crowded city.
+    for _, point in ipairs(serviceZone.points or {}) do zone.points[#zone.points + 1] = point end
+    combinedByZone[key] = zone
+    return zone
+end
+
 local function ConfirmedMapKind(kind)
     if kind == "kill" or kind == "loot" then return kind end
     if kind == "interact" then return "object" end
@@ -297,11 +349,16 @@ end
 function QuestMap.RebuildIndex()
     activeByZone = {}
     activePointKeys = {}
+    combinedByZone = {}
     buildStats = {
         activeQuests=0, matchedQuests=0, confirmedObjectives=0,
-        points=0, matches={}
+        points=0, servicePoints=0, matches={}
     }
     if not Enabled() then return end
+    BuildServiceIndex()
+    for _, zone in pairs(serviceByZone or {}) do
+        buildStats.servicePoints = buildStats.servicePoints + #(zone.points or {})
+    end
     local resolverObjectives = Resolver.BuildActive()
 
     local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
@@ -410,7 +467,7 @@ end
 -- when the website supplied the exact same coordinate for the same pin type
 -- (for example, one NPC progressing two active quests).
 local function GroupExactPoints(points)
-    local groups, byCoordinate = {}, {}
+    local groups, byCoordinate, serviceCoordinates = {}, {}, {}
     for _, point in ipairs(points or {}) do
         local key = tostring(point.floor) .. ":" .. point.kind .. ":"
             .. string.format("%.3f:%.3f", point.x, point.y)
@@ -418,26 +475,56 @@ local function GroupExactPoints(points)
         if group then
             group.members[#group.members + 1] = point
         else
-            group = { x=point.x, y=point.y, kind=point.kind, floor=point.floor, members={point} }
+            group = {
+                x=point.x, y=point.y, kind=point.kind, floor=point.floor,
+                isService=point.isService and true or false, members={point},
+            }
             byCoordinate[key] = group
             groups[#groups + 1] = group
+            if group.isService then
+                local serviceKey = tostring(point.floor) .. ":"
+                    .. string.format("%.3f:%.3f", point.x, point.y)
+                serviceCoordinates[serviceKey] = serviceCoordinates[serviceKey] or {}
+                serviceCoordinates[serviceKey][#serviceCoordinates[serviceKey] + 1] = group
+            end
+        end
+    end
+    for _, matches in pairs(serviceCoordinates) do
+        if #matches > 1 then
+            for index, group in ipairs(matches) do
+                group.overlapIndex, group.overlapCount = index, #matches
+            end
         end
     end
     return groups
 end
 
--- Kill/loot/interact/scout only - quest starters and turn-ins are out of scope for
--- this database (the client already marks those when in range; see the
--- module docstring in build_ascension_quest_db_deep.py).
+-- Quest starters and turn-ins remain out of scope; the client already marks
+-- those when in range. Static service NPC types use their own familiar icons.
 local iconTextures = {
     kill = "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga",
     loot = "Interface\\AddOns\\AutoEverything\\Images\\QuestLootBag.tga",
     object = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
     scout = "Interface\\AddOns\\AutoEverything\\Images\\QuestScout.tga",
+    auctioneer = "Interface\\AddOns\\AutoEverything\\Images\\ServiceAuctioneer.tga",
+    banker = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBanker.tga",
+    battlemaster = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBattlemaster.tga",
+    flightmaster = "Interface\\AddOns\\AutoEverything\\Images\\ServiceFlightMaster.tga",
+    guildmaster = "Interface\\AddOns\\AutoEverything\\Images\\ServiceGuildMaster.tga",
+    innkeeper = "Interface\\AddOns\\AutoEverything\\Images\\ServiceInnkeeper.tga",
+    talentunlearner = "Interface\\AddOns\\AutoEverything\\Images\\ServiceTalentUnlearner.tga",
+    tabardvendor = "Interface\\AddOns\\AutoEverything\\Images\\ServiceTabardVendor.tga",
+    stablemaster = "Interface\\AddOns\\AutoEverything\\Images\\ServiceStableMaster.tga",
+    trainer = "Interface\\AddOns\\AutoEverything\\Images\\ServiceTrainer.tga",
+    vendor = "Interface\\AddOns\\AutoEverything\\Images\\ServiceVendor.tga",
 }
 
 local iconColors = {
     kill={1,0.3,0.3}, loot={0.35,1,0.45}, object={0.45,0.8,1}, scout={1,0.75,0.25},
+    auctioneer={1,0.65,0.2}, banker={1,0.82,0.2}, battlemaster={0.85,0.9,1},
+    flightmaster={0.75,0.9,1}, guildmaster={0.35,0.55,1}, innkeeper={0.35,0.7,1},
+    talentunlearner={0.75,0.45,1}, tabardvendor={1,0.3,0.25},
+    stablemaster={0.8,0.85,0.95}, trainer={1,0.9,0.55}, vendor={1,0.55,0.3},
 }
 
 local headingText = {
@@ -445,6 +532,17 @@ local headingText = {
     loot = "Item",
     object = "Interact",
     scout = "Scout",
+    auctioneer = "Auctioneer",
+    banker = "Banker",
+    battlemaster = "Battlemaster",
+    flightmaster = "Flight Master",
+    guildmaster = "Guild Master",
+    innkeeper = "Innkeeper",
+    talentunlearner = "Talent Unlearner",
+    tabardvendor = "Tabard Vendor",
+    stablemaster = "Stable Master",
+    trainer = "Trainer",
+    vendor = "Vendor",
 }
 
 -- Phrases a single objective as a short sentence ("Kill Defias Bandit",
@@ -452,7 +550,9 @@ local headingText = {
 -- fields, so the tooltip reads like a to-do list rather than a data dump.
 local function DescribeObjective(cluster, point)
     local name = point.name or point.questTitle or "Unknown"
-    if cluster.kind == "loot" then
+    if point.isService then
+        return name
+    elseif cluster.kind == "loot" then
         return point.item and ("Loot " .. point.item .. " from " .. name) or ("Loot from " .. name)
     elseif cluster.kind == "object" then
         return "Use " .. name
@@ -480,7 +580,9 @@ local function ShowPinTooltip(pin)
                 local description = DescribeObjective(cluster, point)
                 if point.progress then description = description .. "  |cffffd200(" .. point.progress .. ")|r" end
                 GameTooltip:AddLine(description, 1, 1, 1)
-                GameTooltip:AddLine("  " .. point.questTitle, 0.6, 0.65, 0.75)
+                if not point.isService then
+                    GameTooltip:AddLine("  " .. point.questTitle, 0.6, 0.65, 0.75)
+                end
             else
                 hiddenCount = hiddenCount + 1
             end
@@ -489,7 +591,8 @@ local function ShowPinTooltip(pin)
     if hiddenCount > 0 then GameTooltip:AddLine("+" .. hiddenCount .. " more", 0.7, 0.7, 0.7) end
     if #cluster.members > 1 then
         GameTooltip:AddLine(" ")
-        GameTooltip:AddLine(#cluster.members .. " objectives here", 0.6, 0.6, 0.6)
+        local suffix = cluster.isService and " services here" or " objectives here"
+        GameTooltip:AddLine(#cluster.members .. suffix, 0.6, 0.6, 0.6)
     end
     GameTooltip:AddLine(string.format("%.1f, %.1f", cluster.x, cluster.y), 0.55, 0.75, 1)
     GameTooltip:Show()
@@ -503,6 +606,13 @@ local function ConfigurePin(pin, cluster, size)
     -- QuestMarkers.lua (white skull, brown bag) rather than recoloring them.
     pin.icon:SetTexture(iconTextures[cluster.kind] or iconTextures.kill)
     pin.icon:SetVertexColor(1, 1, 1, 1)
+end
+
+local function ClusterOffset(cluster, size)
+    if not cluster.overlapCount or cluster.overlapCount <= 1 then return 0, 0 end
+    local angle = (cluster.overlapIndex - 1) * (2 * math.pi / cluster.overlapCount)
+    local radius = size * 0.45
+    return math.cos(angle) * radius, math.sin(angle) * radius
 end
 
 local function NewPin(parent, minimap)
@@ -546,7 +656,7 @@ function QuestMap.UpdateWorldMap()
     local parent = WorldMapDetailFrame or WorldMapButton
     if not parent or parent:GetWidth() <= 0 or parent:GetHeight() <= 0 then return end
     local mapName = CurrentMapName()
-    local zone = mapName and activeByZone[NormalizeZone(mapName)]
+    local zone = mapName and ZoneForKey(NormalizeZone(mapName))
     if not zone then return end
 
     local currentFloor = GetCurrentMapDungeonLevel and GetCurrentMapDungeonLevel() or 0
@@ -563,9 +673,10 @@ function QuestMap.UpdateWorldMap()
             pin:SetParent(parent)
             ConfigurePin(pin, cluster, pinSize)
             pin:ClearAllPoints()
+            local offsetX, offsetY = ClusterOffset(cluster, pinSize)
             pin:SetPoint("CENTER", parent, "TOPLEFT",
-                cluster.x * parent:GetWidth() / 100,
-                -cluster.y * parent:GetHeight() / 100)
+                cluster.x * parent:GetWidth() / 100 + offsetX,
+                -cluster.y * parent:GetHeight() / 100 + offsetY)
             pin:Show()
         end
     end
@@ -634,7 +745,7 @@ local function UpdatePlayerLocation(force)
     if (not x or not y or (x == 0 and y == 0)) and name and SetMapByID
         and GetQuestWorldMapAreaID
     then
-        local currentZone = activeByZone[NormalizeZone(name)]
+        local currentZone = ZoneForKey(NormalizeZone(name))
         for questID in pairs(currentZone and currentZone.questIDs or {}) do
             local ok, selector = pcall(GetQuestWorldMapAreaID, questID)
             if ok and type(selector) == "number" and selector > 0 then
@@ -665,7 +776,7 @@ local function UpdatePlayerLocation(force)
     -- when the parent actually has active objective points to show, so the
     -- SetMapZoom cost is paid only when it can produce pins.
     local parentName = name and name ~= "" and subZoneParents[NormalizeZone(name)]
-    if parentName and not mapShown and activeByZone[NormalizeZone(parentName)] then
+    if parentName and not mapShown and ZoneForKey(NormalizeZone(parentName)) then
         local px, py = ReadParentZonePosition(parentName)
         if px and py then
             name, x, y = parentName, px, py
@@ -700,14 +811,37 @@ local function MinimapRadius()
     return 200
 end
 
+-- Ascension exposes the same guarded world-position API used by installed map
+-- addons. It fills dimensions for capitals and custom maps that are absent
+-- from the conservative static 3.3.5 zone table above.
+local function PhysicalZoneSize(zone, key)
+    local known = zoneSizes[key]
+    if known then return known end
+    if not (C_WorldMap and C_WorldMap.GetWorldPosition) then return nil end
+    for areaID in pairs(zone and zone.zoneIDs or {}) do
+        local okStart, x1, y1 = pcall(C_WorldMap.GetWorldPosition, areaID, 0, 0)
+        local okEnd, x2, y2 = pcall(C_WorldMap.GetWorldPosition, areaID, 1, 1)
+        if okStart and okEnd and type(x1) == "number" and type(y1) == "number"
+            and type(x2) == "number" and type(y2) == "number"
+        then
+            local width, height = math.abs(x1 - x2), math.abs(y1 - y2)
+            if width > 0 and height > 0 then
+                known = { width, height }
+                zoneSizes[key] = known
+                return known
+            end
+        end
+    end
+end
+
 function QuestMap.UpdateMinimap()
     HidePins(minimapPins)
     if not Enabled() then minimapStatus = "disabled"; return end
     if not Minimap then minimapStatus = "Minimap frame unavailable"; return end
     if not playerMap.key or not playerMap.x then minimapStatus = "player map position unavailable"; return end
-    local zone = activeByZone[playerMap.key]
-    local size = zoneSizes[playerMap.key]
-    if not zone then minimapStatus = "no active objective records for " .. playerMap.key; return end
+    local zone = ZoneForKey(playerMap.key)
+    if not zone then minimapStatus = "no map icon records for " .. playerMap.key; return end
+    local size = PhysicalZoneSize(zone, playerMap.key)
     if not size then minimapStatus = "no physical map dimensions for " .. playerMap.key; return end
 
     local radius = MinimapRadius()
@@ -726,7 +860,12 @@ function QuestMap.UpdateMinimap()
             candidates[#candidates + 1] = { cluster=cluster, dx=dx, dy=dy, distance=distance }
         end
     end
-    table.sort(candidates, function(a,b) return a.distance < b.distance end)
+    table.sort(candidates, function(a,b)
+        if a.cluster.isService ~= b.cluster.isService then
+            return not a.cluster.isService
+        end
+        return a.distance < b.distance
+    end)
 
     local facing = GetPlayerFacing and GetPlayerFacing() or 0
     local rotate = GetCVar and GetCVar("rotateMinimap") == "1"
@@ -744,6 +883,8 @@ function QuestMap.UpdateMinimap()
         end
         local scale = mapRadius / radius
         local sx, sy = dx * scale, -dy * scale
+        local offsetX, offsetY = ClusterOffset(candidate.cluster, pinSize)
+        sx, sy = sx + offsetX, sy + offsetY
         local pin = minimapPins[index]
         if not pin then pin = NewPin(Minimap, true); minimapPins[index] = pin end
         ConfigurePin(pin, candidate.cluster, pinSize)
@@ -772,13 +913,14 @@ function QuestMap.Debug()
     QuestMap.RebuildIndex()
     UpdatePlayerLocation(true)
     QuestMap.UpdateMinimap()
-    local zone = playerMap.key and activeByZone[playerMap.key]
+    local zone = playerMap.key and ZoneForKey(playerMap.key)
     local zonePoints = zone and #zone.points or 0
-    print("|cff33ccffQuest Pins|r")
+    print("|cff33ccffMap Pins|r")
     print("  enabled=" .. tostring(Enabled()) .. " dbLoaded=" .. tostring(type(AscensionQuestLocationDB) == "table"))
     print("  activeQuests=" .. buildStats.activeQuests .. " matchedInDB=" .. buildStats.matchedQuests
         .. " confirmedObjectives=" .. buildStats.confirmedObjectives
-        .. " indexedPoints=" .. buildStats.points)
+        .. " indexedPoints=" .. buildStats.points
+        .. " servicePoints=" .. buildStats.servicePoints)
     for _, match in ipairs(buildStats.matches or {}) do
         print("    matched: " .. tostring(match.title) .. " (id " .. tostring(match.id) .. ") -> "
             .. tostring(match.points) .. " point(s)")
