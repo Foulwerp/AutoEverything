@@ -58,6 +58,7 @@ AutoCoreConfig = {
     autoInviteOnWhisper = false,
     autoInviteKeyword = "inv",
     autoInviteFriendsOnly = false,       -- keyword invites are usually pugs; default open to anyone
+    autoInviteMinimumLevel = 0,          -- 0 disables the asynchronous /who level check
 
     -- Auto-learn trainer spells. Spends gold, so it defaults off. Purchases
     -- cheapest-first and stops once the next spell is unaffordable.

@@ -1528,7 +1528,7 @@ pageBuilders.Convenience = function(parent)
     PageHeader(parent, "Convenience", "Optional world, safety, social, and NPC interaction behavior.")
     FitSectionCard(parent, 12, -76, 340, -242)
     FitSectionCard(parent, 370, -76, 342, -186)
-    FitSectionCard(parent, 12, -268, 340, -384)
+    FitSectionCard(parent, 12, -268, 340, -426)
     FitSectionCard(parent, 370, -212, 342, -434)
 
     Label(parent, "Safety", 20, -84, 13)
@@ -1580,6 +1580,26 @@ pageBuilders.Convenience = function(parent)
     AddEditHint(keyEdit, "inv",
         "The whisper keyword that triggers an auto party invite. Matched as a case-insensitive substring, "
         .. "so \"inv\" also fires on \"invite\" or \"invite me warrior\".")
+    Label(parent, "Minimum level", 50, -400, 11)
+    local minimumLevel = Core.GetSetting("core", "autoInviteMinimumLevel",
+        ResolvedDefault(AutoCoreConfig, "autoInviteMinimumLevel", 0))
+    local levelEdit = Edit(parent, 180, -394, 150, minimumLevel)
+    local function SaveMinimumLevel(self)
+        local value = tonumber(strtrim(self:GetText() or ""))
+        if not value then
+            value = Core.GetSetting("core", "autoInviteMinimumLevel",
+                ResolvedDefault(AutoCoreConfig, "autoInviteMinimumLevel", 0))
+        end
+        value = math.max(0, math.min(60, math.floor(value)))
+        self:SetText(tostring(value))
+        SetSettingWithoutRefresh("core", "autoInviteMinimumLevel", value)
+    end
+    levelEdit:SetScript("OnEnterPressed", function(self) SaveMinimumLevel(self); self:ClearFocus() end)
+    levelEdit:HookScript("OnEditFocusLost", SaveMinimumLevel)
+    AddEditHint(levelEdit, "0",
+        "The lowest character level allowed for keyword invites (0 to 60). Zero allows any level. "
+        .. "Unknown players are checked with an exact Who lookup, so their invite may be delayed a few seconds. "
+        .. "If their level cannot be verified, they are not invited.")
 
     Label(parent, "NPC Interactions", 378, -220, 13)
     local autoGossip = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoSelectSingleGossip",

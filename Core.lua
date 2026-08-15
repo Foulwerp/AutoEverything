@@ -363,25 +363,31 @@ end)
 ----------------------------------------------------------------------
 local inviteThrottle = {}
 local INVITE_THROTTLE = 10   -- seconds; ignore repeat keywords from the same sender
+local WHO_LEVEL_CACHE = 60    -- seconds; avoids repeating an intrusive /who lookup
+local WHO_QUERY_TIMEOUT = 8
+local WHO_QUERY_INTERVAL = 5 -- the 3.3.5 client/server throttle Who requests
+local inviteLevelCache = {}
+local inviteLevelQueue = {}
+local queuedInviteLevels = {}
+local pendingInviteLevel
+local lastWhoQueryAt = -WHO_QUERY_INTERVAL
 local whisperFrame = CreateFrame("Frame")
 whisperFrame:RegisterEvent("CHAT_MSG_WHISPER")
-whisperFrame:SetScript("OnEvent", function(_, _, message, sender)
-    if not ConfigEnabled("autoInviteOnWhisper") or not sender or not message then return end
-    local keyword = Core.GetSetting("core", "autoInviteKeyword", coreConfig.autoInviteKeyword)
-    if not keyword or keyword == "" then return end
-    -- Plain (non-pattern) substring match, so "inv" also fires on "invite me".
-    if not string.find(string.lower(message), string.lower(keyword), 1, true) then return end
+whisperFrame:RegisterEvent("WHO_LIST_UPDATE")
 
+local function CanInviteWhisperSender(sender)
     -- Only invite when we are able to: solo, or leading a party that has room.
-    if GetNumRaidMembers and GetNumRaidMembers() > 0 then return end
+    if GetNumRaidMembers and GetNumRaidMembers() > 0 then return false end
     local party = GetNumPartyMembers and GetNumPartyMembers() or 0
     if party > 0 then
-        if not (IsPartyLeader and IsPartyLeader()) then return end
-        if party >= 4 then return end
+        if not (IsPartyLeader and IsPartyLeader()) then return false end
+        if party >= 4 then return false end
     end
+    return not ConfigEnabled("autoInviteFriendsOnly") or IsFriendOrGuild(sender)
+end
 
-    if ConfigEnabled("autoInviteFriendsOnly") and not IsFriendOrGuild(sender) then return end
-
+local function TryWhisperInvite(sender)
+    if not ConfigEnabled("autoInviteOnWhisper") or not CanInviteWhisperSender(sender) then return end
     local now = GetTime()
     -- Sender names only need to survive for the throttle window. Without
     -- pruning, every unique whisper sender remained referenced until logout.
@@ -391,6 +397,118 @@ whisperFrame:SetScript("OnEvent", function(_, _, message, sender)
     if inviteThrottle[sender] and (now - inviteThrottle[sender]) < INVITE_THROTTLE then return end
     inviteThrottle[sender] = now
     if InviteUnit then InviteUnit(sender) end
+end
+
+local function MinimumInviteLevel()
+    local value = tonumber(Core.GetSetting("core", "autoInviteMinimumLevel",
+        coreConfig.autoInviteMinimumLevel)) or 0
+    return math.max(0, math.floor(value))
+end
+
+local function KnownPlayerLevel(sender)
+    local wanted = NormalizePlayerName(sender)
+    if not wanted then return nil end
+
+    -- Visible unit tokens and the guild roster already have level data, so do
+    -- not disturb the Who list when either can answer the check immediately.
+    for _, unit in ipairs({ "target", "focus", "mouseover" }) do
+        if UnitName and NormalizePlayerName(UnitName(unit)) == wanted then
+            local level = UnitLevel and tonumber(UnitLevel(unit)) or nil
+            if level and level > 0 then return level end
+        end
+    end
+    if IsInGuild and IsInGuild() and GetNumGuildMembers and GetGuildRosterInfo then
+        for i = 1, (GetNumGuildMembers() or 0) do
+            local name, _, _, level = GetGuildRosterInfo(i)
+            if NormalizePlayerName(name) == wanted then return tonumber(level) end
+        end
+    end
+
+    local cached = inviteLevelCache[wanted]
+    if cached and GetTime() - cached.seenAt < WHO_LEVEL_CACHE then return cached.level end
+    return nil
+end
+
+local function CompleteInviteLevelCheck(level)
+    local request = pendingInviteLevel
+    if not request then return end
+    pendingInviteLevel = nil
+    queuedInviteLevels[request.key] = nil
+    if level then
+        inviteLevelCache[request.key] = { level = level, seenAt = GetTime() }
+        if level >= MinimumInviteLevel() then TryWhisperInvite(request.sender) end
+    end
+end
+
+local function StartNextInviteLevelCheck()
+    if pendingInviteLevel or #inviteLevelQueue == 0 then return end
+    if GetTime() - lastWhoQueryAt < WHO_QUERY_INTERVAL then return end
+    if not SendWho or not GetNumWhoResults or not GetWhoInfo then
+        wipe(inviteLevelQueue)
+        wipe(queuedInviteLevels)
+        whisperFrame:SetScript("OnUpdate", nil)
+        return
+    end
+
+    pendingInviteLevel = table.remove(inviteLevelQueue, 1)
+    pendingInviteLevel.startedAt = GetTime()
+    lastWhoQueryAt = pendingInviteLevel.startedAt
+    if SetWhoToUI then SetWhoToUI(1) end
+    -- n- is the 3.3.5 exact-name Who filter. Realm suffixes are not part of
+    -- the local Who-list name, so the normalized character name is queried.
+    SendWho('n-"' .. pendingInviteLevel.key .. '"')
+end
+
+local function QueueInviteLevelCheck(sender)
+    local key = NormalizePlayerName(sender)
+    if not key or queuedInviteLevels[key] then return end
+    queuedInviteLevels[key] = true
+    table.insert(inviteLevelQueue, { sender = sender, key = key })
+    whisperFrame:SetScript("OnUpdate", function()
+        if pendingInviteLevel and GetTime() - pendingInviteLevel.startedAt >= WHO_QUERY_TIMEOUT then
+            CompleteInviteLevelCheck(nil)
+        end
+        StartNextInviteLevelCheck()
+        if not pendingInviteLevel and #inviteLevelQueue == 0 then
+            whisperFrame:SetScript("OnUpdate", nil)
+        end
+    end)
+    StartNextInviteLevelCheck()
+end
+
+whisperFrame:SetScript("OnEvent", function(_, event, message, sender)
+    if event == "WHO_LIST_UPDATE" then
+        if not pendingInviteLevel then return end
+        local level
+        for i = 1, (GetNumWhoResults() or 0) do
+            local name, _, resultLevel = GetWhoInfo(i)
+            if NormalizePlayerName(name) == pendingInviteLevel.key then
+                level = tonumber(resultLevel)
+                break
+            end
+        end
+        CompleteInviteLevelCheck(level)
+        return
+    end
+
+    if not ConfigEnabled("autoInviteOnWhisper") or not sender or not message then return end
+    local keyword = Core.GetSetting("core", "autoInviteKeyword", coreConfig.autoInviteKeyword)
+    if not keyword or keyword == "" then return end
+    -- Plain (non-pattern) substring match, so "inv" also fires on "invite me".
+    if not string.find(string.lower(message), string.lower(keyword), 1, true) then return end
+    if not CanInviteWhisperSender(sender) then return end
+
+    local minimumLevel = MinimumInviteLevel()
+    if minimumLevel <= 0 then
+        TryWhisperInvite(sender)
+        return
+    end
+    local level = KnownPlayerLevel(sender)
+    if level then
+        if level >= minimumLevel then TryWhisperInvite(sender) end
+    else
+        QueueInviteLevelCheck(sender)
+    end
 end)
 
 ----------------------------------------------------------------------
