@@ -653,6 +653,8 @@ local iconColors = {
 }
 local ROUTE_COLOR = { 0.62, 0.65, 0.68 }
 local ROUTE_HIGHLIGHT_COLOR = { 1, 0.82, 0.25 }
+local ROUTE_DOT_TEXTURE = AutoCore.UI and AutoCore.UI.Textures
+    and AutoCore.UI.Textures.circle or "Interface\\TALENTFRAME\\talentsmasknodecircle"
 
 local headingText = {
     kill = "Kill",
@@ -800,7 +802,8 @@ local function RoutePixel(pool, index, parent, anchor, x, y, color, size, alpha)
     end
     pixel:SetWidth(size)
     pixel:SetHeight(size)
-    pixel:SetTexture(color[1], color[2], color[3], alpha)
+    pixel:SetTexture(ROUTE_DOT_TEXTURE)
+    pixel:SetVertexColor(color[1], color[2], color[3], alpha)
     pixel:ClearAllPoints()
     pixel:SetPoint("CENTER", parent, anchor, x, y)
     pixel:Show()
