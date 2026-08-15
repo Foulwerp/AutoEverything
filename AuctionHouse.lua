@@ -163,7 +163,7 @@ local function IsMarketPriceEligible(link, itemType)
     if not link or not GetItemInfo then return false end
     local requiredLevel = select(5, GetItemInfo(link))
     requiredLevel = tonumber(requiredLevel)
-    return requiredLevel and requiredLevel >= 60 or false
+    return requiredLevel == 60
 end
 
 local function UpgradeStatWeights()
@@ -1230,6 +1230,10 @@ local function PostValidated(entry, unitPrice)
         posting.skipped = posting.skipped + 1
         return
     end
+    if not IsMarketPriceEligible(link, entry.itemType) then
+        posting.skipped = posting.skipped + 1
+        return
+    end
     if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
         and AutoUpgrade.IsBestPvPSetItem(link, { link=link, bag=entry.bag, slot=entry.slot })
     then
@@ -1571,6 +1575,7 @@ end
 local function IsManualSellable(link, bag, slot)
     local data = Core.GetItemData(link, { bag = bag, slot = slot, link = link })
     if not data or not data.id or data.itemType == "Quest" or data.itemType == "Key" then return false end
+    if not IsMarketPriceEligible(link, data.itemType) then return false end
     if Core.IsActiveQuestItem(data.id) then return false end
     if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
         and AutoUpgrade.IsBestPvPSetItem(link, { link=link, bag=bag, slot=slot })
@@ -1650,6 +1655,10 @@ local function SetManualItem(link)
     local bag, slot, count = FindBagItem(link)
     if not bag then Warn("Only unlocked items currently in your bags can be selected."); return end
     local name, _, _, _, _, itemType = GetItemInfo(link)
+    if not IsMarketPriceEligible(link, itemType) then
+        Warn("Only equipment with an exact required level of 60 can be auctioned.")
+        return
+    end
     local bound = Core.ScanTooltip(link, nil, { bag = bag, slot = slot })
     if not IsAuctionableBinding(bound) then Warn("That item cannot be auctioned."); return end
     local marketItem = FindMarketItem(EnsureDB(), link, itemType)
@@ -1673,8 +1682,8 @@ end
 local function SetShoppingItem(link)
     if not link or not ItemID(link) then return end
     local name, _, _, _, _, itemType = GetItemInfo(link)
-    if IsEquipment(itemType) then
-        Warn("Shopping excludes equipment because scaled and random variants are not safely comparable.")
+    if not IsMarketPriceEligible(link, itemType) then
+        Warn("Only equipment with an exact required level of 60 can be bought.")
         return
     end
     shopping.awaitingLink = false
@@ -2000,7 +2009,10 @@ local function SaveShoppingEntry()
         broad = not itemID,
         itemType = itemType or (selectedLink and shopping.selectedItemType), maximum = shopping.maxInput:GetValue(),
         percent = tonumber(shopping.percentBox:GetText()) or 0 }
-    if IsEquipment(entry.itemType) then Warn("Shopping excludes equipment because scaled and random variants are not safely comparable."); return end
+    if not IsMarketPriceEligible(entry.link, entry.itemType) then
+        Warn("Only equipment with an exact required level of 60 can be bought.")
+        return
+    end
     if itemID and previous and previous.itemID == itemID then entry.referencePrice = previous.referencePrice end
     shopping.active, shopping.activeKey = entry, itemID and tostring(itemID) or string.lower(entry.name)
     return entry
@@ -2017,11 +2029,14 @@ end
 local function ScanShopping(updateReference)
     local entry = SaveShoppingEntry()
     if not entry then return end
-    if IsEquipment(entry.itemType) then Warn("Shopping excludes equipment."); return end
+    if not IsMarketPriceEligible(entry.link, entry.itemType) then
+        Warn("Only equipment with an exact required level of 60 can be bought.")
+        return
+    end
     if scan or posting or marketQuery then return end
     shopping.pendingBuy = nil
     BeginMarketQuery({ link = entry.link, itemID = entry.itemID, name = entry.name,
-        equipment = false, broad = entry.broad, notice = "shopping" }, function(reason, rows)
+        equipment = IsEquipment(entry.itemType), broad = entry.broad, notice = "shopping" }, function(reason, rows)
         if reason then Warn(reason); return end
         shopping.dismissedResults = {}
         shopping.submittedRows = {}
@@ -2104,7 +2119,8 @@ end
 local function LoadShoppingPage(wanted, key, selected)
     return BeginMarketQuery({ link = wanted.link, itemID = ItemID(wanted.link),
         name = shopping.active and shopping.active.name,
-        equipment = false, page = wanted.page, singlePage = true, notice = "shopping" }, function(reason)
+        equipment = shopping.active and IsEquipment(shopping.active.itemType),
+        page = wanted.page, singlePage = true, notice = "shopping" }, function(reason)
         if reason then Warn(reason); return end
         if not PrepareShoppingRow(wanted, key, false, selected) then
             DismissShoppingRow(wanted, key)
@@ -2117,7 +2133,10 @@ end
 local function BuyNextShopping(mayBuy)
     local entry = shopping.active
     if not entry or marketQuery or scan or posting then return end
-    if IsEquipment(entry.itemType) then Warn("Shopping excludes equipment."); return end
+    if not IsMarketPriceEligible(entry.link, entry.itemType) then
+        Warn("Only equipment with an exact required level of 60 can be bought.")
+        return
+    end
     for _, row in ipairs(shopping.results or {}) do
         local key = ShoppingRowKey(row)
         if row.eligible and not (shopping.dismissedResults and shopping.dismissedResults[key]) then
@@ -2156,6 +2175,14 @@ ConfirmShoppingBuyout = function()
         DismissShoppingRow(pending, pending.key)
         RefreshShoppingResults()
         Warn("That listing is gone and was removed from the scanned results.")
+        return
+    end
+    local itemType = GetItemInfo and select(6, GetItemInfo(link))
+    if not IsMarketPriceEligible(link, itemType) then
+        shopping.pendingBuy = nil
+        DismissShoppingRow(pending, pending.key)
+        RefreshShoppingResults()
+        Warn("Only equipment with an exact required level of 60 can be bought.")
         return
     end
     local ceiling = shopping.active and ShoppingThreshold(shopping.active)
@@ -2399,7 +2426,7 @@ StartUpgradeAnalysis = function()
     local items = {}
     for _, item in pairs(EnsureDB().items or {}) do
         local requiredLevel = tonumber(item.requiredLevel)
-        if IsEquipment(item.itemType) and requiredLevel and requiredLevel >= 60
+        if IsEquipment(item.itemType) and requiredLevel == 60
             and type(item.stats) == "table" and next(item.stats)
             and item.current and item.current[1]
             and (not upgrades.typeFilter or item.itemType == upgrades.typeFilter)
