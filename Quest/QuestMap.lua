@@ -261,33 +261,38 @@ local function RepresentativeServicePoint(group)
     return best
 end
 
--- Spawn samples are packed in coordinate order, not travel order. Starting at
--- one of the two farthest endpoints and repeatedly taking the nearest unused
--- sample produces a stable path that follows the recorded patrol instead of
--- cutting straight across it.
-local function OrderedServiceRoute(group, first, last)
-    local ordered, used = { first }, {}
-    for index, point in ipairs(group) do
-        if point == first then used[index] = true; break end
+-- Spawn samples are packed in coordinate order, not travel order. Join them
+-- with a minimum spanning tree so every sample is connected through its
+-- nearest reachable neighbor. Unlike a greedy visit order, this never needs
+-- a long jump across the map after finishing one branch of a patrol.
+local function ServiceRouteSegments(group)
+    local segments, connected, nearest, nearestSq = {}, { [1]=true }, {}, {}
+    for index = 2, #group do
+        local dx, dy = group[1].x - group[index].x, group[1].y - group[index].y
+        nearest[index], nearestSq[index] = 1, dx * dx + dy * dy
     end
-    while #ordered < #group - 1 do
-        local current = ordered[#ordered]
-        local bestIndex, bestDistanceSq
+    for _ = 2, #group do
+        local bestTo, bestDistanceSq
+        for index = 1, #group do
+            if not connected[index] and (not bestDistanceSq or nearestSq[index] < bestDistanceSq) then
+                bestTo, bestDistanceSq = index, nearestSq[index]
+            end
+        end
+        if not bestTo or bestDistanceSq > SERVICE_GROUP_LINK_SQ then break end
+        local bestFrom = nearest[bestTo]
+        connected[bestTo] = true
+        segments[#segments + 1] = { first=group[bestFrom], last=group[bestTo] }
         for index, point in ipairs(group) do
-            if not used[index] and point ~= last then
-                local dx, dy = point.x - current.x, point.y - current.y
+            if not connected[index] then
+                local dx, dy = group[bestTo].x - point.x, group[bestTo].y - point.y
                 local distanceSq = dx * dx + dy * dy
-                if not bestDistanceSq or distanceSq < bestDistanceSq then
-                    bestIndex, bestDistanceSq = index, distanceSq
+                if distanceSq < nearestSq[index] then
+                    nearest[index], nearestSq[index] = bestTo, distanceSq
                 end
             end
         end
-        if not bestIndex then break end
-        used[bestIndex] = true
-        ordered[#ordered + 1] = group[bestIndex]
     end
-    if last ~= first then ordered[#ordered + 1] = last end
-    return ordered
+    return segments
 end
 
 local function AddServicePoint(zone, service, location, point, routeEndpoint)
@@ -303,14 +308,13 @@ local function AddServiceLocation(zone, service, location)
     for _, group in ipairs(ServiceCoordinateGroups(location.coords)) do
         local first, last, spanSq = FarthestServicePoints(group)
         if #group >= 3 and spanSq >= SERVICE_ROUTE_MIN_SPAN_SQ then
-            local points = OrderedServiceRoute(group, first, last)
             zone.routes[#zone.routes + 1] = {
-                points=points,
+                segments=ServiceRouteSegments(group),
                 floor=tonumber(location.floor) or 0,
                 kind=service.kind, entityID=service.id, name=service.name,
             }
-            AddServicePoint(zone, service, location, points[1], true)
-            AddServicePoint(zone, service, location, points[#points], true)
+            AddServicePoint(zone, service, location, first, true)
+            AddServicePoint(zone, service, location, last, true)
         elseif #group > 0 then
             AddServicePoint(zone, service, location, RepresentativeServicePoint(group), false)
         end
@@ -784,40 +788,37 @@ local function HideRouteLines(pool)
     for _, line in ipairs(pool) do line:Hide() end
 end
 
-local function RouteLine(pool, index, parent, anchor, x1, y1, x2, y2, color, thickness)
-    local line = pool[index]
-    if line and line:GetParent() ~= parent then
-        line:Hide()
-        line = nil
+local function RoutePixel(pool, index, parent, anchor, x, y, color, size)
+    local pixel = pool[index]
+    if pixel and pixel:GetParent() ~= parent then
+        pixel:Hide()
+        pixel = nil
     end
-    if not line then
-        line = parent:CreateTexture(nil, "ARTWORK")
-        pool[index] = line
+    if not pixel then
+        pixel = parent:CreateTexture(nil, "ARTWORK")
+        pool[index] = pixel
     end
-    local dx, dy = x2 - x1, y2 - y1
-    line:SetWidth(math.sqrt(dx * dx + dy * dy))
-    line:SetHeight(thickness)
-    line:SetTexture(color[1], color[2], color[3], 0.78)
-    line:ClearAllPoints()
-    line:SetPoint("CENTER", parent, anchor, (x1 + x2) / 2, (y1 + y2) / 2)
-    if line.SetRotation then
-        local angle
-        if dx == 0 then
-            angle = dy >= 0 and math.pi / 2 or -math.pi / 2
-        else
-            angle = math.atan(dy / dx)
-            if dx < 0 then angle = angle + math.pi end
-        end
-        line:SetRotation(angle)
-    end
-    line:Show()
+    pixel:SetWidth(size)
+    pixel:SetHeight(size)
+    pixel:SetTexture(color[1], color[2], color[3], 0.78)
+    pixel:ClearAllPoints()
+    pixel:SetPoint("CENTER", parent, anchor, x, y)
+    pixel:Show()
 end
 
 local function DrawRouteSegment(pool, count, limit, parent, anchor,
     x1, y1, x2, y2, color, thickness)
     if count >= limit or (x1 == x2 and y1 == y2) then return count end
-    count = count + 1
-    RouteLine(pool, count, parent, anchor, x1, y1, x2, y2, color, thickness)
+    local dx, dy = x2 - x1, y2 - y1
+    local length = math.sqrt(dx * dx + dy * dy)
+    local steps = math.max(1, math.ceil(length / 2.25))
+    for step = 0, steps do
+        if count >= limit then break end
+        local progress = step / steps
+        count = count + 1
+        RoutePixel(pool, count, parent, anchor,
+            x1 + dx * progress, y1 + dy * progress, color, thickness)
+    end
     return count
 end
 
@@ -828,12 +829,12 @@ local function DrawWorldRoutes(zone, parent, currentFloor)
     for _, route in ipairs(zone.routes or {}) do
         if route.floor == 0 or currentFloor == 0 or route.floor == currentFloor then
             local color = iconColors[route.kind] or iconColors.scout
-            for index = 2, #(route.points or {}) do
-                local first, last = route.points[index - 1], route.points[index]
+            for _, segment in ipairs(route.segments or {}) do
+                local first, last = segment.first, segment.last
                 count = DrawRouteSegment(worldRouteLines, count, 1500, parent, "TOPLEFT",
                     first.x * width / 100, -first.y * height / 100,
                     last.x * width / 100, -last.y * height / 100,
-                    color, 2.5)
+                    color, 3)
                 if count >= 1500 then break end
             end
         end
@@ -1072,8 +1073,8 @@ local function DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, fac
     local cosFacing, sinFacing = math.cos(facing), math.sin(facing)
     for _, route in ipairs(zone.routes or {}) do
         local color = iconColors[route.kind] or iconColors.scout
-        for index = 2, #(route.points or {}) do
-            local first, last = route.points[index - 1], route.points[index]
+        for _, segment in ipairs(route.segments or {}) do
+            local first, last = segment.first, segment.last
             local dx1 = (first.x / 100 - playerMap.x) * size[1]
             local dy1 = (first.y / 100 - playerMap.y) * size[2]
             local dx2 = (last.x / 100 - playerMap.x) * size[1]
@@ -1089,7 +1090,7 @@ local function DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, fac
                 visibleRadiusSq)
             if dx1 then
                 count = DrawRouteSegment(minimapRouteLines, count, 600, Minimap, "CENTER",
-                    dx1, dy1, dx2, dy2, color, 2.5)
+                    dx1, dy1, dx2, dy2, color, 3)
             end
             if count >= 600 then break end
         end
