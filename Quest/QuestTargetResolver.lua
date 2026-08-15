@@ -12,6 +12,12 @@ local activeByKey = {}
 local activeByLabel = {}
 local refreshPending, refreshAt = false, 0
 
+-- Ascension can fire QUEST_LOG_UPDATE before the objective's finished flag
+-- has settled. GroupSync intentionally reads the log after 0.65 seconds; pins
+-- and nameplate markers must not take an earlier snapshot and then remain
+-- stale until the next unrelated quest update.
+Resolver.QUEST_LOG_SETTLE_DELAY = 0.75
+
 local function Trim(value)
     value = string.gsub(value or "", "^%s+", "")
     return string.gsub(value, "%s+$", "")
@@ -34,6 +40,23 @@ function Resolver.KindFromClientType(objectiveType)
     if objectiveType == "item" then return "loot" end
     if objectiveType == "object" or objectiveType == "event" then return "interact" end
     return "neutral"
+end
+
+function Resolver.IsComplete(value)
+    return value == true or value == 1 or value == "1"
+end
+
+-- Custom event/object objectives occasionally update their visible progress
+-- before the client flips the finished return value. Treat a final N/N count
+-- as complete as well, using the last progress pair on the line so numbers in
+-- an objective's name cannot be mistaken for its progress.
+function Resolver.ObjectiveIsComplete(text, finished)
+    if Resolver.IsComplete(finished) then return true end
+    local current, required
+    for rawCurrent, rawRequired in string.gmatch(text or "", "(%d+)%s*/%s*(%d+)") do
+        current, required = tonumber(rawCurrent), tonumber(rawRequired)
+    end
+    return current ~= nil and required ~= nil and required > 0 and current >= required
 end
 
 local function ObjectiveKey(questID, title, objectiveIndex, label)
@@ -93,13 +116,13 @@ function Resolver.BuildActive()
     for logIndex = 1, entries do
         local title, _, _, _, isHeader, _, questComplete, _, questID =
             GetQuestLogTitle(logIndex)
-        if title and not isHeader and questComplete ~= 1 and questComplete ~= true then
+        if title and not isHeader and not Resolver.IsComplete(questComplete) then
             local count = GetNumQuestLeaderBoards and GetNumQuestLeaderBoards(logIndex) or 0
             for objectiveIndex = 1, count do
                 local raw, objectiveType, done =
                     GetQuestLogLeaderBoard(objectiveIndex, logIndex)
                 local label, display = Resolver.Normalize(raw)
-                if not done and label ~= "" then
+                if not Resolver.ObjectiveIsComplete(raw, done) and label ~= "" then
                     local numericQuestID = tonumber(questID)
                     local objective = {
                         key = ObjectiveKey(numericQuestID, title, objectiveIndex, label),
@@ -247,8 +270,10 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
+eventFrame:RegisterEvent("QUEST_WATCH_UPDATE")
+eventFrame:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 eventFrame:SetScript("OnEvent", function()
-    refreshPending, refreshAt = true, GetTime() + 0.2
+    refreshPending, refreshAt = true, GetTime() + Resolver.QUEST_LOG_SETTLE_DELAY
 end)
 eventFrame:SetScript("OnUpdate", function()
     if refreshPending and GetTime() >= refreshAt then

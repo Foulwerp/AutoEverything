@@ -86,7 +86,7 @@ local function ParseProgress(objective)
     if current and required then
         remaining = math.max(tonumber(required) - tonumber(current), 0)
     end
-    return objective.done and true or false, remaining
+    return Resolver.ObjectiveIsComplete(objective.text, objective.done), remaining
 end
 
 -- Use direct database facts where available, then the client-reported type of
@@ -196,14 +196,15 @@ function Markers.RebuildIndex()
             for objectiveIndex = 1, count do
                 local text, objectiveType, done = GetQuestLogLeaderBoard(objectiveIndex, logIndex)
                 objectives[objectiveIndex] = {
-                    text=text or "", kind=objectiveType, done=done and true or false,
+                    text=text or "", kind=objectiveType,
+                    done=Resolver.ObjectiveIsComplete(text, done),
                 }
             end
         end
         -- Resolve by questID, falling back to title (the client may not return
         -- a questID at all on 3.3.5). See AutoQuest.ResolveQuestEntries.
         local resolved = (title and not isHeader) and AutoQuest.ResolveQuestEntries(questID, title) or {}
-        if title and not isHeader and #resolved > 0 and complete ~= 1 and complete ~= true then
+        if title and not isHeader and #resolved > 0 and not Resolver.IsComplete(complete) then
             for _, match in ipairs(resolved) do
                 for _, record in ipairs(match.entry.records or {}) do
                     local done, remaining, objective = ObjectiveStatus(objectives, record)
@@ -220,7 +221,7 @@ function Markers.RebuildIndex()
         -- item "Dropped by" relationships. These cover quests whose Mapper
         -- record is absent or incomplete. Merge both relationship types by
         -- NPC ID so a mixed objective can display both kill and loot badges.
-        if title and not isHeader and complete ~= 1 and complete ~= true and SpawnStore then
+        if title and not isHeader and not Resolver.IsComplete(complete) and SpawnStore then
             local relationshipQuestIDs, seenQuestIDs = {}, {}
             local function AddRelationshipQuestID(value)
                 value = tonumber(value)
@@ -548,6 +549,8 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
+eventFrame:RegisterEvent("QUEST_WATCH_UPDATE")
+eventFrame:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 eventFrame:SetScript("OnEvent", function(_, event, unit)
@@ -562,7 +565,8 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         if plate and plate.AutoEverythingQuestMarker then plate.AutoEverythingQuestMarker:Hide() end
         visibleUnits[unit] = nil
     else
-        refreshPending, refreshAt = true, GetTime() + 0.35
+        refreshPending, refreshAt = true,
+            GetTime() + (Resolver.QUEST_LOG_SETTLE_DELAY or 0.75)
     end
 end)
 eventFrame:SetScript("OnUpdate", function(_, elapsed)

@@ -368,12 +368,15 @@ function QuestMap.RebuildIndex()
         -- a questID at all on 3.3.5). See AutoQuest.ResolveQuestEntries.
         local resolved = (title and not isHeader) and AutoQuest.ResolveQuestEntries(questID, title) or {}
         if title and not isHeader then buildStats.activeQuests = buildStats.activeQuests + 1 end
-        if title and not isHeader and complete ~= 1 and complete ~= true then
+        if title and not isHeader and not Resolver.IsComplete(complete) then
             local objectives = {}
             local count = GetNumQuestLeaderBoards(logIndex) or 0
             for objectiveIndex = 1, count do
                 local text, objectiveType, done = GetQuestLogLeaderBoard(objectiveIndex, logIndex)
-                objectives[#objectives + 1] = { text=text or "", kind=objectiveType, done=done and true or false }
+                objectives[#objectives + 1] = {
+                    text=text or "", kind=objectiveType,
+                    done=Resolver.ObjectiveIsComplete(text, done),
+                }
             end
 
             -- Relationship tables are keyed by database quest ID. The client
@@ -946,13 +949,21 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 frame:RegisterEvent("QUEST_LOG_UPDATE")
+frame:RegisterEvent("QUEST_WATCH_UPDATE")
+frame:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 frame:RegisterEvent("WORLD_MAP_UPDATE")
 frame:RegisterEvent("WORLD_MAP_NAME_UPDATE")
 frame:SetScript("OnEvent", function(_, event)
     if event == "WORLD_MAP_UPDATE" or event == "WORLD_MAP_NAME_UPDATE" then
         QuestMap.UpdateWorldMap()
     else
-        refreshPending, refreshAt = true, GetTime() + 0.5
+        local delay = 0.5
+        if event == "QUEST_LOG_UPDATE" or event == "QUEST_WATCH_UPDATE"
+            or event == "UNIT_QUEST_LOG_CHANGED"
+        then
+            delay = Resolver.QUEST_LOG_SETTLE_DELAY
+        end
+        refreshPending, refreshAt = true, GetTime() + delay
     end
 end)
 frame:SetScript("OnUpdate", function(_, elapsed)
