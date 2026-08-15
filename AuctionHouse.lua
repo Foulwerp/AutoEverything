@@ -1040,7 +1040,11 @@ local function ShouldQueue(link, bag, slot)
     if not config or config.enabled == false then return false end
     local location = { bag = bag, slot = slot, link = link }
     local data = Core.GetItemData(link, location)
-    if not data or not data.id or data.itemType == "Quest" or data.itemType == "Key" then return false end
+    -- Quest is an item class, not proof that the item is unauctionable.
+    -- Ascension cards and similar items use that class while remaining
+    -- tradeable; binding and active-quest protection below are the safety
+    -- checks that determine whether they can be queued.
+    if not data or not data.id or data.itemType == "Key" then return false end
     if not IsMarketPriceEligible(link, data.itemType) then return false end
     if Core.IsActiveQuestItem(data.id) then return false end
     if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
@@ -1588,7 +1592,7 @@ end
 
 local function IsManualSellable(link, bag, slot)
     local data = Core.GetItemData(link, { bag = bag, slot = slot, link = link })
-    if not data or not data.id or data.itemType == "Quest" or data.itemType == "Key" then return false end
+    if not data or not data.id or data.itemType == "Key" then return false end
     if not IsMarketPriceEligible(link, data.itemType) then return false end
     if Core.IsActiveQuestItem(data.id) then return false end
     if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
@@ -1606,7 +1610,8 @@ local function ScanSellInventory()
             local _, count, locked = GetContainerItemInfo(bag, slot)
             count = tonumber(count) or 0
             -- Keep the sell list focused: only unlocked, auctionable bag
-            -- items appear. Quest and key items are never manual listings.
+            -- items appear. Tradeable Quest-class items are valid listings;
+            -- IsManualSellable filters binding, active objectives, and keys.
             if link and count > 0 and not locked and IsManualSellable(link, bag, slot) then
                 local name, _, _, _, _, itemType = GetItemInfo(link)
                 local key = ManualKey(bag, slot)
