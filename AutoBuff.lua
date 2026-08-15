@@ -18,6 +18,8 @@ local periodicElapsed = 0
 local availableBuffs = nil
 local currentMissing = {}
 local currentCandidate = nil
+local rejectedTrivialTargets = {}
+local lastBuffAttempt = nil
 local window, castButton, statusText
 local roleRows = {}
 local roleOverflowText
@@ -67,6 +69,19 @@ end
 local function PlayerRoles()
     local roles = Setting("playerRoles", Default("playerRoles", {}))
     return type(roles) == "table" and roles or {}
+end
+
+local function UnitIdentity(unit)
+    local guid = UnitGUID and UnitGUID(unit)
+    if guid and guid ~= "" then return guid end
+    local name, realm = UnitName(unit)
+    if realm and realm ~= "" then name = tostring(name or "") .. "-" .. realm end
+    return NormalizeName(name)
+end
+
+local function IsTrivialTargetError(message)
+    if type(message) ~= "string" then return false end
+    return string.find(string.lower(message), "target trivial", 1, true) ~= nil
 end
 
 local function InCombat()
@@ -229,6 +244,8 @@ end
 
 local function IsTrivialGroupMember(unit, isSelf)
     if isSelf then return false end
+    local identity = UnitIdentity(unit)
+    if identity and rejectedTrivialTargets[identity] then return true end
     if UnitIsTrivial and UnitIsTrivial(unit) then return true end
     return UnitClassification and UnitClassification(unit) == "trivial"
 end
@@ -524,6 +541,17 @@ local function CreateWindow()
         castButton:HookScript("OnEnter", function(self) self:SetBackdropBorderColor(UI.Unpack(UI.Colors.brand)) end)
         castButton:HookScript("OnLeave", function(self) self:SetBackdropBorderColor(UI.Unpack(UI.Colors.border)) end)
     end
+    castButton:SetScript("PreClick", function()
+        if not currentCandidate then
+            lastBuffAttempt = nil
+            return
+        end
+        lastBuffAttempt = {
+            identity = UnitIdentity(currentCandidate.unit),
+            name = currentCandidate.name,
+            at = GetTime(),
+        }
+    end)
     castButton:SetScript("PostClick", function() ScheduleScan(0.2) end)
 
     roleOverflowText = window:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -619,6 +647,7 @@ events:RegisterEvent("PARTY_MEMBERS_CHANGED")
 events:RegisterEvent("RAID_ROSTER_UPDATE")
 events:RegisterEvent("UNIT_AURA")
 events:RegisterEvent("UNIT_CLASSIFICATION_CHANGED")
+events:RegisterEvent("UI_ERROR_MESSAGE")
 events:RegisterEvent("SPELLS_CHANGED")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -635,11 +664,30 @@ events:SetScript("OnEvent", function(self, event, arg1)
         PaintWindow()
     elseif event == "PLAYER_REGEN_ENABLED" then
         ScheduleScan(0)
+    elseif event == "UI_ERROR_MESSAGE" then
+        local recentAttempt = lastBuffAttempt and (GetTime() - lastBuffAttempt.at) <= 2
+        if recentAttempt and lastBuffAttempt.identity
+            and IsTrivialTargetError(arg1)
+        then
+            rejectedTrivialTargets[lastBuffAttempt.identity] = true
+            if AutoCore and AutoCore.Info then
+                AutoCore.Info("Buff", "Skipping " .. tostring(lastBuffAttempt.name or "target")
+                    .. " after the client rejected the buff as trivial.")
+            end
+            lastBuffAttempt = nil
+            ScheduleScan(0)
+        end
     elseif event == "UNIT_AURA" then
         if arg1 == "player" or string.match(arg1 or "", "^party%d+$") or string.match(arg1 or "", "^raid%d+$") then
             ScheduleScan()
         end
     else
+        if event == "PLAYER_ENTERING_WORLD" or event == "PARTY_MEMBERS_CHANGED"
+            or event == "RAID_ROSTER_UPDATE"
+        then
+            rejectedTrivialTargets = {}
+            lastBuffAttempt = nil
+        end
         ScheduleScan(0.4)
         if (event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE")
             and AutoCore and AutoCore.Settings and AutoCore.Settings.Refresh then
