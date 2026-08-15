@@ -15,11 +15,15 @@ AQ.GroupSync = AQ.GroupSync or {}
 local Sync = AQ.GroupSync
 
 local PREFIX = "AEQ1"
-local VERSION = "1"
+local VERSION = "2"
 local SEP = "\31"
 local SEND_INTERVAL = 0.12
 local UPDATE_DELAY = 0.65
-local MAX_QUEUE = 400
+local MAX_QUEUE = 1000
+local MAX_PAYLOAD_BYTES = 240
+local RETRY_INTERVAL = 5
+local PARTY_AUDIT_INTERVAL = 300
+local RAID_AUDIT_INTERVAL = 600
 
 local localQuests = {}
 local memberQuests = {}
@@ -32,6 +36,11 @@ local acceptedSharedUntil = 0
 local pendingShares = {}
 local lastRequestAt = 0
 local lastSnapshotAt = {}
+local pendingSnapshotTargets = {}
+local requestPending = false
+local nextAuditAt = 0
+local snapshotSerial = 0
+local profileSyncActive = false
 local rewardQuestTitle = nil
 local pendingTurnIns = {}
 local rewardHooked = false
@@ -133,6 +142,14 @@ local function IsComplete(value)
     return value == true or value == 1
 end
 
+local function ObjectiveProgressValues(text)
+    local current, required
+    for rawCurrent, rawRequired in string.gmatch(text or "", "(%d+)%s*/%s*(%d+)") do
+        current, required = tonumber(rawCurrent), tonumber(rawRequired)
+    end
+    return current, required
+end
+
 local function BuildLocalState()
     local quests = {}
     local items = {}
@@ -152,10 +169,13 @@ local function BuildLocalState()
             local objectiveCount = GetNumQuestLeaderBoards and (GetNumQuestLeaderBoards(questIndex) or 0) or 0
             for objectiveIndex = 1, objectiveCount do
                 local text, objectiveType, finished = GetQuestLogLeaderBoard(objectiveIndex, questIndex)
+                local current, required = ObjectiveProgressValues(text)
                 quest.objectives[objectiveIndex] = {
                     text = text or ("Objective " .. objectiveIndex),
                     finished = IsComplete(finished),
                     type = objectiveType or "",
+                    current = current,
+                    required = required,
                 }
             end
             quests[key] = quest
@@ -171,8 +191,13 @@ local function BuildLocalState()
 end
 
 local function QueueMessage(message, channel, target)
-    if not SendAddonMessage or #outgoing >= MAX_QUEUE then return end
+    if not SendAddonMessage or type(message) ~= "string"
+        or string.len(message) > MAX_PAYLOAD_BYTES or #outgoing >= MAX_QUEUE
+    then
+        return false
+    end
     table.insert(outgoing, { message = message, channel = channel, target = target })
+    return true
 end
 
 local function EncodeQuest(quest)
@@ -186,6 +211,7 @@ local function EncodeObjective(questKey, index, objective)
     return table.concat({
         "O", questKey, tostring(index), objective.finished and "1" or "0",
         CleanField(objective.text, 125), CleanField(objective.type, 12),
+        tostring(objective.current or ""), tostring(objective.required or ""),
     }, SEP)
 end
 
@@ -199,6 +225,8 @@ end
 local function ObjectiveChanged(before, after)
     if not before then return true end
     return before.finished ~= after.finished or before.text ~= after.text
+        or before.type ~= after.type or before.current ~= after.current
+        or before.required ~= after.required
 end
 
 local function QueueDelta(before, after)
@@ -223,21 +251,63 @@ local function QueueDelta(before, after)
 end
 
 local function QueueSnapshot(target)
-    if not SyncActive() or not target then return end
+    if not SyncActive() or not target then return false end
     local targetKey = NormalizeName(target)
-    if targetKey and lastSnapshotAt[targetKey] and GetTime() - lastSnapshotAt[targetKey] < 2 then return end
+    if not baselineReady then
+        if targetKey then pendingSnapshotTargets[targetKey] = target end
+        return false
+    end
+    if targetKey and lastSnapshotAt[targetKey] and GetTime() - lastSnapshotAt[targetKey] < 2 then
+        return true
+    end
+
+    local questCount, objectiveCount = 0, 0
+    for _, quest in pairs(localQuests) do
+        questCount = questCount + 1
+        objectiveCount = objectiveCount + #quest.objectives
+    end
+    local requiredCapacity = questCount + objectiveCount + 2
+    if requiredCapacity > MAX_QUEUE or #outgoing + requiredCapacity > MAX_QUEUE then
+        if targetKey then pendingSnapshotTargets[targetKey] = target end
+        return false
+    end
+
+    snapshotSerial = snapshotSerial + 1
+    local snapshotID = tostring(snapshotSerial)
     if targetKey then lastSnapshotAt[targetKey] = GetTime() end
-    QueueMessage(table.concat({ "B", VERSION }, SEP), "WHISPER", target)
+    QueueMessage(table.concat({
+        "B", VERSION, snapshotID, tostring(questCount), tostring(objectiveCount),
+    }, SEP), "WHISPER", target)
     for _, quest in pairs(localQuests) do QueueQuest(quest, "WHISPER", target) end
-    QueueMessage(table.concat({ "E", VERSION }, SEP), "WHISPER", target)
+    QueueMessage(table.concat({
+        "E", VERSION, snapshotID, tostring(questCount), tostring(objectiveCount),
+    }, SEP), "WHISPER", target)
+    if targetKey then pendingSnapshotTargets[targetKey] = nil end
+    return true
+end
+
+local function FlushPendingSnapshots()
+    for targetKey, target in pairs(pendingSnapshotTargets) do
+        if not IsRosterMember(target) then
+            pendingSnapshotTargets[targetKey] = nil
+        elseif QueueSnapshot(target) then
+            pendingSnapshotTargets[targetKey] = nil
+        end
+    end
 end
 
 local function SendRequest()
     local channel = GroupChannel()
+    if not baselineReady then requestPending = true; return false end
     if SyncActive() and channel and GetTime() - lastRequestAt >= 2 then
-        lastRequestAt = GetTime()
-        QueueMessage(table.concat({ "R", VERSION }, SEP), channel)
+        if QueueMessage(table.concat({ "R", VERSION }, SEP), channel) then
+            lastRequestAt = GetTime()
+            requestPending = false
+            return true
+        end
+        requestPending = true
     end
+    return false
 end
 
 local function AnnouncementChannel()
@@ -378,6 +448,7 @@ local function AnnounceTransitions(before, after)
 end
 
 local function ProcessQuestUpdate()
+    local wasReady = baselineReady
     local previous = localQuests
     local current, itemMap = BuildLocalState()
     AnnounceSuccessfulTurnIns(current)
@@ -388,6 +459,8 @@ local function ProcessQuestUpdate()
     localQuests = current
     itemQuestKeys = itemMap
     baselineReady = true
+    FlushPendingSnapshots()
+    if requestPending or not wasReady then SendRequest() end
 end
 
 local function ScheduleUpdate(delay)
@@ -423,30 +496,85 @@ local function ReceiveMessage(prefix, message, channel, sender)
     member.updated = GetTime()
 
     if kind == "B" then
-        member.quests = {}
-        member.completeSnapshot = false
+        member.snapshot = {
+            id = fields[3],
+            expectedQuests = tonumber(fields[4]),
+            expectedObjectives = tonumber(fields[5]),
+            receivedQuests = 0,
+            receivedObjectives = 0,
+            quests = {},
+            hadComplete = member.completeSnapshot,
+        }
     elseif kind == "E" then
-        member.completeSnapshot = true
+        local snapshot = member.snapshot
+        local valid = snapshot ~= nil
+        if valid and snapshot.expectedQuests ~= nil then
+            valid = snapshot.id == fields[3]
+                and snapshot.expectedQuests == tonumber(fields[4])
+                and snapshot.expectedObjectives == tonumber(fields[5])
+                and snapshot.receivedQuests == snapshot.expectedQuests
+                and snapshot.receivedObjectives == snapshot.expectedObjectives
+            local actualQuests, actualObjectives = 0, 0
+            if valid then
+                for _, quest in pairs(snapshot.quests) do
+                    actualQuests = actualQuests + 1
+                    for index = 1, quest.objectiveCount or 0 do
+                        if quest.objectives[index] then
+                            actualObjectives = actualObjectives + 1
+                        else
+                            valid = false
+                            break
+                        end
+                    end
+                    if not valid then break end
+                end
+                valid = actualQuests == snapshot.expectedQuests
+                    and actualObjectives == snapshot.expectedObjectives
+            end
+        end
+        if valid then
+            member.quests = snapshot.quests
+            member.completeSnapshot = true
+        else
+            member.completeSnapshot = snapshot and snapshot.hadComplete or false
+        end
+        member.snapshot = nil
+        if not valid then
+            requestPending = true
+            nextAuditAt = 0
+        end
     elseif kind == "X" and fields[2] then
-        member.quests[fields[2]] = nil
+        local quests = member.snapshot and member.snapshot.quests or member.quests
+        quests[fields[2]] = nil
     elseif kind == "Q" and fields[2] then
         local key = fields[2]
-        local quest = member.quests[key] or { objectives = {} }
+        local quests = member.snapshot and member.snapshot.quests or member.quests
+        local quest = quests[key] or { objectives = {} }
         quest.key = key
         quest.title = fields[3] or "Unknown quest"
         quest.complete = fields[4] == "1"
         local count = tonumber(fields[5]) or 0
+        quest.objectiveCount = count
         TrimMemberObjectives(quest, count)
-        member.quests[key] = quest
+        quests[key] = quest
+        if member.snapshot then
+            member.snapshot.receivedQuests = member.snapshot.receivedQuests + 1
+        end
     elseif kind == "O" and fields[2] and tonumber(fields[3]) then
         local key, index = fields[2], tonumber(fields[3])
-        local quest = member.quests[key] or { key = key, title = "Unknown quest", objectives = {} }
+        local quests = member.snapshot and member.snapshot.quests or member.quests
+        local quest = quests[key] or { key = key, title = "Unknown quest", objectives = {} }
         quest.objectives[index] = {
             finished = fields[4] == "1",
             text = fields[5] or ("Objective " .. index),
             type = fields[6] or "",
+            current = tonumber(fields[7]),
+            required = tonumber(fields[8]),
         }
-        member.quests[key] = quest
+        quests[key] = quest
+        if member.snapshot then
+            member.snapshot.receivedObjectives = member.snapshot.receivedObjectives + 1
+        end
     end
 
     -- Group objective badges are built by QuestMarkers, which loads after
@@ -460,17 +588,58 @@ end
 local function CleanupRoster()
     local roster = CurrentRoster()
     for name in pairs(memberQuests) do
-        if not roster[name] then memberQuests[name] = nil end
+        if not roster[name] then
+            memberQuests[name] = nil
+            lastSnapshotAt[name] = nil
+        end
+    end
+    for name in pairs(pendingSnapshotTargets) do
+        if not roster[name] then pendingSnapshotTargets[name] = nil end
     end
     if not SyncActive() then
         wipe(outgoing)
+        wipe(memberQuests)
+        wipe(pendingSnapshotTargets)
+        requestPending = false
+        nextAuditAt = 0
+        profileSyncActive = false
+        if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
         return
     end
+    profileSyncActive = true
+    nextAuditAt = 0
     SendRequest()
+    if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
+end
+
+local function MissingMemberData()
+    local playerKey = NormalizeName(UnitName("player"))
+    for name in pairs(CurrentRoster()) do
+        if name ~= playerKey then
+            local member = memberQuests[name]
+            if not member or not member.completeSnapshot then return true end
+        end
+    end
+    return false
+end
+
+local function AuditSync(now)
+    if not SyncActive() or not baselineReady or now < nextAuditAt then return end
+    local missing = MissingMemberData()
+    if requestPending or missing then
+        SendRequest()
+        nextAuditAt = now + RETRY_INTERVAL
+    else
+        SendRequest()
+        nextAuditAt = now + (RaidCount() > 0 and RAID_AUDIT_INTERVAL or PARTY_AUDIT_INTERVAL)
+    end
 end
 
 local function ObjectiveProgress(objective)
     if not objective then return nil end
+    if objective.current and objective.required then
+        return tostring(objective.current) .. "/" .. tostring(objective.required)
+    end
     local current, total = string.match(objective.text or "", "(%d+)%s*/%s*(%d+)")
     if current and total then return current .. "/" .. total end
     return objective.finished and "Complete" or "In progress"
@@ -632,6 +801,8 @@ end
 driver:RegisterEvent("ADDON_LOADED")
 driver:RegisterEvent("PLAYER_ENTERING_WORLD")
 driver:RegisterEvent("QUEST_LOG_UPDATE")
+driver:RegisterEvent("QUEST_WATCH_UPDATE")
+driver:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 driver:RegisterEvent("QUEST_ACCEPTED")
 driver:RegisterEvent("QUEST_ACCEPT_CONFIRM")
 driver:RegisterEvent("QUEST_PROGRESS")
@@ -654,7 +825,9 @@ driver:SetScript("OnEvent", function(self, event, ...)
         wipe(pendingTurnIns)
         ScheduleUpdate(0.5)
         CleanupRoster()
-    elseif event == "QUEST_LOG_UPDATE" then
+    elseif event == "QUEST_LOG_UPDATE" or event == "QUEST_WATCH_UPDATE"
+        or event == "UNIT_QUEST_LOG_CHANGED"
+    then
         ScheduleUpdate()
     elseif event == "QUEST_ACCEPTED" then
         AutoShareQuest(arg1)
@@ -699,6 +872,9 @@ driver:SetScript("OnUpdate", function(self, elapsed)
         end
     end
 
+    if next(pendingSnapshotTargets) then FlushPendingSnapshots() end
+    AuditSync(now)
+
     sendElapsed = sendElapsed + elapsed
     if sendElapsed < SEND_INTERVAL or #outgoing == 0 then return end
     sendElapsed = 0
@@ -713,6 +889,44 @@ function Sync.RequestUpdate()
     SendRequest()
 end
 
+function Sync.ApplyProfile()
+    local active = SyncActive()
+    if active and not profileSyncActive then
+        requestPending = true
+        nextAuditAt = 0
+        ScheduleUpdate(0)
+    elseif not active and profileSyncActive then
+        wipe(outgoing)
+        wipe(memberQuests)
+        wipe(pendingSnapshotTargets)
+        requestPending = false
+        nextAuditAt = 0
+        if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
+    end
+    profileSyncActive = active
+end
+
 function Sync.GetMemberQuestData()
     return memberQuests
+end
+
+function Sync.Debug()
+    local localCount = 0
+    for _ in pairs(localQuests) do localCount = localCount + 1 end
+    print("|cff33ccffQuest Sync|r")
+    print("  active=" .. tostring(SyncActive()) .. " channel=" .. tostring(GroupChannel())
+        .. " baseline=" .. tostring(baselineReady) .. " localQuests=" .. localCount
+        .. " queued=" .. #outgoing)
+    local playerKey = NormalizeName(UnitName("player"))
+    for name, displayName in pairs(CurrentRoster()) do
+        if name ~= playerKey then
+            local member = memberQuests[name]
+            local questCount = 0
+            for _ in pairs(member and member.quests or {}) do questCount = questCount + 1 end
+            print("  " .. tostring(displayName) .. ": snapshot="
+                .. tostring(member and member.completeSnapshot or false)
+                .. " quests=" .. questCount .. " age="
+                .. tostring(member and math.floor(GetTime() - member.updated) or "never"))
+        end
+    end
 end

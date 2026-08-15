@@ -81,12 +81,18 @@ local NPCIDFromGUID = Resolver.NPCIDFromGUID
 
 local function ParseProgress(objective)
     if not objective then return false, nil end
-    local current, required = string.match(objective.text or "", "(%d+)%s*/%s*(%d+)")
+    local current, required = objective.current, objective.required
+    if not current or not required then
+        current, required = string.match(objective.text or "", "(%d+)%s*/%s*(%d+)")
+    end
     local remaining
     if current and required then
         remaining = math.max(tonumber(required) - tonumber(current), 0)
     end
-    return Resolver.ObjectiveIsComplete(objective.text, objective.done), remaining
+    local complete = Resolver.ObjectiveIsComplete(objective.text, objective.done)
+        or (tonumber(current) and tonumber(required) and tonumber(required) > 0
+            and tonumber(current) >= tonumber(required))
+    return complete, remaining
 end
 
 -- Use direct database facts where available, then the client-reported type of
@@ -279,7 +285,12 @@ function Markers.RebuildIndex()
                         objectives[index] = {
                             text = objective.text or "",
                             kind = objective.type or "",
-                            done = Resolver.ObjectiveIsComplete(objective.text, objective.finished),
+                            done = Resolver.ObjectiveIsComplete(objective.text, objective.finished)
+                                or (objective.current and objective.required
+                                    and objective.required > 0
+                                    and objective.current >= objective.required),
+                            current = objective.current,
+                            required = objective.required,
                         }
                     end
                     local remoteQuestID = tonumber(string.match(key or "", "^I(%d+)$"))
