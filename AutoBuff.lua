@@ -452,12 +452,22 @@ local function GroupUnits()
     return units
 end
 
-local function TargetAllowed(entry, unit)
+local function HasSelfAssignments()
+    for _, entry in ipairs(BuffList()) do
+        if type(entry) == "table" then
+            local targets = ExpandAssignmentTargets(entry.targets or entry.target or "all")
+            if targets.self then return true end
+        end
+    end
+    return false
+end
+
+local function TargetAllowed(entry, unit, hasSelfAssignments)
     for _, policy in ipairs(NormalizeTargets(entry.targets or entry.target or "all")) do
         if policy == "all" then return true end
         if policy == "self" and unit.isSelf then return true end
         if policy == "group" and not unit.isSelf then return true end
-        if not unit.isSelf
+        if (not unit.isSelf or not hasSelfAssignments)
             and (policy == "caster" or policy == "melee" or policy == "tank" or policy == "healer")
             and unit.role == policy
         then
@@ -513,6 +523,7 @@ end
 local function BuildMissing()
     local missing = {}
     local units = GroupUnits()
+    local hasSelfAssignments = HasSelfAssignments()
     local auraTimers = {}
     for _, unit in ipairs(units) do auraTimers[unit.unit] = ReadAuraTimers(unit.unit) end
     for _, entry in ipairs(BuffList()) do
@@ -520,7 +531,7 @@ local function BuildMissing()
         if learned then
             local cooldown, cooldownDuration = SpellCooldown(learned)
             for _, unit in ipairs(units) do
-                if TargetAllowed(entry, unit) then
+                if TargetAllowed(entry, unit, hasSelfAssignments) then
                     local needed, remaining = NeedsBuff(auraTimers[unit.unit], learned.name)
                     if needed then
                         table.insert(missing, {

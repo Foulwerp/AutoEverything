@@ -2095,11 +2095,11 @@ pageBuilders.Buff = function(parent)
         learnedChoices[1] = { text = "No helpful spells found", value = "" }
     end
     local assignmentRows = {
-        { label = "Self", target = "self", help = "Buffs assigned here are cast only on your character." },
-        { label = "Caster", target = "caster", help = "Buffs assigned here are cast on group members assigned as casters." },
-        { label = "Tank", target = "tank", help = "Buffs assigned here are cast on group members assigned as tanks." },
-        { label = "Healer", target = "healer", help = "Buffs assigned here are cast on group members assigned as healers." },
-        { label = "Melee", target = "melee", help = "Buffs assigned here are cast on group members assigned as melee." },
+        { label = "Self", target = "self", help = "When any buffs are assigned here, only these buffs are used for your character. Leave Self empty to use the buffs assigned to your detected role." },
+        { label = "Caster", target = "caster", help = "Buffs for group members assigned as casters. These also apply to you when Self is empty and your detected role is Caster." },
+        { label = "Tank", target = "tank", help = "Buffs for group members assigned as tanks. These also apply to you when Self is empty and your detected role is Tank." },
+        { label = "Healer", target = "healer", help = "Buffs for group members assigned as healers. These also apply to you when Self is empty and your detected role is Healer." },
+        { label = "Melee", target = "melee", help = "Buffs for group members assigned as melee. These also apply to you when Self is empty and your detected role is Melee." },
     }
     for index, definition in ipairs(assignmentRows) do
         local assignmentTarget = definition.target
