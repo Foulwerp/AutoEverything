@@ -30,6 +30,7 @@ local lootOpen = false
 local selectedSlot
 local frame
 local ui = {}
+local Theme = AutoCore and AutoCore.UI
 
 local current = {
     id = 0,
@@ -330,10 +331,14 @@ local function RefreshUI()
     ui.rolls:SetText("MS: " .. CountRolls("MS") .. "    OS: " .. CountRolls("OS") .. "    Rejected: " .. #(current.rejectedRolls or {}))
     ui.winner:SetText("Leader: " .. PredictedWinnerText())
     ui.auto:SetText(Setting("autoAward") and "Auto Award: ON" or "Auto Award: OFF")
+    if Theme then
+        ui.auto.themeAccentColor = Setting("autoAward") and Theme.Colors.brand or nil
+        if Theme.RefreshButtonTheme then Theme.RefreshButtonTheme(ui.auto) end
+    end
     local autoText = ui.auto.GetFontString and ui.auto:GetFontString()
-    if autoText and autoText.SetTextColor then
-        if Setting("autoAward") then autoText:SetTextColor(0.2, 1, 0.2)
-        else autoText:SetTextColor(1, 0.35, 0.2) end
+    if Theme and autoText and autoText.SetTextColor then
+        if Setting("autoAward") then autoText:SetTextColor(Theme.Unpack(Theme.Colors.text))
+        else autoText:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
     end
 
     local now = GetTime and GetTime() or 0
@@ -573,12 +578,13 @@ local function SelectAdjacent(direction)
     end
 end
 
-local function MakeButton(parent, text, width, callback)
+local function MakeButton(parent, text, width, callback, accentColor)
     local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     button:SetWidth(width)
     button:SetHeight(22)
     button:SetText(text)
     button:SetScript("OnClick", callback)
+    if Theme and Theme.SkinButton then Theme.SkinButton(button, accentColor) end
     return button
 end
 
@@ -602,25 +608,34 @@ local function CreateWindow()
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
-    frame:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", edgeSize = 24, insets = { left = 6, right = 6, top = 6, bottom = 6 } })
+    if Theme and Theme.ModalSurface then Theme.ModalSurface(frame) end
     frame:Hide()
 
-    local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    local title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
     title:SetPoint("TOP", 0, -14)
     title:SetText("Master Loot Awards")
+    if Theme then Theme.ApplyFont(title, 16); title:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
     ui.state = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     ui.state:SetPoint("TOPLEFT", 18, -40)
+    if Theme then Theme.ApplyFont(ui.state, 11); ui.state:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
     ui.timer = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     ui.timer:SetPoint("TOPRIGHT", -20, -40)
+    if Theme then Theme.ApplyFont(ui.timer, 12); ui.timer:SetTextColor(Theme.Unpack(Theme.Colors.brand)) end
 
-    ui.icon = frame:CreateTexture(nil, "ARTWORK")
-    ui.icon:SetWidth(32); ui.icon:SetHeight(32); ui.icon:SetPoint("TOPLEFT", 18, -57)
+    local iconFrame = CreateFrame("Frame", nil, frame)
+    iconFrame:SetSize(36, 36); iconFrame:SetPoint("TOPLEFT", 18, -57)
+    if Theme then Theme.Backdrop(iconFrame, Theme.Colors.surface, 1) end
+    ui.icon = iconFrame:CreateTexture(nil, "ARTWORK")
+    ui.icon:SetPoint("TOPLEFT", 2, -2); ui.icon:SetPoint("BOTTOMRIGHT", -2, 2)
     ui.item = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    ui.item:SetPoint("LEFT", ui.icon, "RIGHT", 8, 0); ui.item:SetWidth(315); ui.item:SetJustifyH("LEFT")
+    ui.item:SetPoint("LEFT", iconFrame, "RIGHT", 10, 0); ui.item:SetWidth(309); ui.item:SetJustifyH("LEFT")
+    if Theme then Theme.ApplyFont(ui.item, 12) end
     ui.rolls = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     ui.rolls:SetPoint("TOPLEFT", 18, -96)
+    if Theme then Theme.ApplyFont(ui.rolls, 11); ui.rolls:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
     ui.winner = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     ui.winner:SetPoint("TOPLEFT", 18, -113)
+    if Theme then Theme.ApplyFont(ui.winner, 11); ui.winner:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
 
     local previous = MakeButton(frame, "<", 28, function() SelectAdjacent(-1) end)
     previous:SetPoint("BOTTOMLEFT", 16, 16)
@@ -628,16 +643,16 @@ local function CreateWindow()
     local nextButton = MakeButton(frame, ">", 28, function() SelectAdjacent(1) end)
     nextButton:SetPoint("LEFT", previous, "RIGHT", 2, 0)
     AddTooltip(nextButton, "Next loot slot", "Selects the next item in the current loot window.")
-    ui.start = MakeButton(frame, "Start", 58, function() AA.Start() end)
+    ui.start = MakeButton(frame, "Start", 58, function() AA.Start() end, Theme and Theme.Colors.brand)
     ui.start:SetPoint("LEFT", nextButton, "RIGHT", 8, 0)
     AddTooltip(ui.start, "Start roll", "Snapshots the current group and starts MS /roll 100 and OS /roll 99 tracking for the selected item.")
     local stop = MakeButton(frame, "Stop", 52, function() AA.Stop() end)
     stop:SetPoint("LEFT", ui.start, "RIGHT", 2, 0)
     AddTooltip(stop, "Stop roll", "Ends the timer now and resolves the accepted rolls.")
-    ui.award = MakeButton(frame, "Award", 58, function() AA.Award() end)
+    ui.award = MakeButton(frame, "Award", 58, function() AA.Award() end, Theme and Theme.Colors.success)
     ui.award:SetPoint("LEFT", stop, "RIGHT", 2, 0)
     AddTooltip(ui.award, "Validated award", "Rechecks the loot item, group, master looter, winner, and candidate immediately before assigning once.")
-    local cancel = MakeButton(frame, "Cancel", 58, function() AA.Cancel() end)
+    local cancel = MakeButton(frame, "Cancel", 58, function() AA.Cancel() end, Theme and Theme.Colors.danger)
     cancel:SetPoint("LEFT", ui.award, "RIGHT", 2, 0)
     AddTooltip(cancel, "Cancel", "Stops without assigning the item.")
     ui.auto = MakeButton(frame, "Auto Award: OFF", 104, function()
@@ -647,8 +662,10 @@ local function CreateWindow()
     ui.auto:SetPoint("BOTTOMRIGHT", -16, 42)
     AddTooltip(ui.auto, "Automatic assignment", "Off by default. When armed, a unique validated winner is assigned after the timer and grace period. Ambiguity always stops safely.")
 
-    local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-    close:SetPoint("TOPRIGHT", -4, -4)
+    local close = MakeButton(frame, "x", 22, function() frame:Hide() end)
+    close:SetHeight(20)
+    close:SetPoint("TOPRIGHT", -10, -10)
+    AddTooltip(close, "Close", "Hides this window. Use /aa to show it again.")
     RefreshUI()
 end
 

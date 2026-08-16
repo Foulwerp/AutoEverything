@@ -72,6 +72,79 @@ function UI.Backdrop(object, color, alpha)
     object:SetBackdropBorderColor(UI.Unpack(UI.Colors.border))
 end
 
+-- Shared treatment for standalone windows and dialogs. The subtle raised
+-- header and blue accent match the settings window without requiring each
+-- module to recreate that visual structure.
+function UI.ModalSurface(object)
+    UI.Backdrop(object, UI.Colors.window, 0.99)
+    local header = object:CreateTexture(nil, "BACKGROUND")
+    header:SetTexture(UI.Textures.white)
+    header:SetPoint("TOPLEFT", object, "TOPLEFT", 1, -1)
+    header:SetPoint("TOPRIGHT", object, "TOPRIGHT", -1, -1)
+    header:SetHeight(48)
+    header:SetVertexColor(UI.Unpack(UI.Colors.surfaceRaised, 0.42))
+
+    local accent = object:CreateTexture(nil, "BORDER")
+    accent:SetTexture(UI.Textures.white)
+    accent:SetPoint("TOPLEFT", object, "TOPLEFT", 1, -1)
+    accent:SetPoint("TOPRIGHT", object, "TOPRIGHT", -1, -1)
+    accent:SetHeight(2)
+    if accent.SetGradientAlpha then
+        accent:SetGradientAlpha("HORIZONTAL",
+            UI.Colors.brand[1], UI.Colors.brand[2], UI.Colors.brand[3], 0.85,
+            UI.Colors.brand[1], UI.Colors.brand[2], UI.Colors.brand[3], 0.12)
+    else
+        accent:SetVertexColor(UI.Unpack(UI.Colors.brand, 0.72))
+    end
+    object.themeHeader = header
+    object.themeAccent = accent
+end
+
+function UI.RefreshButtonTheme(button)
+    if not button or not button.SetBackdropColor then return end
+    local accent = button.themeAccentColor
+    local hovered = button.themeHovered == true
+    if accent then
+        local strength = hovered and 0.24 or 0.14
+        button:SetBackdropColor(accent[1] * strength, accent[2] * strength, accent[3] * strength, 1)
+        button:SetBackdropBorderColor(accent[1], accent[2], accent[3], hovered and 1 or 0.78)
+    else
+        button:SetBackdropColor(UI.Unpack(UI.Colors.control))
+        button:SetBackdropBorderColor(UI.Unpack(hovered and UI.Colors.brand or UI.Colors.border))
+    end
+end
+
+-- Skin a Blizzard-template button without depending on Settings.lua's private
+-- page state. Modules can change button.themeAccentColor and call
+-- RefreshButtonTheme when a live state (for example an armed toggle) changes.
+function UI.SkinButton(button, accentColor)
+    if not button then return end
+    UI.StripTemplateArt(button)
+    UI.Backdrop(button, UI.Colors.control, 1)
+    if button.SetNormalFontObject then
+        button:SetNormalFontObject("GameFontHighlight")
+        button:SetHighlightFontObject("GameFontHighlight")
+        if button.SetDisabledFontObject then button:SetDisabledFontObject("GameFontDisable") end
+    end
+    local font = button.GetFontString and button:GetFontString()
+    if font then
+        UI.ApplyFont(font, 12)
+        font:SetTextColor(UI.Unpack(UI.Colors.text))
+    end
+    button.themeAccentColor = accentColor
+    if button.HookScript then
+        button:HookScript("OnEnter", function(self)
+            self.themeHovered = true
+            UI.RefreshButtonTheme(self)
+        end)
+        button:HookScript("OnLeave", function(self)
+            self.themeHovered = false
+            UI.RefreshButtonTheme(self)
+        end)
+    end
+    UI.RefreshButtonTheme(button)
+end
+
 -- Shared compact vertical scrollbar: a thin neutral line with a draggable
 -- rounded blue pill. It intentionally has no arrow buttons and does not use a
 -- Blizzard scrollbar template, so every addon surface behaves consistently.
