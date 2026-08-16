@@ -159,7 +159,8 @@ local function ExtractProgress(text)
     return text and string.match(text, "%d+%s*/%s*%d+")
 end
 
-local function AddLocation(zoneID, zoneName, floor, record, coord, questID, questTitle, kind, progress)
+local function AddLocation(zoneID, zoneName, floor, record, coord, questID, questTitle,
+    kind, progress, partyMember, partyClass)
     local key = NormalizeZone(zoneName)
     local x, y = tonumber(coord[1]), tonumber(coord[2])
     if key == "" or not x or not y then return false end
@@ -172,20 +173,35 @@ local function AddLocation(zoneID, zoneName, floor, record, coord, questID, ques
         tostring(record.id or ""), tostring(record.item or ""),
         string.format("%.3f", x), string.format("%.3f", y),
     }, ":")
-    if activePointKeys[pointKey] then return false end
-    activePointKeys[pointKey] = true
+    local existing = activePointKeys[pointKey]
+    if existing then
+        if partyMember then
+            existing.partyMembers = existing.partyMembers or {}
+            existing.partyMembers[partyMember] = {
+                progress=progress, class=partyClass,
+            }
+            existing.isParty = true
+        end
+        return false
+    end
 
     activeByZone[key] = activeByZone[key] or { name = zoneName, zoneIDs = {}, questIDs = {}, points = {} }
     local zone = activeByZone[key]
     local numericZoneID = tonumber(zoneID)
     if numericZoneID then zone.zoneIDs[numericZoneID] = true end
     if questID then zone.questIDs[questID] = true end
-    zone.points[#zone.points + 1] = {
+    local point = {
         x = x, y = y, floor = tonumber(floor) or 0,
         questID = questID, questTitle = questTitle, kind = kind,
         entityID = record.id, name = record.name,
-        item = record.item, progress = progress,
+        item = record.item, progress = progress, isParty=partyMember ~= nil,
+        partyMembers = {},
     }
+    if partyMember then
+        point.partyMembers[partyMember] = { progress=progress, class=partyClass }
+    end
+    zone.points[#zone.points + 1] = point
+    activePointKeys[pointKey] = point
     return true
 end
 
@@ -487,7 +503,7 @@ local function ObjectiveForQuestNPC(objectives)
     if #unfinished == 1 then return unfinished[1] end
 end
 
-local function AddQuestObjectiveNPCs(questID, questTitle, objectives, npcIDs)
+local function AddQuestObjectiveNPCs(questID, questTitle, objectives, npcIDs, partyMember, partyClass)
     local objective = ObjectiveForQuestNPC(objectives)
     local kind = objective and RecordKind({}, objective)
     if not objective or not kind then return end
@@ -499,7 +515,7 @@ local function AddQuestObjectiveNPCs(questID, questTitle, objectives, npcIDs)
             for _, coord in ipairs(location.coords or {}) do
                 if AddLocation(location.zoneID, location.zone, location.floor,
                     record, coord, questID, questTitle, kind,
-                    ExtractProgress(objective.text))
+                    ExtractProgress(objective.text), partyMember, partyClass)
                 then
                     buildStats.points = buildStats.points + 1
                 end
@@ -523,7 +539,7 @@ local function ObjectiveForQuestItem(objectives, itemName)
     if #itemObjectives == 1 then return itemObjectives[1] end
 end
 
-local function AddQuestItemNPCs(questID, questTitle, objectives, sources)
+local function AddQuestItemNPCs(questID, questTitle, objectives, sources, partyMember, partyClass)
     for _, source in ipairs(sources or {}) do
         local objective = ObjectiveForQuestItem(objectives, source.itemName)
         if objective then
@@ -538,7 +554,7 @@ local function AddQuestItemNPCs(questID, questTitle, objectives, sources)
                     for _, coord in ipairs(location.coords or {}) do
                         if AddLocation(location.zoneID, location.zone, location.floor,
                             record, coord, questID, questTitle, "loot",
-                            ExtractProgress(objective.text))
+                            ExtractProgress(objective.text), partyMember, partyClass)
                         then
                             buildStats.points = buildStats.points + 1
                         end
@@ -549,13 +565,115 @@ local function AddQuestItemNPCs(questID, questTitle, objectives, sources)
     end
 end
 
+local function RemoteObjectives(quest)
+    local objectives = {}
+    for index, objective in ipairs(quest.objectives or {}) do
+        objectives[index] = {
+            text=objective.text or "", kind=objective.type or "",
+            done=Resolver.ObjectiveIsComplete(objective.text, objective.finished)
+                or (objective.current and objective.required and objective.required > 0
+                    and objective.current >= objective.required),
+            current=objective.current, required=objective.required,
+            targetType=objective.targetType, targetID=objective.targetID,
+        }
+    end
+    return objectives
+end
+
+local function IndexRemoteQuest(quest, member)
+    local questID = tonumber(quest.id) or tonumber(string.match(quest.key or "", "^I(%d+)$"))
+    local title = quest.title or "Unknown quest"
+    local objectives = RemoteObjectives(quest)
+    local resolved = AutoQuest.ResolveQuestEntries(questID, title) or {}
+    local relationshipData, relationshipIDs = {}, {}
+    local function AddRelationshipID(value)
+        value = tonumber(value)
+        if not value or relationshipIDs[value] then return end
+        relationshipIDs[value] = true
+        relationshipData[#relationshipData + 1] = {
+            questID=value,
+            npcIDs=SpawnStore.GetObjectiveNPCs(value),
+            itemSources=SpawnStore.GetQuestItemSources(value),
+        }
+    end
+    AddRelationshipID(questID)
+    for _, match in ipairs(resolved) do AddRelationshipID(match.id) end
+
+    local pointsBefore = buildStats.points
+    for _, match in ipairs(resolved) do
+        local matchQuestID = match.id
+        for _, record in ipairs(match.entry.records or {}) do
+            local recordType = tonumber(record.type) or 1
+            local objective = ObjectiveForRecord(objectives, record)
+            local kind = RecordKind(record, objective)
+            if objective and kind and not objective.done then
+                local progress = ExtractProgress(objective.text)
+                if recordType == 2 or recordType == -1 then
+                    for _, coord in ipairs(record.coords or {}) do
+                        if AddLocation(record.zoneID, record.zone, record.floor, record, coord,
+                            matchQuestID, title, kind, progress, member.name, member.class)
+                        then
+                            buildStats.points = buildStats.points + 1
+                            buildStats.partyPoints = buildStats.partyPoints + 1
+                        end
+                    end
+                else
+                    for _, location in ipairs(SpawnStore.Get(tonumber(record.id)) or {}) do
+                        for _, coord in ipairs(location.coords or {}) do
+                            if AddLocation(location.zoneID, location.zone, location.floor,
+                                record, coord, matchQuestID, title, kind, progress,
+                                member.name, member.class)
+                            then
+                                buildStats.points = buildStats.points + 1
+                                buildStats.partyPoints = buildStats.partyPoints + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    for _, data in ipairs(relationshipData) do
+        local before = buildStats.points
+        AddQuestObjectiveNPCs(data.questID, title, objectives, data.npcIDs,
+            member.name, member.class)
+        AddQuestItemNPCs(data.questID, title, objectives, data.itemSources,
+            member.name, member.class)
+        buildStats.partyPoints = buildStats.partyPoints + (buildStats.points - before)
+    end
+
+    -- A stable monster target sent by the remote client can still produce
+    -- locations when the quest page relationship is incomplete locally.
+    for _, objective in ipairs(objectives) do
+        local targetID = tonumber(objective.targetID)
+        if not objective.done and objective.targetType == "monster" and targetID then
+            local _, display = Resolver.Normalize(objective.text)
+            local record = { id=targetID, name=display ~= "" and display or title }
+            local kind = RecordKind(record, objective)
+            for _, location in ipairs(SpawnStore.Get(targetID) or {}) do
+                for _, coord in ipairs(location.coords or {}) do
+                    if AddLocation(location.zoneID, location.zone, location.floor,
+                        record, coord, questID, title, kind or "kill",
+                        ExtractProgress(objective.text), member.name, member.class)
+                    then
+                        buildStats.points = buildStats.points + 1
+                        buildStats.partyPoints = buildStats.partyPoints + 1
+                    end
+                end
+            end
+        end
+    end
+    if buildStats.points > pointsBefore then buildStats.partyQuests = buildStats.partyQuests + 1 end
+end
+
 function QuestMap.RebuildIndex()
     activeByZone = {}
     activePointKeys = {}
     combinedByZone = {}
     buildStats = {
         activeQuests=0, matchedQuests=0, confirmedObjectives=0,
-        points=0, servicePoints=0, matches={}
+        points=0, servicePoints=0, partyPoints=0, partyQuests=0, matches={}
     }
     if not Enabled() then return end
     BuildServiceIndex()
@@ -570,7 +688,9 @@ function QuestMap.RebuildIndex()
         -- Resolve by questID, falling back to title (the client may not return
         -- a questID at all on 3.3.5). See AutoQuest.ResolveQuestEntries.
         local resolved = (title and not isHeader) and AutoQuest.ResolveQuestEntries(questID, title) or {}
-        if title and not isHeader then buildStats.activeQuests = buildStats.activeQuests + 1 end
+        if title and not isHeader then
+            buildStats.activeQuests = buildStats.activeQuests + 1
+        end
         if title and not isHeader and not Resolver.IsComplete(complete) then
             local objectives = {}
             local count = GetNumQuestLeaderBoards(logIndex) or 0
@@ -663,6 +783,22 @@ function QuestMap.RebuildIndex()
             for _, data in ipairs(relationshipData) do
                 AddQuestObjectiveNPCs(data.questID, title, objectives, data.npcIDs)
                 AddQuestItemNPCs(data.questID, title, objectives, data.itemSources)
+            end
+        end
+    end
+
+    if AutoCore.GetSetting("quest", "groupQuestSync",
+        AutoQuestConfig and AutoQuestConfig.groupQuestSync) == true
+        and AutoCore.GetSetting("quest", "showGroupQuestMapPins",
+            AutoQuestConfig and AutoQuestConfig.showGroupQuestMapPins) ~= false
+    then
+        local sync = AutoQuest.GroupSync
+        local members = sync and sync.GetMemberQuestData and sync.GetMemberQuestData() or {}
+        for _, member in pairs(members) do
+            if member.completeSnapshot and not member.stale and member.connected ~= false then
+                for key, quest in pairs(member.quests or {}) do
+                    if not quest.complete then IndexRemoteQuest(quest, member) end
+                end
             end
         end
     end
@@ -773,12 +909,28 @@ local function DescribeObjective(cluster, point)
     end
 end
 
+local function ColoredPartyName(name, class)
+    local display = string.match(tostring(name or "Unknown"), "^[^-]+") or tostring(name or "Unknown")
+    local color = type(RAID_CLASS_COLORS) == "table" and RAID_CLASS_COLORS[class or ""] or nil
+    if not color then return display end
+    return string.format("|cff%02x%02x%02x%s|r",
+        math.floor((color.r or 0.8) * 255 + 0.5),
+        math.floor((color.g or 0.8) * 255 + 0.5),
+        math.floor((color.b or 0.8) * 255 + 0.5), display)
+end
+
 local function ShowPinTooltip(pin)
     local cluster = pin.cluster
     if not cluster then return end
     GameTooltip:SetOwner(pin, "ANCHOR_RIGHT")
     local color = iconColors[cluster.kind] or iconColors.kill
-    GameTooltip:SetText(headingText[cluster.kind] or "Quest Objective", color[1], color[2], color[3])
+    local partyCluster = false
+    for _, point in ipairs(cluster.members or {}) do
+        if point.isParty then partyCluster = true; break end
+    end
+    local heading = headingText[cluster.kind] or "Quest Objective"
+    GameTooltip:SetText((partyCluster and "Party " or "") .. heading,
+        color[1], color[2], color[3])
 
     local shown, lineCount, hiddenCount = {}, 0, 0
     for _, point in ipairs(cluster.members) do
@@ -792,6 +944,15 @@ local function ShowPinTooltip(pin)
                 GameTooltip:AddLine(description, 1, 1, 1)
                 if not point.isService then
                     GameTooltip:AddLine("  " .. point.questTitle, 0.6, 0.65, 0.75)
+                end
+                local partyNames = {}
+                for name in pairs(point.partyMembers or {}) do partyNames[#partyNames + 1] = name end
+                table.sort(partyNames, function(a, b) return string.lower(a) < string.lower(b) end)
+                for _, name in ipairs(partyNames) do
+                    local party = point.partyMembers[name]
+                    GameTooltip:AddLine("    " .. ColoredPartyName(name, party.class)
+                        .. ": |cffffd200" .. (party.progress or "In progress") .. "|r",
+                        0.82, 0.82, 0.82)
                 end
             else
                 hiddenCount = hiddenCount + 1
@@ -816,6 +977,11 @@ local function ConfigurePin(pin, cluster, size)
     -- QuestMarkers.lua (white skull, brown bag) rather than recoloring them.
     pin.icon:SetTexture(iconTextures[cluster.kind] or iconTextures.kill)
     pin.icon:SetVertexColor(1, 1, 1, 1)
+    local isParty = false
+    for _, point in ipairs(cluster.members or {}) do
+        if point.isParty then isParty = true; break end
+    end
+    if isParty then pin.partyBadge:Show() else pin.partyBadge:Hide() end
 end
 
 local function RouteEntityForPin(pin)
@@ -855,6 +1021,12 @@ local function NewPin(parent, minimap)
     pin:EnableMouse(true)
     pin.icon = pin:CreateTexture(nil, "ARTWORK")
     pin.icon:SetAllPoints(pin)
+    pin.partyBadge = pin:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    if AutoCore.UI and AutoCore.UI.ApplyFont then AutoCore.UI.ApplyFont(pin.partyBadge, 10) end
+    pin.partyBadge:SetPoint("TOPRIGHT", pin, "TOPRIGHT", 4, 4)
+    pin.partyBadge:SetText("+")
+    pin.partyBadge:SetTextColor(0.35, 0.75, 1, 1)
+    pin.partyBadge:Hide()
     pin:SetScript("OnEnter", ShowPinDetails)
     pin:SetScript("OnLeave", HidePinDetails)
     pin:Hide()
@@ -862,7 +1034,11 @@ local function NewPin(parent, minimap)
 end
 
 local function HidePins(pool)
-    for _, pin in ipairs(pool) do pin:Hide(); pin.cluster = nil end
+    for _, pin in ipairs(pool) do
+        pin:Hide()
+        pin.partyBadge:Hide()
+        pin.cluster = nil
+    end
 end
 
 local function HideRouteDots(pool)
@@ -1307,6 +1483,8 @@ function QuestMap.Debug()
     print("  activeQuests=" .. buildStats.activeQuests .. " matchedInDB=" .. buildStats.matchedQuests
         .. " confirmedObjectives=" .. buildStats.confirmedObjectives
         .. " indexedPoints=" .. buildStats.points
+        .. " partyQuests=" .. buildStats.partyQuests
+        .. " partyPoints=" .. buildStats.partyPoints
         .. " servicePoints=" .. buildStats.servicePoints)
     for _, match in ipairs(buildStats.matches or {}) do
         print("    matched: " .. tostring(match.title) .. " (id " .. tostring(match.id) .. ") -> "

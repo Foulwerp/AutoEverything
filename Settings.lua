@@ -1879,7 +1879,7 @@ pageBuilders.Quest = function(parent)
     FitSectionCard(parent, 12, -76, 340, -218)
     FitSectionCard(parent, 370, -76, 342, -218)
     FitSectionCard(parent, 12, -244, 700, -424)
-    FitSectionCard(parent, 12, -450, 700, -557)
+    FitSectionCard(parent, 12, -450, 700, -583)
     PageHeader(parent, "Quest", "Control quest interactions first, then tune optional map and minimap guidance.")
     local quickAbandonButton = Button(parent, "Quick Abandon", 540, -20, 160, function() OpenQuickAbandonWindow() end)
     AddTooltip(quickAbandonButton, "Quick Abandon",
@@ -2001,28 +2001,30 @@ pageBuilders.Quest = function(parent)
         "Also synchronizes quest progress in raids. Off by default to keep large-group traffic deliberate.")
     local tooltipToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "showGroupQuestTooltips", "Progress in tooltips", 472, -480, true,
         "Shows synchronized member progress on required item tooltips and on relevant NPCs or corpses you hover.")
-    ScalarCheck(parent, "quest", AutoQuestConfig, "autoShareQuests", "Share newly accepted quests", 20, -506, false,
+    local mapToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "showGroupQuestMapPins", "Party objective icons", 20, -506, true,
+        "Shows unfinished objectives for synchronized party members on the world map and minimap using the addon's existing quest and spawn records. It never reads client DBC files.")
+    ScalarCheck(parent, "quest", AutoQuestConfig, "autoShareQuests", "Share newly accepted quests", 246, -506, false,
         "Automatically pushes a newly accepted, shareable quest to your party. Quests are not automatically pushed in raids.")
-    ScalarCheck(parent, "quest", AutoQuestConfig, "autoAcceptSharedQuests", "Accept shared quests", 246, -506, false,
+    ScalarCheck(parent, "quest", AutoQuestConfig, "autoAcceptSharedQuests", "Accept shared quests", 472, -506, false,
         "Accepts party-shared quests when normal AutoQuest acceptance is enabled. High-risk title patterns remain manual.")
-    ScalarCheck(parent, "quest", AutoQuestConfig, "announceQuestCompletion", "Announce quest turn-ins", 472, -506, true,
+    ScalarCheck(parent, "quest", AutoQuestConfig, "announceQuestCompletion", "Announce quest turn-ins", 20, -532, true,
         "Announces after your quest reward is claimed and the quest is successfully removed from your log. Reload and synchronization never announce.")
-    ScalarCheck(parent, "quest", AutoQuestConfig, "announceObjectiveCompletion", "Announce completed steps", 20, -532, true,
+    ScalarCheck(parent, "quest", AutoQuestConfig, "announceObjectiveCompletion", "Announce completed steps", 246, -532, true,
         "Announces completed objectives with a skull for kills, diamond for loot, triangle for interactions, and star for scripted events. Progress updates remain silent.")
     local announcementChannel = string.upper(tostring(Core.GetSetting("quest", "questAnnouncementChannel",
         ResolvedDefault(AutoQuestConfig, "questAnnouncementChannel", "GROUP")) or "GROUP"))
-    local channelButton = ChoiceButton(parent, "Channel", 246, -532, 206, {
+    local channelButton = ChoiceButton(parent, "Channel", 472, -532, 206, {
         { text = "Party (raid if enabled)", value = "GROUP" },
         { text = "Emote", value = "EMOTE" },
         { text = "Say", value = "SAY" },
     }, announcementChannel, function(value)
         SetSettingWithoutRefresh("quest", "questAnnouncementChannel", value)
     end)
-    ScalarCheck(parent, "quest", AutoQuestConfig, "cheerQuestCompletion", "Cheer on quest turn-in", 472, -532, false,
+    ScalarCheck(parent, "quest", AutoQuestConfig, "cheerQuestCompletion", "Cheer on quest turn-in", 20, -558, false,
         "Plays your character's cheer emote once after a quest is successfully turned in.")
     AddTooltip(channelButton, "Announcement channel",
         "Party is the default. Raid announcements remain off unless Include raid groups is enabled. Emote and Say are nearby-only alternatives and also work while solo.")
-    BindToggleDependency(syncToggle, raidToggle, tooltipToggle)
+    BindToggleDependency(syncToggle, raidToggle, tooltipToggle, mapToggle)
 end
 
 local function AttachVerticalScroll(parent, scroll, child, contentHeight,

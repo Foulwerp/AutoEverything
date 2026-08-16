@@ -107,22 +107,26 @@ local function UnitFullName(unit)
 end
 
 local function CurrentRoster()
-    local roster = {}
-    local playerName = UnitFullName("player")
-    if playerName then roster[NormalizeName(playerName)] = playerName end
+    local roster, units = {}, {}
+    local function Add(unit)
+        local name = UnitFullName(unit)
+        if name then
+            local key = NormalizeName(name)
+            roster[key], units[key] = name, unit
+        end
+    end
+    Add("player")
 
     if RaidCount() > 0 then
         for index = 1, RaidCount() do
-            local name = UnitFullName("raid" .. index)
-            if name then roster[NormalizeName(name)] = name end
+            Add("raid" .. index)
         end
     else
         for index = 1, PartyCount() do
-            local name = UnitFullName("party" .. index)
-            if name then roster[NormalizeName(name)] = name end
+            Add("party" .. index)
         end
     end
-    return roster
+    return roster, units
 end
 
 local function IsRosterMember(name)
@@ -809,7 +813,7 @@ local function ReceiveMessage(prefix, message, channel, sender)
 end
 
 local function CleanupRoster()
-    local roster = CurrentRoster()
+    local roster, units = CurrentRoster()
     for name in pairs(memberQuests) do
         if not roster[name] then
             memberQuests[name] = nil
@@ -818,6 +822,10 @@ local function CleanupRoster()
     end
     for name in pairs(pendingSnapshotTargets) do
         if not roster[name] then pendingSnapshotTargets[name] = nil end
+    end
+    for name, member in pairs(memberQuests) do
+        local unit = units[name]
+        member.connected = not unit or not UnitIsConnected or UnitIsConnected(unit) ~= false
     end
     if not SyncActive() then
         ClearOutgoing()
@@ -834,6 +842,7 @@ local function CleanupRoster()
     nextAuditAt = 0
     SendRequest()
     if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
+    if AQ.Map and AQ.Map.RequestRefresh then AQ.Map.RequestRefresh() end
 end
 
 local function MissingMemberData()
@@ -924,19 +933,37 @@ local function MatchingObjective(quest, itemName)
     return nil
 end
 
+local function ColoredMemberName(name, class)
+    local display = string.match(tostring(name or "Unknown"), "^[^-]+") or tostring(name or "Unknown")
+    local color = type(RAID_CLASS_COLORS) == "table" and RAID_CLASS_COLORS[class or ""] or nil
+    if not color then return display end
+    return string.format("|cff%02x%02x%02x%s|r",
+        math.floor((color.r or 0.8) * 255 + 0.5),
+        math.floor((color.g or 0.8) * 255 + 0.5),
+        math.floor((color.b or 0.8) * 255 + 0.5), display)
+end
+
 local function MemberRowsForQuest(key, itemName)
     local rows = {}
     local roster = CurrentRoster()
-    local playerKey = NormalizeName(UnitName("player"))
+    local playerKey = NormalizeName(UnitFullName("player"))
     for normalized, displayName in pairs(roster) do
-        local quest, known
+        local quest, known, memberClass, stale
         if normalized == playerKey then
             quest, known = localQuests[key], true
+            if UnitClass then
+                local _, class = UnitClass("player")
+                memberClass = class
+            end
         else
             local member = memberQuests[normalized]
-            quest = member and member.quests[key]
+            stale = member and member.stale
+            local offline = member and member.connected == false
+            quest = not stale and not offline and member and member.quests[key]
             known = member and member.completeSnapshot
-            if member and quest then known = true end
+            memberClass = member and member.class
+            if member and quest and not stale then known = true end
+            if offline then stale = "offline" end
         end
 
         local status, complete
@@ -944,12 +971,17 @@ local function MemberRowsForQuest(key, itemName)
             local objective = MatchingObjective(quest, itemName)
             status = ObjectiveProgress(objective) or (quest.complete and "Complete" or "In progress")
             complete = (objective and objective.finished) or quest.complete
+        elseif stale then
+            status = stale == "offline" and "Offline" or "Stale"
         elseif known then
             status = "Does not have quest"
         else
             status = "No sync data"
         end
-        table.insert(rows, { name = displayName, status = status, complete = complete })
+        table.insert(rows, {
+            name=displayName, displayName=ColoredMemberName(displayName, memberClass),
+            status=status, complete=complete, stale=stale,
+        })
     end
     table.sort(rows, function(a, b)
         if NormalizeName(a.name) == playerKey then return true end
@@ -966,10 +998,19 @@ local function QuestKeysForItem(itemID)
         seen[key] = true
     end
     for _, member in pairs(memberQuests) do
-        if member.completeSnapshot then
+        if member.completeSnapshot and not member.stale then
             for key, quest in pairs(member.quests or {}) do
                 if not seen[key] then
+                    local remoteItems = {}
+                    for _, objective in ipairs(quest.objectives or {}) do
+                        if objective.targetType == "item" and tonumber(objective.targetID) then
+                            remoteItems[#remoteItems + 1] = tonumber(objective.targetID)
+                        end
+                    end
                     for _, questItemID in ipairs((QuestByTitle and QuestByTitle[quest.title]) or {}) do
+                        remoteItems[#remoteItems + 1] = tonumber(questItemID)
+                    end
+                    for _, questItemID in ipairs(remoteItems) do
                         if tonumber(questItemID) == itemID then
                             keys[#keys + 1] = key
                             seen[key] = true
@@ -986,7 +1027,11 @@ end
 local function QuestForKey(key)
     if localQuests[key] then return localQuests[key] end
     for _, member in pairs(memberQuests) do
-        if member.quests and member.quests[key] then return member.quests[key] end
+        if member.completeSnapshot and not member.stale
+            and member.quests and member.quests[key]
+        then
+            return member.quests[key]
+        end
     end
 end
 
@@ -1009,9 +1054,11 @@ local function AddTooltipProgress(tooltip, link)
             tooltip:AddLine(quest.title, 1, 0.82, 0.2)
             for _, row in ipairs(MemberRowsForQuest(key, itemName)) do
                 if row.complete then
-                    tooltip:AddDoubleLine("  " .. row.name, row.status, 0.82, 0.82, 0.82, 0.35, 1, 0.35)
+                    tooltip:AddDoubleLine("  " .. row.displayName, row.status, 0.82, 0.82, 0.82, 0.35, 1, 0.35)
                 else
-                    tooltip:AddDoubleLine("  " .. row.name, row.status, 0.82, 0.82, 0.82, 0.7, 0.7, 0.7)
+                    local statusColor = row.stale and 0.45 or 0.7
+                    tooltip:AddDoubleLine("  " .. row.displayName, row.status,
+                        0.82, 0.82, 0.82, statusColor, statusColor, statusColor)
                 end
             end
         end
@@ -1045,7 +1092,7 @@ local function AddUnitTooltipProgress(tooltip)
     for _, row in ipairs(rows) do total = total + #(row.steps or {}) end
     for _, row in ipairs(rows) do
         if shown >= maximum then break end
-        tooltip:AddLine("  " .. row.name, 1, 0.82, 0.2)
+        tooltip:AddLine("  " .. ColoredMemberName(row.name, row.class), 1, 0.82, 0.2)
         for _, step in ipairs(row.steps or {}) do
             if shown >= maximum then break end
             tooltip:AddLine("    " .. (step.text or "Quest objective"), 0.82, 0.82, 0.82, true)
@@ -1220,6 +1267,7 @@ function Sync.ApplyProfile()
         requestPending = false
         nextAuditAt = 0
         if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
+        if AQ.Map and AQ.Map.RequestRefresh then AQ.Map.RequestRefresh() end
     end
     profileSyncActive = active
 end

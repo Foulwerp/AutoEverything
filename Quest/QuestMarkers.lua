@@ -178,7 +178,8 @@ local function ObjectiveForQuestItem(objectives, itemName)
     if #itemObjectives == 1 then return itemObjectives[1] end
 end
 
-local function AddMatch(index, key, kind, questTitle, itemName, remaining, memberName, objective)
+local function AddMatch(index, key, kind, questTitle, itemName, remaining,
+    memberName, objective, memberClass)
     if key == nil or key == "" then return end
     local match = index[key]
     if not match then
@@ -199,6 +200,7 @@ local function AddMatch(index, key, kind, questTitle, itemName, remaining, membe
     if memberName and memberName ~= "" then
         local progress = match.members[memberName]
         if not progress then progress = {}; match.members[memberName] = progress end
+        if memberClass and memberClass ~= "" then progress.class = memberClass end
         if remaining and remaining > 0 then
             progress[kind] = math.max(progress[kind] or 0, remaining)
         elseif progress[kind] == nil then
@@ -227,7 +229,7 @@ local function AddMatch(index, key, kind, questTitle, itemName, remaining, membe
     end
 end
 
-local function IndexQuestTargets(title, questID, objectives, memberName)
+local function IndexQuestTargets(title, questID, objectives, memberName, memberClass)
     local resolved = AutoQuest.ResolveQuestEntries(questID, title)
     for _, match in ipairs(resolved) do
         for _, record in ipairs(match.entry.records or {}) do
@@ -235,9 +237,25 @@ local function IndexQuestTargets(title, questID, objectives, memberName)
             local kind = RecordKind(record, objective)
             if objective and kind and not done then
                 AddMatch(activeByNPC, tonumber(record.id), kind, title, record.item,
-                    remaining, memberName, objective)
+                    remaining, memberName, objective, memberClass)
                 AddMatch(activeByName, string.lower(record.name or ""), kind, title,
-                    record.item, remaining, memberName, objective)
+                    record.item, remaining, memberName, objective, memberClass)
+            end
+        end
+    end
+
+    for _, objective in ipairs(objectives or {}) do
+        local targetID = tonumber(objective.targetID)
+        if memberName and not objective.done and objective.targetType == "monster" and targetID then
+            local _, display = Resolver.Normalize(objective.text)
+            local done, remaining = ParseProgress(objective)
+            if not done then
+                AddMatch(activeByNPC, targetID, RecordKind({}, objective) or "kill",
+                    title, nil, remaining, memberName, objective, memberClass)
+                if display ~= "" then
+                    AddMatch(activeByName, string.lower(display), RecordKind({}, objective) or "kill",
+                        title, nil, remaining, memberName, objective, memberClass)
+                end
             end
         end
     end
@@ -261,7 +279,7 @@ local function IndexQuestTargets(title, questID, objectives, memberName)
         if npcObjective and npcKind and not npcDone then
             for _, npcID in ipairs(SpawnStore.GetObjectiveNPCs(relationshipQuestID) or {}) do
                 AddMatch(activeByNPC, tonumber(npcID), npcKind, title, nil,
-                    npcRemaining, memberName, npcObjective)
+                    npcRemaining, memberName, npcObjective, memberClass)
             end
         end
 
@@ -272,7 +290,7 @@ local function IndexQuestTargets(title, questID, objectives, memberName)
                 for _, npcID in ipairs(source.npcIDs or {}) do
                     AddMatch(
                         activeByNPC, tonumber(npcID), "loot", title,
-                        source.itemName, itemRemaining, memberName, itemObjective
+                        source.itemName, itemRemaining, memberName, itemObjective, memberClass
                     )
                 end
             end
@@ -312,7 +330,7 @@ function Markers.RebuildIndex()
     local sync = AutoQuest.GroupSync
     local members = sync and sync.GetMemberQuestData and sync.GetMemberQuestData() or {}
     for _, member in pairs(members) do
-        if member.completeSnapshot then
+        if member.completeSnapshot and not member.stale and member.connected ~= false then
             for key, quest in pairs(member.quests or {}) do
                 if not quest.complete then
                     local objectives = {}
@@ -326,10 +344,14 @@ function Markers.RebuildIndex()
                                     and objective.current >= objective.required),
                             current = objective.current,
                             required = objective.required,
+                            targetType = objective.targetType,
+                            targetID = objective.targetID,
                         }
                     end
-                    local remoteQuestID = tonumber(string.match(key or "", "^I(%d+)$"))
-                    IndexQuestTargets(quest.title, remoteQuestID, objectives, member.name)
+                    local remoteQuestID = tonumber(quest.id)
+                        or tonumber(string.match(key or "", "^I(%d+)$"))
+                    IndexQuestTargets(quest.title, remoteQuestID, objectives,
+                        member.name, member.class)
                 end
             end
         end
@@ -430,7 +452,8 @@ function Markers.GetGroupTooltipRows(unit)
     local match = MatchUnit(unit)
     local rows = {}
     for name, steps in pairs(match and match.memberSteps or {}) do
-        local row = { name = name, steps = {} }
+        local progress = match.members and match.members[name]
+        local row = { name = name, class=progress and progress.class, steps = {} }
         for _, step in ipairs(steps) do row.steps[#row.steps + 1] = step end
         table.sort(row.steps, function(a, b)
             if (a.questTitle or "") ~= (b.questTitle or "") then
@@ -527,10 +550,11 @@ local function GroupProgressLines(match)
             local amount = string.match(parts[1], "(%d+)$")
             rows[#rows + 1] = {
                 name = name,
+                class = progress.class,
                 text = amount and (amount .. " left") or parts[1],
             }
         elseif #parts > 1 then
-            rows[#rows + 1] = { name = name, text = table.concat(parts, ", ") }
+            rows[#rows + 1] = { name = name, class=progress.class, text = table.concat(parts, ", ") }
         end
     end
     table.sort(rows, function(a, b) return string.lower(a.name) < string.lower(b.name) end)
@@ -538,7 +562,16 @@ local function GroupProgressLines(match)
     local lines = {}
     local visible = math.min(#rows, 5)
     for index = 1, visible do
-        lines[#lines + 1] = rows[index].name .. ": " .. rows[index].text
+        local row = rows[index]
+        local display = string.match(row.name, "^[^-]+") or row.name
+        local color = type(RAID_CLASS_COLORS) == "table" and RAID_CLASS_COLORS[row.class or ""] or nil
+        if color then
+            display = string.format("|cff%02x%02x%02x%s|r",
+                math.floor((color.r or 0.8) * 255 + 0.5),
+                math.floor((color.g or 0.8) * 255 + 0.5),
+                math.floor((color.b or 0.8) * 255 + 0.5), display)
+        end
+        lines[#lines + 1] = display .. ": " .. row.text
     end
     if #rows > visible then lines[#lines + 1] = "+" .. (#rows - visible) .. " more" end
     return lines

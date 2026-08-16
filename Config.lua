@@ -226,6 +226,7 @@ AutoQuestConfig = {
     autoShareQuests = false,
     autoAcceptSharedQuests = false,
     showGroupQuestTooltips = true,
+    showGroupQuestMapPins = true,
     announceQuestCompletion = true,
     announceObjectiveCompletion = true,
     questAnnouncementChannel = "GROUP",
