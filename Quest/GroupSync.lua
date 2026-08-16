@@ -18,6 +18,7 @@ local Sync = AQ.GroupSync
 local PREFIX = "AEQ2"
 local VERSION = "3"
 local CAPABILITIES = "ids,seq,stale,class"
+local VALID_KINDS = { R=true, B=true, E=true, X=true, Q=true, O=true }
 local SEP = "\31"
 local SEND_INTERVAL = 0.12
 local UPDATE_DELAY = 0.65
@@ -647,9 +648,11 @@ local function ReceiveMessage(prefix, message, channel, sender)
     if prefix ~= PREFIX or not sender or not IsRosterMember(sender) then return end
     if ShortName(sender) == ShortName(UnitFullName("player")) then return end
     if not SyncActive() then return end
+    if type(message) ~= "string" or string.len(message) > MAX_PAYLOAD_BYTES then return end
 
     local fields = Split(message)
     local kind = fields[1]
+    if not VALID_KINDS[kind] then return end
     if fields[2] ~= VERSION then return end
     local remoteSession = CleanField(fields[3], 40)
     if remoteSession == "" then return end
@@ -682,6 +685,7 @@ local function ReceiveMessage(prefix, message, channel, sender)
     member.updated = now
 
     if kind == "R" then
+        member.capabilities = CleanField(fields[4], 80)
         if channel == GroupChannel() then QueueSnapshot(sender) end
         return
     end
@@ -763,7 +767,8 @@ local function ReceiveMessage(prefix, message, channel, sender)
             nextAuditAt = 0
         end
     elseif kind == "X" and fields[5] and not snapshotPacket then
-        member.quests[fields[5]] = nil
+        local key = CleanField(fields[5], 40)
+        if key ~= "" then member.quests[key] = nil end
     elseif kind == "Q" and fields[5] then
         local key = CleanField(fields[5], 40)
         local count = SafeInteger(fields[9], 0, 20)
@@ -970,7 +975,9 @@ local function MemberRowsForQuest(key, itemName)
         if quest then
             local objective = MatchingObjective(quest, itemName)
             status = ObjectiveProgress(objective) or (quest.complete and "Complete" or "In progress")
-            complete = (objective and objective.finished) or quest.complete
+            complete = (objective and (objective.finished
+                or (objective.current and objective.required and objective.required > 0
+                    and objective.current >= objective.required))) or quest.complete
         elseif stale then
             status = stale == "offline" and "Offline" or "Stale"
         elseif known then
@@ -998,7 +1005,7 @@ local function QuestKeysForItem(itemID)
         seen[key] = true
     end
     for _, member in pairs(memberQuests) do
-        if member.completeSnapshot and not member.stale then
+        if member.completeSnapshot and not member.stale and member.connected ~= false then
             for key, quest in pairs(member.quests or {}) do
                 if not seen[key] then
                     local remoteItems = {}
@@ -1027,7 +1034,7 @@ end
 local function QuestForKey(key)
     if localQuests[key] then return localQuests[key] end
     for _, member in pairs(memberQuests) do
-        if member.completeSnapshot and not member.stale
+        if member.completeSnapshot and not member.stale and member.connected ~= false
             and member.quests and member.quests[key]
         then
             return member.quests[key]
