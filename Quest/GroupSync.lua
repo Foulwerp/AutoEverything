@@ -31,8 +31,8 @@ local MESSAGE_WINDOW = 10
 local RETRY_INTERVAL = 5
 local PARTY_AUDIT_INTERVAL = 300
 local RAID_AUDIT_INTERVAL = 600
-local STALE_AFTER = 90
-local EXPIRE_AFTER = 600
+local STALE_GRACE = 30
+local EXPIRE_GRACE = 300
 
 local localQuests = {}
 local memberQuests = {}
@@ -863,17 +863,20 @@ end
 
 local function AuditSync(now)
     if not SyncActive() or not baselineReady then return end
+    local auditInterval = RaidCount() > 0 and RAID_AUDIT_INTERVAL or PARTY_AUDIT_INTERVAL
+    local staleAfter = auditInterval + STALE_GRACE
+    local expireAfter = staleAfter + EXPIRE_GRACE
     local freshnessChanged = false
     for _, member in pairs(memberQuests) do
         local age = now - (member.updated or 0)
-        if age >= STALE_AFTER and not member.stale then
+        if age >= staleAfter and not member.stale then
             member.stale = true
             member.completeSnapshot = false
             freshnessChanged = true
             requestPending = true
             nextAuditAt = 0
         end
-        if age >= EXPIRE_AFTER and next(member.quests or {}) then
+        if age >= expireAfter and next(member.quests or {}) then
             member.quests = {}
             freshnessChanged = true
         end
