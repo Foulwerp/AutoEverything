@@ -185,6 +185,57 @@ local function LootSlotData(slot)
     }
 end
 
+local function BagSlotData(bag, slot)
+    if not GetContainerItemInfo or not GetContainerItemLink or bag == nil or not slot then return nil end
+    local texture, quantity, locked, quality = GetContainerItemInfo(bag, slot)
+    local link = GetContainerItemLink(bag, slot)
+    if not link then return nil end
+    return {
+        bag = bag,
+        slot = slot,
+        texture = texture,
+        quantity = quantity,
+        locked = locked,
+        quality = quality,
+        link = link,
+        itemID = tonumber(string.match(link, "item:([%-]?%d+)")),
+    }
+end
+
+local function FindBagMatches(itemLink)
+    local matches = {}
+    if not itemLink or not GetContainerNumSlots then return matches end
+    for bag = 0, (NUM_BAG_SLOTS or 4) do
+        for slot = 1, (GetContainerNumSlots(bag) or 0) do
+            local data = BagSlotData(bag, slot)
+            if data and data.link == itemLink then table.insert(matches, data) end
+        end
+    end
+    return matches
+end
+
+local function FindVerifiedBagItem()
+    if current.source ~= "inventory" or not current.itemLink then return nil, nil, "this is not an inventory round" end
+    local original = BagSlotData(current.inventoryBag, current.inventorySlot)
+    if original and original.link == current.itemLink and original.quantity == current.itemQuantity then
+        if original.locked then return nil, nil, "the inventory item is locked" end
+        return original.bag, original.slot
+    end
+
+    local matches = FindBagMatches(current.itemLink)
+    local exact = {}
+    for _, data in ipairs(matches) do
+        if data.quantity == current.itemQuantity then table.insert(exact, data) end
+    end
+    if #exact == 1 then
+        if exact[1].locked then return nil, nil, "the matching inventory item is locked" end
+        current.inventoryBag, current.inventorySlot = exact[1].bag, exact[1].slot
+        return exact[1].bag, exact[1].slot
+    end
+    if #exact > 1 then return nil, nil, "multiple identical inventory items make the source ambiguous" end
+    return nil, nil, "the selected item is no longer in your bags"
+end
+
 local function FindVerifiedSlot()
     if not current.itemLink or current.lootSessionID ~= lootSessionID or not lootOpen then
         return nil, "the original loot session is no longer open"
@@ -213,6 +264,15 @@ local function FindVerifiedSlot()
     end
     if #matches > 1 then return nil, "multiple identical items make the slot ambiguous" end
     return nil, "the selected item is no longer in the loot window"
+end
+
+local function VerifyRoundItem()
+    if current.source == "inventory" then
+        local bag, slot, reason = FindVerifiedBagItem()
+        return bag ~= nil and slot ~= nil, reason
+    end
+    local slot, reason = FindVerifiedSlot()
+    return slot ~= nil, reason
 end
 
 local function EscapePatternCharacter(character)
@@ -325,11 +385,12 @@ local function RefreshUI()
     if not frame then return end
     local shown = LootSlotData(selectedSlot)
     local activeData = current.itemLink and { link = current.itemLink, texture = current.itemTexture } or shown
-    ui.item:SetText(activeData and activeData.link or "Select an item in the loot window")
+    ui.item:SetText(activeData and activeData.link or "Alt-click loot or a bag item to start")
     ui.icon:SetTexture(activeData and activeData.texture or "Interface\\Icons\\INV_Misc_QuestionMark")
     ui.state:SetText("State: " .. tostring(current.state))
     ui.rolls:SetText("MS: " .. CountRolls("MS") .. "    OS: " .. CountRolls("OS") .. "    Rejected: " .. #(current.rejectedRolls or {}))
     ui.winner:SetText("Leader: " .. PredictedWinnerText())
+    ui.award:SetText(current.source == "inventory" and "Trade" or "Award")
     ui.auto:SetText(Setting("autoAward") and "Auto: ON" or "Auto: OFF")
     if Theme then
         ui.auto.themeAccentColor = Setting("autoAward") and Theme.Colors.brand or nil
@@ -373,6 +434,70 @@ local function CandidateForName(slot, canonical)
     return found
 end
 
+local function GroupUnitForName(name)
+    if SamePlayer(UnitName("player"), name) then return "player" end
+    for i = 1, (GetNumRaidMembers and GetNumRaidMembers() or 0) do
+        if SamePlayer(UnitName("raid" .. i), name) then return "raid" .. i end
+    end
+    for i = 1, (GetNumPartyMembers and GetNumPartyMembers() or 0) do
+        if SamePlayer(UnitName("party" .. i), name) then return "party" .. i end
+    end
+    return nil
+end
+
+local function CurrentTradePartner()
+    local name = UnitName and UnitName("NPC") or nil
+    if name and name ~= "" then return name end
+    if TradeFrameRecipientNameText and TradeFrameRecipientNameText.GetText then
+        name = TradeFrameRecipientNameText:GetText()
+        if name then return string.match(name, "^([^%s%(]+)") or name end
+    end
+    return nil
+end
+
+local function TradeContainsItem(itemLink)
+    if not GetTradePlayerItemLink then return false end
+    for tradeSlot = 1, (MAX_TRADE_ITEMS or MAX_TRADABLE_ITEMS or 6) do
+        if GetTradePlayerItemLink(tradeSlot) == itemLink then return true, tradeSlot end
+    end
+    return false
+end
+
+local function PlacePendingTradeItem()
+    local pending = current.pendingAward
+    if current.state ~= STATE_PENDING or not pending or pending.kind ~= "trade" or pending.tradePlacementAttempted then return end
+    local partner = CurrentTradePartner()
+    if not partner or not SamePlayer(partner, pending.winner) then
+        FailSafe("the trade opened with someone other than the winner")
+        return
+    end
+    local bag, bagSlot, reason = FindVerifiedBagItem()
+    if bag == nil or not bagSlot then FailSafe(reason); return end
+    if not PickupContainerItem or not ClickTradeButton then FailSafe("trade placement API unavailable"); return end
+
+    local emptySlot
+    for tradeSlot = 1, (MAX_TRADE_ITEMS or MAX_TRADABLE_ITEMS or 6) do
+        if not GetTradePlayerItemLink or not GetTradePlayerItemLink(tradeSlot) then emptySlot = tradeSlot break end
+    end
+    if not emptySlot then FailSafe("there is no empty trade slot"); return end
+    if CursorHasItem and CursorHasItem() then FailSafe("clear the cursor before trading the item"); return end
+
+    pending.tradePlacementAttempted = true
+    PickupContainerItem(bag, bagSlot)
+    if CursorHasItem and not CursorHasItem() then FailSafe("the inventory item could not be picked up for trade"); return end
+    ClickTradeButton(emptySlot)
+    if CursorHasItem and CursorHasItem() then
+        if ClearCursor then ClearCursor() end
+        FailSafe("the inventory item could not be placed in the trade window")
+        return
+    end
+    pending.tradeSlot = emptySlot
+    pending.tradePlaced = true
+    pending.tradeCheckAt = GetTime() + 0.1
+    Log("Placed the winner's item in the trade window; review it and accept manually.")
+    RefreshUI()
+end
+
 local function BeginTieRound(tied, bracket)
     current.tieRound = (current.tieRound or 0) + 1
     if current.tieRound > 3 then
@@ -398,14 +523,23 @@ end
 
 local function ResolveRound()
     if current.state ~= STATE_GRACE and current.state ~= STATE_ROLLING and current.state ~= STATE_TIE then return end
-    local slot, reason = FindVerifiedSlot()
-    if not slot then FailSafe(reason); return end
+    local reason
+    if current.source == "inventory" then
+        local bag, bagSlot
+        bag, bagSlot, reason = FindVerifiedBagItem()
+        if bag == nil or not bagSlot then FailSafe(reason); return end
+        current.verifiedBag, current.verifiedBagSlot = bag, bagSlot
+    else
+        local slot
+        slot, reason = FindVerifiedSlot()
+        if not slot then FailSafe(reason); return end
+        current.verifiedSlot = slot
+    end
 
     local result, winner, tied, bracket = WinnerFromRolls(current.rollsByPlayer)
     if result == "NO_ROLLS" then FailSafe("no valid rolls were received"); return end
     if result == "TIE" then BeginTieRound(tied, bracket); return end
     current.winner = winner
-    current.verifiedSlot = slot
     current.deadline = nil
     SetState(STATE_READY)
     Announce(winner.player .. " wins " .. winner.bracket .. " with " .. winner.value .. ".")
@@ -438,6 +572,7 @@ function AA.Start(slot)
     current = {
         id = roundSerial,
         state = STATE_ROLLING,
+        source = "loot",
         lootSessionID = lootSessionID,
         lootSlot = slot,
         itemID = data.itemID,
@@ -458,6 +593,44 @@ function AA.Start(slot)
     return true
 end
 
+function AA.StartInventory(bag, slot)
+    bag, slot = tonumber(bag), tonumber(slot)
+    if current.state == STATE_ROLLING or current.state == STATE_TIE or current.state == STATE_GRACE or current.state == STATE_PENDING then
+        Log("Finish or cancel the current round first.", "warn")
+        return false
+    end
+    local raidCount = GetNumRaidMembers and (GetNumRaidMembers() or 0) or 0
+    local partyCount = GetNumPartyMembers and (GetNumPartyMembers() or 0) or 0
+    if raidCount == 0 and partyCount == 0 then FailSafe("inventory rolls require a party or raid"); return false end
+    local data = BagSlotData(bag, slot)
+    if not data then FailSafe("select an item in your bags"); return false end
+    if data.locked then FailSafe("the selected inventory item is locked"); return false end
+
+    roundSerial = roundSerial + 1
+    current = {
+        id = roundSerial,
+        state = STATE_ROLLING,
+        source = "inventory",
+        inventoryBag = bag,
+        inventorySlot = slot,
+        itemID = data.itemID,
+        itemLink = data.link,
+        itemTexture = data.texture,
+        itemQuantity = data.quantity,
+        deadline = GetTime() + math.max(1, tonumber(Setting("rollSeconds")) or 15),
+        rosterAtStart = GetRoster(),
+        rollsByPlayer = {},
+        rejectedRolls = {},
+        tieRound = 0,
+        awardAttempted = false,
+    }
+    AA.current = current
+    Announce("Roll for " .. data.link .. ": MS /roll 100, OS /roll 99.")
+    if frame then frame:Show() end
+    RefreshUI()
+    return true
+end
+
 function AA.Stop()
     if current.state ~= STATE_ROLLING and current.state ~= STATE_TIE and current.state ~= STATE_GRACE then
         Log("There is no active roll to stop.", "warn")
@@ -468,7 +641,7 @@ end
 
 function AA.Cancel(reason)
     if current.state == STATE_IDLE or current.state == STATE_AWARDED then return end
-    SetState(STATE_CANCELLED, reason or "cancelled by master looter")
+    SetState(STATE_CANCELLED, reason or "cancelled by user")
     current.deadline = nil
     current.pendingAward = nil
     Log(reason or "Round cancelled.", "warn")
@@ -502,6 +675,36 @@ function AA.Award()
         return false
     end
     if not IsCurrentMember(winner.player) then FailSafe("the winner is no longer in the group"); return false end
+
+    if current.source == "inventory" then
+        local bag, bagSlot, reason = FindVerifiedBagItem()
+        if bag == nil or not bagSlot then FailSafe(reason); return false end
+        if SamePlayer(winner.player, UnitName("player")) then
+            current.awardAttempted = true
+            SetState(STATE_AWARDED)
+            Log("You won; the item remains in your inventory.")
+            RefreshUI()
+            return true
+        end
+        local unit = GroupUnitForName(winner.player)
+        if not unit then FailSafe("the winner has no current group unit"); return false end
+        if not InitiateTrade then FailSafe("trade API unavailable"); return false end
+
+        current.awardAttempted = true
+        current.pendingAward = {
+            kind = "trade",
+            bag = bag,
+            bagSlot = bagSlot,
+            itemLink = current.itemLink,
+            winner = winner.player,
+            startedAt = GetTime(),
+        }
+        SetState(STATE_PENDING)
+        RefreshUI()
+        InitiateTrade(unit, winner.player)
+        return true
+    end
+
     local isMaster, reason = PlayerIsMasterLooter()
     if not isMaster then FailSafe(reason); return false end
     local slot
@@ -532,8 +735,8 @@ local function AcceptRoll(message)
     if not current.deadline or GetTime() > current.deadline then return end
     local rolledName, value, minimum, maximum = ParseRoll(message)
     if not rolledName then return end
-    local activeSlot, activeReason = FindVerifiedSlot()
-    if not activeSlot then FailSafe(activeReason); return end
+    local itemValid, activeReason = VerifyRoundItem()
+    if not itemValid then FailSafe(activeReason); return end
 
     local bracket
     if minimum == 1 and maximum == 100 then bracket = "MS"
@@ -565,6 +768,69 @@ local function SelectFirstLootItem()
     selectedSlot = nil
     for slot = 1, (GetNumLootItems and GetNumLootItems() or 0) do
         if LootSlotData(slot) then selectedSlot = slot break end
+    end
+end
+
+local function BagPositionFromMouseFocus(itemLink)
+    local focus = GetMouseFocus and GetMouseFocus() or nil
+    if not focus then return nil end
+    local bag = tonumber(focus.bagID)
+    local slot = tonumber(focus.slotID)
+    if bag == nil or not slot then
+        local parent = focus.GetParent and focus:GetParent() or nil
+        local name = focus.GetName and focus:GetName() or ""
+        local parentName = parent and parent.GetName and parent:GetName() or ""
+        if string.find(name or "", "ContainerFrame", 1, true)
+            or string.find(parentName or "", "ContainerFrame", 1, true)
+        then
+            bag = parent and parent.GetID and tonumber(parent:GetID()) or nil
+            slot = focus.GetID and tonumber(focus:GetID()) or nil
+        end
+    end
+    local data = BagSlotData(bag, slot)
+    if data and data.link == itemLink then return bag, slot end
+    return nil
+end
+
+local function LootSlotFromMouseFocus(itemLink)
+    if not lootOpen then return nil end
+    local focus = GetMouseFocus and GetMouseFocus() or nil
+    if not focus then return nil end
+    local name = focus.GetName and focus:GetName() or ""
+    local slot = tonumber(focus.slot)
+    if not slot and (string.find(name or "", "Loot", 1, true)) then
+        slot = focus.GetID and tonumber(focus:GetID()) or nil
+    end
+    local data = LootSlotData(slot)
+    if data and data.link == itemLink then return slot end
+    return nil
+end
+
+local function StartFromItemLink(itemLink)
+    if not itemLink then return end
+    local bag, bagSlot = BagPositionFromMouseFocus(itemLink)
+    if bag ~= nil and bagSlot then AA.StartInventory(bag, bagSlot); return end
+
+    local lootSlot = LootSlotFromMouseFocus(itemLink)
+    if lootSlot then selectedSlot = lootSlot; AA.Start(lootSlot); return end
+
+    local lootMatches = {}
+    if lootOpen then
+        for slot = 1, (GetNumLootItems and GetNumLootItems() or 0) do
+            local data = LootSlotData(slot)
+            if data and data.link == itemLink then table.insert(lootMatches, slot) end
+        end
+    end
+    local bagMatches = FindBagMatches(itemLink)
+    if #lootMatches == 1 and #bagMatches == 0 then
+        selectedSlot = lootMatches[1]
+        AA.Start(selectedSlot)
+    elseif #bagMatches == 1 and #lootMatches == 0 then
+        AA.StartInventory(bagMatches[1].bag, bagMatches[1].slot)
+    elseif #lootMatches + #bagMatches > 1 then
+        Log("That item exists in multiple locations; Alt-click its exact loot or bag slot.", "warn")
+    else
+        Log("Alt-click an item in the open loot window or your bags to start its roll.", "warn")
     end
 end
 
@@ -667,7 +933,7 @@ local function CreateWindow()
     AddTooltip(stop, "Stop roll", "Ends the timer now and resolves the accepted rolls.")
     ui.award = MakeButton(frame, "Award", controlWidth, function() AA.Award() end, Theme and Theme.Colors.success)
     ui.award:SetPoint("LEFT", stop, "RIGHT", 2, 0)
-    AddTooltip(ui.award, "Validated award", "Rechecks the loot item, group, master looter, winner, and candidate immediately before assigning once.")
+    AddTooltip(ui.award, "Validated handoff", "Loot slots are assigned through Master Loot. Bag items open a trade to the winner and place the exact item for your manual confirmation.")
     local cancel = MakeButton(frame, "Cancel", controlWidth, function() AA.Cancel() end, Theme and Theme.Colors.danger)
     cancel:SetPoint("LEFT", ui.award, "RIGHT", 2, 0)
     AddTooltip(cancel, "Cancel", "Stops without assigning the item.")
@@ -697,10 +963,26 @@ eventFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
 eventFrame:RegisterEvent("RAID_ROSTER_UPDATE")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("LOOT_BIND_CONFIRM")
+eventFrame:RegisterEvent("TRADE_SHOW")
+eventFrame:RegisterEvent("TRADE_CLOSED")
+eventFrame:RegisterEvent("TRADE_PLAYER_ITEM_CHANGED")
+eventFrame:RegisterEvent("UI_INFO_MESSAGE")
 
-eventFrame:SetScript("OnEvent", function(_, event, arg1)
+eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "ADDON_LOADED" and arg1 == "AutoEverything" then
         CreateWindow()
+        if hooksecurefunc and HandleModifiedItemClick then
+            hooksecurefunc("HandleModifiedItemClick", function(itemLink)
+                local mouseButton = GetMouseButtonClicked and GetMouseButtonClicked() or nil
+                if IsAltKeyDown and IsAltKeyDown()
+                    and not (IsShiftKeyDown and IsShiftKeyDown())
+                    and not (IsControlKeyDown and IsControlKeyDown())
+                    and (not mouseButton or mouseButton == "LeftButton")
+                then
+                    StartFromItemLink(itemLink)
+                end
+            end)
+        end
     elseif event == "LOOT_OPENED" then
         lootSessionID = lootSessionID + 1
         lootOpen = true
@@ -709,9 +991,11 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     elseif event == "LOOT_CLOSED" then
         lootOpen = false
         selectedSlot = nil
-        if current.state == STATE_PENDING then FailSafe("loot closed before assignment was confirmed")
-        elseif current.state == STATE_ROLLING or current.state == STATE_TIE or current.state == STATE_GRACE or current.state == STATE_READY then
-            AA.Cancel("loot window closed")
+        if current.source ~= "inventory" then
+            if current.state == STATE_PENDING then FailSafe("loot closed before assignment was confirmed")
+            elseif current.state == STATE_ROLLING or current.state == STATE_TIE or current.state == STATE_GRACE or current.state == STATE_READY then
+                AA.Cancel("loot window closed")
+            end
         end
     elseif event == "CHAT_MSG_SYSTEM" then
         AcceptRoll(arg1)
@@ -733,6 +1017,27 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     elseif event == "LOOT_BIND_CONFIRM" and current.state == STATE_PENDING then
         current.pendingAward.awaitingBindConfirmation = true
         Log("Bind confirmation requires a manual click until target-server behavior is verified.", "warn")
+    elseif event == "TRADE_SHOW" and current.state == STATE_PENDING and current.pendingAward
+        and current.pendingAward.kind == "trade"
+    then
+        current.pendingAward.tradeShown = true
+        current.pendingAward.tradePlaceAt = GetTime() + 0.1
+    elseif event == "TRADE_CLOSED" and current.state == STATE_PENDING and current.pendingAward
+        and current.pendingAward.kind == "trade"
+    then
+        current.pendingAward.tradeClosedAt = GetTime()
+    elseif event == "TRADE_PLAYER_ITEM_CHANGED" and current.state == STATE_PENDING and current.pendingAward
+        and current.pendingAward.kind == "trade" and current.pendingAward.tradePlaced
+    then
+        current.pendingAward.tradeCheckAt = GetTime() + 0.1
+    elseif event == "UI_INFO_MESSAGE" and current.state == STATE_PENDING and current.pendingAward
+        and current.pendingAward.kind == "trade" and ERR_TRADE_COMPLETE
+        and (arg1 == ERR_TRADE_COMPLETE or arg2 == ERR_TRADE_COMPLETE)
+    then
+        SetState(STATE_AWARDED)
+        current.pendingAward = nil
+        Log("Inventory item trade confirmed.")
+        RefreshUI()
     end
 end)
 
@@ -742,6 +1047,21 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
         BeginGrace()
     elseif current.state == STATE_GRACE and current.deadline and GetTime() >= current.deadline then
         ResolveRound()
+    elseif current.state == STATE_PENDING and current.pendingAward and current.pendingAward.kind == "trade" then
+        if not current.pendingAward.tradeShown and GetTime() - current.pendingAward.startedAt >= 2 then
+            FailSafe("the trade window did not open for the winner")
+        elseif current.pendingAward.tradePlaceAt and GetTime() >= current.pendingAward.tradePlaceAt then
+            current.pendingAward.tradePlaceAt = nil
+            PlacePendingTradeItem()
+        elseif current.pendingAward.tradeCheckAt and GetTime() >= current.pendingAward.tradeCheckAt then
+            current.pendingAward.tradeCheckAt = nil
+            local present = TradeContainsItem(current.pendingAward.itemLink)
+            if TradeFrame and TradeFrame:IsShown() and not present then
+                FailSafe("the awarded item was removed from the trade window")
+            end
+        elseif current.pendingAward.tradeClosedAt and GetTime() - current.pendingAward.tradeClosedAt >= 1 then
+            FailSafe("the trade closed without a success confirmation")
+        end
     elseif current.state == STATE_PENDING and current.pendingAward
         and GetTime() - current.pendingAward.startedAt >= (current.pendingAward.awaitingBindConfirmation and 15 or 2)
     then
@@ -769,10 +1089,13 @@ SlashCmdList["AUTOEVERYTHINGAWARD"] = function(message)
     elseif command == "award" then AA.Award()
     elseif command == "clear" and argument ~= "" then AA.Clear(argument)
     elseif command == "status" then
-        Log("State " .. current.state .. ", selected slot " .. tostring(selectedSlot or "none")
+        local source = current.source == "inventory"
+            and ("bag " .. tostring(current.inventoryBag) .. ":" .. tostring(current.inventorySlot))
+            or ("loot slot " .. tostring(selectedSlot or "none"))
+        Log("State " .. current.state .. ", source " .. source
             .. ", auto award " .. (Setting("autoAward") and "ON" or "OFF") .. ".")
         if current.statusReason then Log(current.statusReason, "warn") end
     else
-        Log("Commands: /aa, /aa start <slot>, /aa stop, /aa cancel, /aa award, /aa clear <name>, /aa status")
+        Log("Alt-click loot or a bag item to start. Commands: /aa, /aa start <slot>, /aa stop, /aa cancel, /aa award, /aa clear <name>, /aa status")
     end
 end
