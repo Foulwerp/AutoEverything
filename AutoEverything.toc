@@ -19,6 +19,7 @@ AutoBuff.lua
 AutoJunk.lua
 AutoSell.lua
 AutoRoll.lua
+AutoAward.lua
 AuctionHouse.lua
 Quest\AutoQuest.lua
 Quest\QuestTargetResolver.lua

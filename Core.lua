@@ -268,7 +268,7 @@ cvarFrame:SetScript("OnEvent", function(self, event)
         -- when the client starts, so a newly added file is skipped until the
         -- game is fully restarted - a /reload is not enough. Say so plainly
         -- rather than letting each module fail on a nil config in turn.
-        if not AutoSellConfig or not AutoRollConfig or not AutoUpgradeConfig
+        if not AutoSellConfig or not AutoRollConfig or not AutoAwardConfig or not AutoUpgradeConfig
             or not AutoJunkConfig or not AutoLootConfig or not AutoCoreConfig or not AutoQuestConfig or not AutoBuffConfig
         then
             print("|cffff4040Automation:|r Config.lua did not load, so no defaults are available.")
@@ -1689,6 +1689,7 @@ local function BuildDefaultProfile()
         loot    = SeedSection(AutoLootConfig, "commonRules", nil),
         sell    = SeedSection(AutoSellConfig, "commonRules", "neverSell"),
         roll    = SeedSection(AutoRollConfig, "commonRules", "neverRoll"),
+        award   = {},
         quest   = {},
         buff    = {},
         upgrade = { weights = {} },
@@ -1703,7 +1704,7 @@ end
 -- next login re-seeds.
 local function ConfigsLoaded()
     return AutoCoreConfig and AutoJunkConfig and AutoLootConfig and AutoSellConfig
-        and AutoRollConfig and AutoUpgradeConfig and AutoQuestConfig and AutoAuctionConfig and AutoBuffConfig
+        and AutoRollConfig and AutoAwardConfig and AutoUpgradeConfig and AutoQuestConfig and AutoAuctionConfig and AutoBuffConfig
 end
 
 -- Profiles are account-wide and named; each character is assigned one via
@@ -1711,7 +1712,7 @@ end
 -- two characters may share one. Switching swaps every module's rules and
 -- settings at once, which is what makes a per-spec profile useful: a character
 -- that plays melee and caster rolls and equips for whichever it is set to.
-local MODULE_ORDER = { "core", "junk", "loot", "sell", "roll", "quest", "buff", "upgrade", "auction" }
+local MODULE_ORDER = { "core", "junk", "loot", "sell", "roll", "award", "quest", "buff", "upgrade", "auction" }
 Core.MODULE_ORDER = MODULE_ORDER
 
 function Core.EnsureProfileDB()
@@ -1944,7 +1945,7 @@ local LEGACY_EXPORT_PREFIX = "AutoEverything:"
 
 local MODULE_LABELS = {
     core = "General", junk = "AutoJunk", loot = "AutoLoot", sell = "AutoSell",
-    roll = "AutoRoll", quest = "AutoQuest", buff = "AutoBuff", upgrade = "AutoUpgrade", auction = "AutoAuction",
+    roll = "AutoRoll", award = "Award", quest = "AutoQuest", buff = "AutoBuff", upgrade = "AutoUpgrade", auction = "AutoAuction",
 }
 Core.MODULE_LABELS = MODULE_LABELS
 

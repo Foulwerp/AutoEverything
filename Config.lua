@@ -131,6 +131,16 @@ AutoRollConfig = {
     weights = {},
 }
 
+-- AutoAward: tracks MS/OS rolls for a selected master-loot slot. The window
+-- and roll tracker are passive until the master looter starts a round, and
+-- automatic assignment remains explicitly opt-in.
+AutoAwardConfig = {
+    autoAward = false,
+    rollSeconds = 15,
+    graceSeconds = 1,
+    tieRollSeconds = 10,
+}
+
 -- AutoAuction: scans commodity and exact equipment-variant markets, then
 -- posts auctionable bag items selected by rules after a live safety check.
 -- Market observations and shopping lists live in AutoEverythingAuctionDB.
