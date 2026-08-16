@@ -587,14 +587,12 @@ PaintRoleRows = function()
         roleOverflowText:SetText(roleFirstIndex .. "-" .. lastIndex .. " of " .. #members)
         roleOverflowText:Show()
         roleScrollSlider:SetHeight(math.max(24, (shown * ROLE_ROW_HEIGHT) - 4))
-        roleScrollSlider:SetMinMaxValues(1, maximumFirst)
         roleScrollUpdating = true
-        roleScrollSlider:SetValue(roleFirstIndex)
+        roleScrollSlider:SetScrollRange(maximumFirst - 1, roleFirstIndex - 1)
         roleScrollUpdating = false
-        roleScrollSlider:Show()
     else
         roleOverflowText:Hide()
-        roleScrollSlider:Hide()
+        roleScrollSlider:SetScrollRange(0, 0)
     end
     local overflowHeight = #members > shown and 18 or 0
     window:SetHeight(BASE_WINDOW_HEIGHT + shown * ROLE_ROW_HEIGHT + overflowHeight)
@@ -678,65 +676,17 @@ local function CreateWindow()
     roleOverflowText:SetJustifyH("LEFT")
     roleOverflowText:Hide()
 
-    roleScrollSlider = CreateFrame("Slider", nil, window)
-    roleScrollSlider:SetOrientation("VERTICAL")
-    roleScrollSlider:SetWidth(ROLE_SCROLLBAR_WIDTH)
-    roleScrollSlider:EnableMouseWheel(true)
-    roleScrollSlider:SetPoint("TOPLEFT", window, "TOPLEFT",
-        WINDOW_INSET + WINDOW_CONTENT_WIDTH + ROLE_SCROLLBAR_GAP, -82)
-    roleScrollSlider:SetValueStep(1)
-    if roleScrollSlider.SetObeyStepOnDrag then roleScrollSlider:SetObeyStepOnDrag(true) end
-
-    local scrollTrack = roleScrollSlider:CreateTexture(nil, "BACKGROUND")
-    scrollTrack:SetTexture("Interface\\Buttons\\WHITE8X8")
-    scrollTrack:SetVertexColor(0.18, 0.19, 0.22, 0.85)
-    scrollTrack:SetPoint("TOP", 0, 0)
-    scrollTrack:SetPoint("BOTTOM", 0, 0)
-    scrollTrack:SetWidth(6)
-
-    roleScrollSlider:SetThumbTexture("Interface\\Buttons\\WHITE8X8")
-    local scrollThumb = roleScrollSlider:GetThumbTexture()
-    if scrollThumb then
-        local pillWidth = 12
-        local pillHeight = 26
-        local capHeight = pillWidth / 2
-        local circleTexture = UI and UI.Textures and UI.Textures.circle
-            or "Interface\\TALENTFRAME\\talentsmasknodecircle"
-        scrollThumb:SetSize(pillWidth, pillHeight)
-        scrollThumb:SetVertexColor(1, 1, 1, 0)
-
-        local thumbTop = roleScrollSlider:CreateTexture(nil, "OVERLAY")
-        thumbTop:SetTexture(circleTexture)
-        thumbTop:SetTexCoord(0, 1, 0, 0.5)
-        thumbTop:SetSize(pillWidth, capHeight)
-        thumbTop:SetPoint("TOP", scrollThumb, "TOP", 0, 0)
-        thumbTop:SetVertexColor(0.31, 0.59, 0.92, 0.95)
-
-        local thumbBottom = roleScrollSlider:CreateTexture(nil, "OVERLAY")
-        thumbBottom:SetTexture(circleTexture)
-        thumbBottom:SetTexCoord(0, 1, 0.5, 1)
-        thumbBottom:SetSize(pillWidth, capHeight)
-        thumbBottom:SetPoint("BOTTOM", scrollThumb, "BOTTOM", 0, 0)
-        thumbBottom:SetVertexColor(0.31, 0.59, 0.92, 0.95)
-
-        local thumbCenter = roleScrollSlider:CreateTexture(nil, "OVERLAY")
-        thumbCenter:SetTexture("Interface\\Buttons\\WHITE8X8")
-        thumbCenter:SetPoint("TOPLEFT", thumbTop, "BOTTOMLEFT", 0, 0)
-        thumbCenter:SetPoint("BOTTOMRIGHT", thumbBottom, "TOPRIGHT", 0, 0)
-        thumbCenter:SetVertexColor(0.31, 0.59, 0.92, 0.95)
-    end
-    roleScrollSlider:SetScript("OnValueChanged", function(_, value)
+    roleScrollSlider = UI.CreateVerticalScrollbar(window, 24, function(value)
         if roleScrollUpdating then return end
         local members = RosterUnits()
         local shown = math.min(#members, MAX_WINDOW_ROLES)
         local maximumFirst = math.max(1, #members - shown + 1)
-        roleFirstIndex = math.max(1, math.min(math.floor(value + 0.5), maximumFirst))
+        roleFirstIndex = math.max(1, math.min(math.floor(value + 0.5) + 1, maximumFirst))
         PaintRoleRows()
-    end)
-    roleScrollSlider:SetScript("OnMouseWheel", function(_, delta)
-        if ScrollRoleRows then ScrollRoleRows(delta > 0 and -1 or 1) end
-    end)
-    roleScrollSlider:Hide()
+    end, 1)
+    roleScrollSlider:SetWidth(ROLE_SCROLLBAR_WIDTH)
+    roleScrollSlider:SetPoint("TOPLEFT", window, "TOPLEFT",
+        WINDOW_INSET + WINDOW_CONTENT_WIDTH + ROLE_SCROLLBAR_GAP, -82)
 
     if RegisterStateDriver then
         pcall(RegisterStateDriver, castButton, "visibility", "[combat] hide; show")

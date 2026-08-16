@@ -71,3 +71,127 @@ function UI.Backdrop(object, color, alpha)
     object:SetBackdropColor(fill[1], fill[2], fill[3], alpha or fill[4] or 0.98)
     object:SetBackdropBorderColor(UI.Unpack(UI.Colors.border))
 end
+
+-- Shared compact vertical scrollbar: a thin neutral line with a draggable
+-- rounded blue pill. It intentionally has no arrow buttons and does not use a
+-- Blizzard scrollbar template, so every addon surface behaves consistently.
+function UI.CreateVerticalScrollbar(parent, height, onValueChanged, step)
+    local scrollbar = CreateFrame("Frame", nil, parent)
+    scrollbar:SetSize(16, height or 100)
+    scrollbar:EnableMouse(true)
+    scrollbar:EnableMouseWheel(true)
+    scrollbar.scrollMaximum = 0
+    scrollbar.scrollValue = 0
+    scrollbar.scrollStep = math.max(1, step or 1)
+
+    local track = scrollbar:CreateTexture(nil, "BACKGROUND")
+    track:SetTexture(UI.Textures.white)
+    track:SetWidth(3)
+    track:SetPoint("TOP", 0, 0)
+    track:SetPoint("BOTTOM", 0, 0)
+    track:SetVertexColor(UI.Unpack(UI.Colors.track, 0.9))
+
+    local pillWidth, pillHeight = 12, 26
+    local capHeight = pillWidth / 2
+    local handle = CreateFrame("Button", nil, scrollbar)
+    handle:SetSize(20, pillHeight + 6)
+    handle:SetFrameLevel(scrollbar:GetFrameLevel() + 2)
+    handle:EnableMouse(true)
+    handle:EnableMouseWheel(true)
+
+    local topCap = handle:CreateTexture(nil, "OVERLAY")
+    topCap:SetTexture(UI.Textures.circle)
+    topCap:SetTexCoord(0, 1, 0, 0.5)
+    topCap:SetSize(pillWidth, capHeight)
+    topCap:SetPoint("TOP", handle, "TOP", 0, -3)
+    topCap:SetVertexColor(UI.Unpack(UI.Colors.brand, 0.95))
+
+    local bottomCap = handle:CreateTexture(nil, "OVERLAY")
+    bottomCap:SetTexture(UI.Textures.circle)
+    bottomCap:SetTexCoord(0, 1, 0.5, 1)
+    bottomCap:SetSize(pillWidth, capHeight)
+    bottomCap:SetPoint("BOTTOM", handle, "BOTTOM", 0, 3)
+    bottomCap:SetVertexColor(UI.Unpack(UI.Colors.brand, 0.95))
+
+    local center = handle:CreateTexture(nil, "OVERLAY")
+    center:SetTexture(UI.Textures.white)
+    center:SetPoint("TOPLEFT", topCap, "BOTTOMLEFT", 0, 0)
+    center:SetPoint("BOTTOMRIGHT", bottomCap, "TOPRIGHT", 0, 0)
+    center:SetVertexColor(UI.Unpack(UI.Colors.brand, 0.95))
+
+    local function PositionHandle()
+        local travel = math.max(0, (scrollbar:GetHeight() or pillHeight) - pillHeight)
+        local ratio = scrollbar.scrollMaximum > 0
+            and scrollbar.scrollValue / scrollbar.scrollMaximum or 0
+        handle:ClearAllPoints()
+        handle:SetPoint("TOP", scrollbar, "TOP", 0, 3 - ratio * travel)
+    end
+    local function SetValue(value)
+        local nextValue = math.max(0, math.min(value or 0, scrollbar.scrollMaximum))
+        local changed = nextValue ~= scrollbar.scrollValue
+        scrollbar.scrollValue = nextValue
+        PositionHandle()
+        if changed and onValueChanged then onValueChanged(nextValue) end
+    end
+    local function CursorY()
+        local _, cursorY = GetCursorPosition()
+        local scale = scrollbar:GetEffectiveScale() or 1
+        if scale <= 0 then scale = 1 end
+        return cursorY / scale
+    end
+    local function ValueFromCursor(offsetY)
+        local frameTop, frameBottom = scrollbar:GetTop(), scrollbar:GetBottom()
+        if not frameTop or not frameBottom then return end
+        local travelTop = frameTop - pillHeight / 2
+        local travelBottom = frameBottom + pillHeight / 2
+        if travelTop <= travelBottom then return end
+        local wantedY = CursorY() - (offsetY or 0)
+        local ratio = math.max(0, math.min((travelTop - wantedY) / (travelTop - travelBottom), 1))
+        SetValue(ratio * scrollbar.scrollMaximum)
+    end
+    local function StopDrag(self) self:SetScript("OnUpdate", nil) end
+    local dragOffsetY = 0
+    handle:SetScript("OnMouseDown", function(self, button)
+        if button ~= "LeftButton" then return end
+        local _, handleY = self:GetCenter()
+        dragOffsetY = CursorY() - (handleY or CursorY())
+        self:SetScript("OnUpdate", function() ValueFromCursor(dragOffsetY) end)
+    end)
+    handle:SetScript("OnMouseUp", function(self, button)
+        if button == "LeftButton" then StopDrag(self) end
+    end)
+    handle:SetScript("OnHide", StopDrag)
+    handle:SetScript("OnMouseWheel", function(_, delta)
+        SetValue(scrollbar.scrollValue - delta * scrollbar.scrollStep)
+    end)
+    scrollbar:SetScript("OnMouseDown", function(_, button)
+        if button == "LeftButton" then ValueFromCursor(0) end
+    end)
+    scrollbar:SetScript("OnMouseWheel", function(_, delta)
+        SetValue(scrollbar.scrollValue - delta * scrollbar.scrollStep)
+    end)
+    scrollbar:SetScript("OnSizeChanged", PositionHandle)
+
+    function scrollbar:GetValue() return self.scrollValue end
+    function scrollbar:SetValue(value) SetValue(value) end
+    function scrollbar:SetScrollRange(maximum, value)
+        self.scrollMaximum = math.max(0, maximum or 0)
+        SetValue(value or self.scrollValue or 0)
+        if self.scrollMaximum > 0 then self:Show() else self:Hide() end
+    end
+    function scrollbar:SetScrollValue(value)
+        SetValue(value)
+    end
+    function scrollbar:BindMouseWheel(control, wheelStep)
+        if not control then return end
+        control:EnableMouse(true)
+        control:EnableMouseWheel(true)
+        control:SetScript("OnMouseWheel", function(_, delta)
+            SetValue(self.scrollValue - delta * (wheelStep or self.scrollStep))
+        end)
+    end
+
+    scrollbar.dragHandle = handle
+    scrollbar:SetScrollRange(0, 0)
+    return scrollbar
+end

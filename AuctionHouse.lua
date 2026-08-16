@@ -36,6 +36,27 @@ local pageFrames, pageButtons, scanFooters = {}, {}, {}
 local events = CreateFrame("Frame")
 local ProcessAuctionWork
 
+local function AttachFauxPillScrollbar(parent, scrollFrame, height, rowHeight,
+    totalItems, visibleItems, refresh)
+    local syncing = false
+    local scrollbar = Core.UI.CreateVerticalScrollbar(parent, height, function(value)
+        if syncing then return end
+        scrollFrame:SetVerticalScroll(math.floor(value + 0.5) * rowHeight)
+        if refresh then refresh() end
+    end, 1)
+    scrollbar:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 1, 0)
+    function scrollbar:Sync()
+        local total = totalItems and totalItems() or 0
+        local visible = visibleItems and visibleItems() or 0
+        local maximum = math.max(0, total - visible)
+        local offset = FauxScrollFrame_GetOffset and FauxScrollFrame_GetOffset(scrollFrame) or 0
+        syncing = true
+        self:SetScrollRange(maximum, math.max(0, math.min(offset or 0, maximum)))
+        syncing = false
+    end
+    return scrollbar
+end
+
 -- Attach the rapid progress worker only while a scan or posting queue is
 -- active. Leaving an idle OnUpdate installed costs a Lua call every frame.
 local function UpdateWorkerState()
@@ -1907,18 +1928,7 @@ RefreshShoppingResults = function()
     end
     if shopping.resultScroll then
         FauxScrollFrame_Update(shopping.resultScroll, #shopping.eligibleResults, #shopping.resultRows, 21)
-        if shopping.scrollThumb and shopping.scrollTrack then
-            local rows, visible = #shopping.eligibleResults, #shopping.resultRows
-            local maximum = math.max(0, rows - visible)
-            local ratio = rows > 0 and math.min(1, visible / rows) or 1
-            local travel = 107
-            local height = math.max(18, math.floor(travel * ratio))
-            local position = maximum > 0 and math.floor((FauxScrollFrame_GetOffset(shopping.resultScroll) / maximum) * (travel - height)) or 0
-            shopping.scrollThumb:ClearAllPoints()
-            shopping.scrollThumb:SetPoint("TOP", shopping.scrollTrack, "TOP", 0, -20 - position)
-            shopping.scrollThumb:SetSize(12, height)
-            shopping.scrollThumb:SetShown(rows > visible)
-        end
+        if shopping.scrollbar then shopping.scrollbar:Sync() end
     end
 end
 
@@ -2304,7 +2314,10 @@ RefreshOwnedAuctions = function()
             button:Hide()
         end
     end
-    if owned.scroll then FauxScrollFrame_Update(owned.scroll, #owned.results, #owned.rows, 24) end
+    if owned.scroll then
+        FauxScrollFrame_Update(owned.scroll, #owned.results, #owned.rows, 24)
+        if owned.scrollbar then owned.scrollbar:Sync() end
+    end
     if owned.summary then
         local total = 0
         for _, row in ipairs(owned.results) do total = total + row.buyout end
@@ -2379,7 +2392,10 @@ RefreshUpgradeResults = function()
             button:Show()
         else button.row = nil; button:Hide() end
     end
-    if upgrades.scroll then FauxScrollFrame_Update(upgrades.scroll, #upgrades.filtered, #upgrades.rows, 24) end
+    if upgrades.scroll then
+        FauxScrollFrame_Update(upgrades.scroll, #upgrades.filtered, #upgrades.rows, 24)
+        if upgrades.scrollbar then upgrades.scrollbar:Sync() end
+    end
     if upgrades.summary and not upgradeAnalysis then
         upgrades.summary:SetText(#upgrades.filtered .. " shown | " .. #(upgrades.results or {})
             .. " upgrades found | highest upgrade first")
@@ -2579,6 +2595,7 @@ RefreshSellGrid = function()
     ScanSellInventory()
     if manual.scrollFrame then
         FauxScrollFrame_Update(manual.scrollFrame, #manual.inventory, #manual.rows, 27)
+        if manual.scrollbar then manual.scrollbar:Sync() end
     end
     local offset = manual.scrollFrame and FauxScrollFrame_GetOffset(manual.scrollFrame) or 0
     for index, row in ipairs(manual.rows) do
@@ -2713,6 +2730,9 @@ local function CreateUpgradePage(upgradePage, contentWidth)
     for _, child in ipairs(upgradeScrollChildren) do
         child:Hide(); child:HookScript("OnShow", function(self) self:Hide() end)
     end
+    upgrades.scrollbar = AttachFauxPillScrollbar(upgradePage, upgrades.scroll, 240, 24,
+        function() return #(upgrades.filtered or {}) end,
+        function() return #(upgrades.rows or {}) end, RefreshUpgradeResults)
     RefreshUpgradeResults()
     AddScanFooter(upgradePage)
 end
@@ -2769,6 +2789,13 @@ local function CreateWindow()
         label:SetText(header[1])
     end
     owned.rows = {}
+    local function ScrollOwnedResults(delta)
+        if not owned.scroll then return end
+        local maximum = math.max(0, (#(owned.results or {}) - #(owned.rows or {})) * 24)
+        owned.scroll:SetVerticalScroll(math.max(0,
+            math.min(maximum, owned.scroll:GetVerticalScroll() - delta * 24)))
+        RefreshOwnedAuctions()
+    end
     for index = 1, 11 do
         local row = Button(ownedPage, "", ownedRowWidth)
         row:SetPoint("TOPLEFT", 4, -65 - (index - 1) * 24); row:GetFontString():Hide()
@@ -2787,6 +2814,8 @@ local function CreateWindow()
             if self.row and self.row.link then GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetHyperlink(self.row.link); GameTooltip:Show() end
         end)
         row:HookScript("OnLeave", function() GameTooltip:Hide() end)
+        row:EnableMouseWheel(true)
+        row:SetScript("OnMouseWheel", function(_, delta) ScrollOwnedResults(delta) end)
         owned.rows[index] = row
     end
     owned.scroll = CreateFrame("ScrollFrame", nil, ownedPage, "FauxScrollFrameTemplate")
@@ -2794,11 +2823,16 @@ local function CreateWindow()
     owned.scroll:SetScript("OnVerticalScroll", function(self, offset)
         FauxScrollFrame_OnVerticalScroll(self, offset, 24, RefreshOwnedAuctions)
     end)
+    owned.scroll:EnableMouseWheel(true)
+    owned.scroll:SetScript("OnMouseWheel", function(_, delta) ScrollOwnedResults(delta) end)
     local ownedScrollChildren = { owned.scroll:GetChildren() }
     for _, child in ipairs(ownedScrollChildren) do
         child:Hide()
         child:HookScript("OnShow", function(self) self:Hide() end)
     end
+    owned.scrollbar = AttachFauxPillScrollbar(ownedPage, owned.scroll, 264, 24,
+        function() return #(owned.results or {}) end,
+        function() return #(owned.rows or {}) end, RefreshOwnedAuctions)
     AddScanFooter(ownedPage)
 
     local sell = pageFrames.sell
@@ -2870,6 +2904,9 @@ local function CreateWindow()
     end
     manual.scrollFrame:EnableMouseWheel(true)
     manual.scrollFrame:SetScript("OnMouseWheel", function(_, delta) ScrollSellGrid(delta) end)
+    manual.scrollbar = AttachFauxPillScrollbar(sell, manual.scrollFrame, 189, 27,
+        function() return #(manual.inventory or {}) end,
+        function() return #(manual.rows or {}) end, RefreshSellGrid)
     AddHelp(manual.scrollFrame, "Sellable bag items", "Scroll to review unlocked auctionable bag items. Selecting a row replaces the previous selection; stack size and stack count are configured below.")
     local refreshBags = Button(sell, "Refresh Bags", math.floor((sellRightWidth - 8) * 0.6)); refreshBags:SetPoint("TOPLEFT", sellRightX, -28)
     refreshBags:SetScript("OnClick", function() ScanSellInventory(); if RefreshSellGrid then RefreshSellGrid() end end)
@@ -3123,20 +3160,10 @@ local function CreateWindow()
     end
     shopping.resultScroll:EnableMouseWheel(true)
     shopping.resultScroll:SetScript("OnMouseWheel", function(_, delta) ScrollShoppingResults(delta) end)
-    shopping.scrollTrack = CreateFrame("Frame", nil, shop); shopping.scrollTrack:SetPoint("TOPLEFT", shopRowWidth + 6, -191); shopping.scrollTrack:SetSize(18, 147); Skin(shopping.scrollTrack)
-    shopping.scrollThumb = CreateFrame("Frame", nil, shopping.scrollTrack); Skin(shopping.scrollThumb)
-    shopping.scrollThumb:SetBackdropColor(BRAND[1] * 0.22, BRAND[2] * 0.22, BRAND[3] * 0.22, 1)
-    shopping.scrollThumb:SetBackdropBorderColor(BRAND[1], BRAND[2], BRAND[3], 0.9)
-    -- Button() defaults to 24px high, which made these arrows look like long
-    -- stock controls. Keep compact 16px blue arrows inside the full-height
-    -- track, matching the result table's bounding area.
-    local up = Button(shop, "▲", 18); up:SetSize(16, 16); up:SetPoint("TOP", shopping.scrollTrack, "TOP", 0, -1); up:GetFontString():SetTextColor(BRAND[1], BRAND[2], BRAND[3]); up:SetScript("OnClick", function() ScrollShoppingResults(1) end)
-    local down = Button(shop, "▼", 18); down:SetSize(16, 16); down:SetPoint("BOTTOM", shopping.scrollTrack, "BOTTOM", 0, 1); down:GetFontString():SetTextColor(BRAND[1], BRAND[2], BRAND[3]); down:SetScript("OnClick", function() ScrollShoppingResults(-1) end)
-    for _, arrow in ipairs({ up, down }) do
-        arrow:HookScript("OnEnter", function(self) self:GetFontString():SetTextColor(BRAND[1], BRAND[2], BRAND[3]) end)
-        arrow:HookScript("OnLeave", function(self) self:GetFontString():SetTextColor(BRAND[1], BRAND[2], BRAND[3]) end)
-    end
-    AddHelp(shopping.scrollTrack, "Eligible listings", "Only listings within the current maximum and percentage rules appear. Scroll to review more.")
+    shopping.scrollbar = AttachFauxPillScrollbar(shop, shopping.resultScroll, 147, 21,
+        function() return #(shopping.eligibleResults or {}) end,
+        function() return #(shopping.resultRows or {}) end, RefreshShoppingResults)
+    AddHelp(shopping.scrollbar, "Eligible listings", "Only listings within the current maximum and percentage rules appear. Scroll to review more.")
     RefreshShoppingResults()
     AddScanFooter(shop)
 

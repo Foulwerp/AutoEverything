@@ -539,8 +539,8 @@ end
 
 local function SetDropdownOpen(button, open)
     if button and button.dropdownArrow and button.dropdownArrow.SetText then
-        -- Same triangle glyphs as the scroll-list arrows: up (open) / down
-        -- (closed), in brand blue, so dropdowns and scrollers read as one set.
+        -- Up (open) / down (closed) makes the menu state obvious without
+        -- adding extra chrome.
         button.dropdownArrow:SetText(open and "\226\150\178" or "\226\150\188")
     end
 end
@@ -1244,9 +1244,7 @@ end
 -- Profiles
 ----------------------------------------------------------------------
 -- A multi-line, editable box inside a scroll frame. Export fills it and selects
--- all so Ctrl+C just works; import reads whatever was pasted in. Scrolling uses
--- the same brand-blue up/down arrow buttons as the rule list (no Blizzard
--- scrollbar), so every scroller in the window looks the same.
+-- all so Ctrl+C just works; import reads whatever was pasted in.
 local function TextBox(parent, x, y, width, height)
     local scroll = Track(CreateFrame("ScrollFrame", nil, parent))
     scroll:SetPoint("TOPLEFT", x, y); scroll:SetSize(width, height)
@@ -1258,7 +1256,7 @@ local function TextBox(parent, x, y, width, height)
 
     local edit = CreateFrame("EditBox", nil, scroll)
     edit:SetMultiLine(true)
-    edit:SetWidth(width - 14)          -- leave the right edge clear for the arrows; height auto-fits text
+    edit:SetWidth(width - 18)          -- leave the right edge clear for the slim scrollbar; height auto-fits text
     edit:SetAutoFocus(false)
     edit:SetFontObject(ChatFontNormal)
     edit:SetTextInsets(6, 6, 4, 4)
@@ -1271,35 +1269,25 @@ local function TextBox(parent, x, y, width, height)
     -- previously focused field) rather than being undone by it.
     scroll:SetScript("OnMouseUp", function() edit:SetFocus() end)
 
-    local upArrow = Track(CreateFrame("Button", nil, parent))
-    upArrow:SetSize(16, 16); upArrow:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", -2, -2)
-    local upGlyph = upArrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    upGlyph:SetPoint("CENTER"); upGlyph:SetText("\226\150\178"); upGlyph:SetTextColor(Unpack(BRAND))
-    local downArrow = Track(CreateFrame("Button", nil, parent))
-    downArrow:SetSize(16, 16); downArrow:SetPoint("BOTTOMRIGHT", scroll, "BOTTOMRIGHT", -2, 2)
-    local downGlyph = downArrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    downGlyph:SetPoint("CENTER"); downGlyph:SetText("\226\150\188"); downGlyph:SetTextColor(Unpack(BRAND))
-    upArrow:Hide(); downArrow:Hide()
-
     local SCROLL_STEP = 40
-    local function UpdateArrows()
+    local scrollbar = Track(UI.CreateVerticalScrollbar(parent, height - 4, function(value)
+        scroll:SetVerticalScroll(value)
+    end, SCROLL_STEP))
+    scrollbar:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", -2, -2)
+    local function UpdateScrollbar()
         local maxScroll = math.max(0, (edit:GetHeight() or 0) - height)
-        if maxScroll <= 1 then upArrow:Hide(); downArrow:Hide(); return end
-        upArrow:Show(); downArrow:Show()
-        local current = scroll:GetVerticalScroll() or 0
-        if current <= 0 then upArrow:Disable() else upArrow:Enable() end
-        if current >= maxScroll then downArrow:Disable() else downArrow:Enable() end
+        scrollbar:SetScrollRange(maxScroll, scroll:GetVerticalScroll() or 0)
     end
     local function ScrollBy(delta)
         local maxScroll = math.max(0, (edit:GetHeight() or 0) - height)
         local value = (scroll:GetVerticalScroll() or 0) + delta
         if value < 0 then value = 0 elseif value > maxScroll then value = maxScroll end
-        scroll:SetVerticalScroll(value); UpdateArrows()
+        scrollbar:SetScrollRange(maxScroll, value)
     end
-    upArrow:SetScript("OnClick", function() ScrollBy(-SCROLL_STEP) end)
-    downArrow:SetScript("OnClick", function() ScrollBy(SCROLL_STEP) end)
     scroll:SetScript("OnMouseWheel", function(_, delta) ScrollBy(delta > 0 and -SCROLL_STEP or SCROLL_STEP) end)
-    edit:SetScript("OnTextChanged", UpdateArrows)
+    edit:EnableMouseWheel(true)
+    edit:SetScript("OnMouseWheel", function(_, delta) ScrollBy(delta > 0 and -SCROLL_STEP or SCROLL_STEP) end)
+    edit:SetScript("OnTextChanged", UpdateScrollbar)
     return edit
 end
 
@@ -2043,35 +2031,16 @@ local function AttachVerticalScroll(parent, scroll, child, contentHeight,
     child:SetHeight(math.max(viewportHeight, contentHeight))
     if scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
 
-    local slider = Track(CreateFrame("Slider", nil, parent))
+    local slider = Track(UI.CreateVerticalScrollbar(parent, sliderHeight, function(value)
+        scroll:SetVerticalScroll(value)
+    end, wheelStep or 30))
     slider:SetPoint("TOPLEFT", x, y)
-    slider:SetSize(16, sliderHeight)
-    slider:SetOrientation("VERTICAL")
-    slider:SetMinMaxValues(0, maximum)
-    slider:SetValueStep(math.max(1, wheelStep or 30))
-    local track = slider:CreateTexture(nil, "BACKGROUND")
-    track:SetTexture(WHITE_TEX)
-    track:SetWidth(3)
-    track:SetPoint("TOP", 0, 0)
-    track:SetPoint("BOTTOM", 0, 0)
-    track:SetVertexColor(Unpack(BORDER))
-    slider:SetThumbTexture(WHITE_TEX)
-    local thumb = slider:GetThumbTexture()
-    if thumb then
-        thumb:SetSize(12, 24)
-        thumb:SetVertexColor(Unpack(BRAND))
-    end
-
-    slider:SetScript("OnValueChanged", function(_, value)
-        scroll:SetVerticalScroll(maximum - (value or maximum))
-    end)
-    slider:SetValue(maximum)
+    slider:SetScrollRange(maximum, 0)
 
     local function ScrollBy(delta)
         local value = math.max(0, math.min(maximum,
             (scroll:GetVerticalScroll() or 0) + delta))
-        scroll:SetVerticalScroll(value)
-        slider:SetValue(maximum - value)
+        slider:SetScrollValue(value)
     end
     local function BindWheel(control)
         control:EnableMouse(true)
@@ -2082,7 +2051,6 @@ local function AttachVerticalScroll(parent, scroll, child, contentHeight,
     end
     BindWheel(scroll)
     BindWheel(child)
-    if maximum <= 0 then slider:Hide() end
     return ScrollBy, BindWheel
 end
 
@@ -2928,19 +2896,37 @@ OpenTextPopup = function(opts)
 
     -- Multi-line box inside a scroll frame, parented to the window so it lives
     -- and dies with this dialog rather than the page beneath it.
-    local scroll = CreateFrame("ScrollFrame", nil, window, "UIPanelScrollFrameTemplate")
+    local scroll = CreateFrame("ScrollFrame", nil, window)
     scroll:SetPoint("TOPLEFT", 24, -82); scroll:SetSize(430, 96)
     local box = CreateFrame("Frame", nil, window)
     box:SetPoint("TOPLEFT", scroll, "TOPLEFT", -6, 6)
-    box:SetPoint("BOTTOMRIGHT", scroll, "BOTTOMRIGHT", 24, -6)
+    box:SetPoint("BOTTOMRIGHT", scroll, "BOTTOMRIGHT", 6, -6)
     UI.Backdrop(box, COLORS.control, 1)
     local edit = CreateFrame("EditBox", nil, scroll)
-    edit:SetMultiLine(true); edit:SetSize(430, 96); edit:SetAutoFocus(false)
+    edit:SetMultiLine(true); edit:SetSize(412, 96); edit:SetAutoFocus(false)
     edit:SetFontObject(ChatFontNormal); edit:SetTextInsets(4, 4, 4, 4)
     edit:SetScript("OnEscapePressed", function() Close() end)
     edit:SetScript("OnEditFocusGained", function(self) focusedEditBox = self end)
     edit:SetScript("OnEditFocusLost", function(self) if focusedEditBox == self then focusedEditBox = nil end end)
     scroll:SetScrollChild(edit)
+    local popupScrollbar = UI.CreateVerticalScrollbar(window, 92, function(value)
+        scroll:SetVerticalScroll(value)
+    end, 30)
+    popupScrollbar:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", -2, -2)
+    local function UpdatePopupScrollbar()
+        popupScrollbar:SetScrollRange(math.max(0, (edit:GetHeight() or 0) - 96),
+            scroll:GetVerticalScroll() or 0)
+    end
+    local function ScrollPopup(delta)
+        local maximum = math.max(0, (edit:GetHeight() or 0) - 96)
+        popupScrollbar:SetScrollRange(maximum,
+            math.max(0, math.min(maximum, (scroll:GetVerticalScroll() or 0) + delta)))
+    end
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(_, delta) ScrollPopup(delta > 0 and -30 or 30) end)
+    edit:EnableMouseWheel(true)
+    edit:SetScript("OnMouseWheel", function(_, delta) ScrollPopup(delta > 0 and -30 or 30) end)
+    edit:HookScript("OnTextChanged", UpdatePopupScrollbar)
 
     -- Buttons anchored bottom-right; the accept button (import) sits left of
     -- the Cancel button, matching the Yes/No ordering used elsewhere. Export
@@ -3124,10 +3110,7 @@ OpenQuickAbandonWindow = function()
     ------------------------------------------------------------------
     -- A selectable, scrollable list of rows (SelectionButton, the control
     -- the rule pages use for the same highlight-and-act interaction).
-    -- Scrolling is a pair of up/down arrow buttons, the same idea as the
-    -- dropdown menu's "Scroll up"/"Scroll down" rows, rather than a
-    -- Blizzard scrollbar - shown only when there is more content than fits,
-    -- like the Best Seen panel's scroll bar used to be.
+    -- Each list uses the shared arrowless pill scrollbar.
     ------------------------------------------------------------------
     local SCROLL_STEP = 50
     local function BuildSelectableList(x, y, width, height, rowTooltipTitle, rowTooltipText)
@@ -3145,44 +3128,24 @@ OpenQuickAbandonWindow = function()
         scrollFrame:SetScrollChild(scrollChild)
         local contentHeight = 1
 
-        local upArrow = CreateFrame("Button", nil, window)
-        upArrow:SetSize(16, 16)
-        upArrow:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", -2, -2)
-        local upGlyph = upArrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        upGlyph:SetPoint("CENTER"); upGlyph:SetText("\226\150\178"); upGlyph:SetTextColor(Unpack(BRAND))
-        upArrow:Hide()
-
-        local downArrow = CreateFrame("Button", nil, window)
-        downArrow:SetSize(16, 16)
-        downArrow:SetPoint("BOTTOMRIGHT", scrollFrame, "BOTTOMRIGHT", -2, 2)
-        local downGlyph = downArrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        downGlyph:SetPoint("CENTER"); downGlyph:SetText("\226\150\188"); downGlyph:SetTextColor(Unpack(BRAND))
-        downArrow:Hide()
-
         -- contentHeight is tracked locally rather than read back via
         -- scrollChild:GetHeight() - keeping the one true value we just set
         -- avoids any dependency on the frame reporting it back correctly.
-        local function UpdateArrows()
+        local scrollbar = UI.CreateVerticalScrollbar(window, height - 4, function(value)
+            scrollFrame:SetVerticalScroll(value)
+        end, SCROLL_STEP)
+        scrollbar:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", -2, -2)
+        local function UpdateScrollbar()
             local maxScroll = math.max(0, contentHeight - height)
-            if maxScroll <= 0 then
-                upArrow:Hide(); downArrow:Hide()
-                return
-            end
-            upArrow:Show(); downArrow:Show()
-            local current = scrollFrame:GetVerticalScroll() or 0
-            if current <= 0 then upArrow:Disable() else upArrow:Enable() end
-            if current >= maxScroll then downArrow:Disable() else downArrow:Enable() end
+            scrollbar:SetScrollRange(maxScroll, scrollFrame:GetVerticalScroll() or 0)
         end
         local function ScrollBy(delta)
             local maxScroll = math.max(0, contentHeight - height)
             local newValue = (scrollFrame:GetVerticalScroll() or 0) + delta
             if newValue < 0 then newValue = 0 end
             if newValue > maxScroll then newValue = maxScroll end
-            scrollFrame:SetVerticalScroll(newValue)
-            UpdateArrows()
+            scrollbar:SetScrollRange(maxScroll, newValue)
         end
-        upArrow:SetScript("OnClick", function() ScrollBy(-SCROLL_STEP) end)
-        downArrow:SetScript("OnClick", function() ScrollBy(SCROLL_STEP) end)
         scrollFrame:SetScript("OnMouseWheel", function(_, delta) ScrollBy(delta > 0 and -SCROLL_STEP or SCROLL_STEP) end)
 
         local list = {}
@@ -3214,7 +3177,7 @@ OpenQuickAbandonWindow = function()
             contentHeight = math.max(1, -rowY)
             scrollChild:SetHeight(contentHeight)
             scrollFrame:SetVerticalScroll(0)
-            UpdateArrows()
+            UpdateScrollbar()
         end
 
         function list:GetSelectedValue()
@@ -3788,9 +3751,7 @@ end
 -- scrolls inside its own area instead of pushing the detail panel and action
 -- buttons off the bottom of the pane. Rows are added by the caller onto the
 -- returned scrollChild (at x=0, stepping downward); call SetContentHeight once
--- the rows are placed so the arrows know whether scrolling is needed. Modeled
--- on the Quick Abandon list's arrow-based scrolling rather than a Blizzard
--- scrollbar, matching the rest of this window.
+-- the rows are placed so the shared pill scrollbar knows the available range.
 BuildScrollList = function(parent, x, y, width, height)
     local scrollFrame = Track(CreateFrame("ScrollFrame", nil, parent))
     scrollFrame:SetPoint("TOPLEFT", x, y); scrollFrame:SetSize(width, height)
@@ -3805,34 +3766,22 @@ BuildScrollList = function(parent, x, y, width, height)
     scrollChild:SetSize(width - 6, 1)
     scrollFrame:SetScrollChild(scrollChild)
 
-    local upArrow = Track(CreateFrame("Button", nil, parent))
-    upArrow:SetSize(16, 16); upArrow:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", -2, -2)
-    local upGlyph = upArrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    upGlyph:SetPoint("CENTER"); upGlyph:SetText("\226\150\178"); upGlyph:SetTextColor(Unpack(BRAND))
-    local downArrow = Track(CreateFrame("Button", nil, parent))
-    downArrow:SetSize(16, 16); downArrow:SetPoint("BOTTOMRIGHT", scrollFrame, "BOTTOMRIGHT", -2, 2)
-    local downGlyph = downArrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    downGlyph:SetPoint("CENTER"); downGlyph:SetText("\226\150\188"); downGlyph:SetTextColor(Unpack(BRAND))
-    upArrow:Hide(); downArrow:Hide()
-
     local SCROLL_STEP = 75
     local contentHeight = 1
-    local function UpdateArrows()
+    local scrollbar = Track(UI.CreateVerticalScrollbar(parent, height - 4, function(value)
+        scrollFrame:SetVerticalScroll(value)
+    end, SCROLL_STEP))
+    scrollbar:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", -2, -2)
+    local function UpdateScrollbar()
         local maxScroll = math.max(0, contentHeight - height)
-        if maxScroll <= 0 then upArrow:Hide(); downArrow:Hide(); return end
-        upArrow:Show(); downArrow:Show()
-        local current = scrollFrame:GetVerticalScroll() or 0
-        if current <= 0 then upArrow:Disable() else upArrow:Enable() end
-        if current >= maxScroll then downArrow:Disable() else downArrow:Enable() end
+        scrollbar:SetScrollRange(maxScroll, scrollFrame:GetVerticalScroll() or 0)
     end
     local function ScrollBy(delta)
         local maxScroll = math.max(0, contentHeight - height)
         local value = (scrollFrame:GetVerticalScroll() or 0) + delta
         if value < 0 then value = 0 elseif value > maxScroll then value = maxScroll end
-        scrollFrame:SetVerticalScroll(value); UpdateArrows()
+        scrollbar:SetScrollRange(maxScroll, value)
     end
-    upArrow:SetScript("OnClick", function() ScrollBy(-SCROLL_STEP) end)
-    downArrow:SetScript("OnClick", function() ScrollBy(SCROLL_STEP) end)
     scrollFrame:SetScript("OnMouseWheel", function(_, delta) ScrollBy(delta > 0 and -SCROLL_STEP or SCROLL_STEP) end)
 
     -- Set the total row height, then optionally scroll so a given downward
@@ -3845,7 +3794,7 @@ BuildScrollList = function(parent, x, y, width, height)
             local target = math.min(maxScroll, math.max(0, revealOffset - height + 25))
             scrollFrame:SetVerticalScroll(target)
         end
-        UpdateArrows()
+        UpdateScrollbar()
     end
 
     return scrollChild, SetContentHeight
@@ -3870,26 +3819,6 @@ local function BuildVirtualList(parent, x, y, width, height, rowHeight, createRo
     child:SetSize(width - 14, height)
     scrollFrame:SetScrollChild(child)
 
-    local track = backdrop:CreateTexture(nil, "ARTWORK")
-    track:SetTexture(WHITE_TEX)
-    track:SetPoint("TOPRIGHT", -5, -20)
-    track:SetPoint("BOTTOMRIGHT", -5, 20)
-    track:SetWidth(2)
-    track:SetVertexColor(BORDER[1], BORDER[2], BORDER[3], 0.9)
-    local thumb = backdrop:CreateTexture(nil, "OVERLAY")
-    thumb:SetTexture(WHITE_TEX)
-    thumb:SetWidth(4)
-    thumb:SetVertexColor(Unpack(BRAND))
-
-    local upArrow = Track(CreateFrame("Button", nil, parent))
-    upArrow:SetSize(14, 14); upArrow:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", -1, -2)
-    local upGlyph = upArrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    upGlyph:SetPoint("CENTER"); upGlyph:SetText("\226\150\178"); upGlyph:SetTextColor(Unpack(BRAND))
-    local downArrow = Track(CreateFrame("Button", nil, parent))
-    downArrow:SetSize(14, 14); downArrow:SetPoint("BOTTOMRIGHT", scrollFrame, "BOTTOMRIGHT", -1, 2)
-    local downGlyph = downArrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    downGlyph:SetPoint("CENTER"); downGlyph:SetText("\226\150\188"); downGlyph:SetTextColor(Unpack(BRAND))
-
     local visibleRows = math.max(1, math.floor(height / rowHeight))
     local rows = {}
     for poolIndex = 1, visibleRows do
@@ -3902,7 +3831,15 @@ local function BuildVirtualList(parent, x, y, width, height, rowHeight, createRo
     end
 
     local items, first = {}, 1
-    local function Render()
+    local Render
+    local syncingScrollbar = false
+    local scrollbar = Track(UI.CreateVerticalScrollbar(parent, height - 4, function(value)
+        if syncingScrollbar then return end
+        first = math.floor(value + 0.5) + 1
+        if Render then Render() end
+    end, 1))
+    scrollbar:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", -2, -2)
+    Render = function()
         local maximumFirst = math.max(1, #items - visibleRows + 1)
         if first > maximumFirst then first = maximumFirst end
         if first < 1 then first = 1 end
@@ -3912,26 +3849,19 @@ local function BuildVirtualList(parent, x, y, width, height, rowHeight, createRo
         end
         local scrollable = #items > visibleRows
         if scrollable then
-            upArrow:Show(); downArrow:Show(); track:Show(); thumb:Show()
-            if first <= 1 then upArrow:Disable() else upArrow:Enable() end
-            if first >= maximumFirst then downArrow:Disable() else downArrow:Enable() end
-            local trackHeight = math.max(1, height - 40)
-            local thumbHeight = math.max(18, trackHeight * visibleRows / #items)
-            local travel = math.max(0, trackHeight - thumbHeight)
-            local progress = maximumFirst > 1 and (first - 1) / (maximumFirst - 1) or 0
-            thumb:ClearAllPoints()
-            thumb:SetPoint("TOP", track, "TOP", 0, -(progress * travel))
-            thumb:SetHeight(thumbHeight)
+            syncingScrollbar = true
+            scrollbar:SetScrollRange(maximumFirst - 1, first - 1)
+            syncingScrollbar = false
         else
-            upArrow:Hide(); downArrow:Hide(); track:Hide(); thumb:Hide()
+            syncingScrollbar = true
+            scrollbar:SetScrollRange(0, 0)
+            syncingScrollbar = false
         end
     end
     local function ScrollBy(delta)
         first = first + delta
         Render()
     end
-    upArrow:SetScript("OnClick", function() ScrollBy(-1) end)
-    downArrow:SetScript("OnClick", function() ScrollBy(1) end)
     scrollFrame:SetScript("OnMouseWheel", function(_, delta) ScrollBy(delta > 0 and -3 or 3) end)
 
     local function SetItems(newItems, revealItem)
