@@ -602,6 +602,8 @@ function AA.StartInventory(bag, slot)
         Log("Finish or cancel the current round first.", "warn")
         return false
     end
+    local isMaster, reason = PlayerIsMasterLooter()
+    if not isMaster then FailSafe(reason); return false end
     local raidCount = GetNumRaidMembers and (GetNumRaidMembers() or 0) or 0
     local partyCount = GetNumPartyMembers and (GetNumPartyMembers() or 0) or 0
     if raidCount == 0 and partyCount == 0 then FailSafe("inventory rolls require a party or raid"); return false end
@@ -954,6 +956,19 @@ local function CreateWindow()
     RefreshUI()
 end
 
+local function ShowWindowIfMaster(reportFailure)
+    if not frame then return false end
+    local isMaster, reason = PlayerIsMasterLooter()
+    if not isMaster then
+        frame:Hide()
+        if reportFailure then Log("Master Loot Awards is only available to the current master looter: " .. reason .. ".", "warn") end
+        return false
+    end
+    frame:Show()
+    RefreshUI()
+    return true
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("LOOT_OPENED")
@@ -963,6 +978,7 @@ eventFrame:RegisterEvent("LOOT_SLOT_CHANGED")
 eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")
 eventFrame:RegisterEvent("UI_ERROR_MESSAGE")
 eventFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
+eventFrame:RegisterEvent("PARTY_LOOT_METHOD_CHANGED")
 eventFrame:RegisterEvent("RAID_ROSTER_UPDATE")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("LOOT_BIND_CONFIRM")
@@ -990,7 +1006,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         lootSessionID = lootSessionID + 1
         lootOpen = true
         SelectFirstLootItem()
-        if frame then frame:Show(); RefreshUI() end
+        ShowWindowIfMaster(false)
     elseif event == "LOOT_CLOSED" then
         lootOpen = false
         selectedSlot = nil
@@ -1013,10 +1029,22 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         FailSafe("the server rejected or could not confirm the assignment: " .. tostring(arg1 or "unknown error"))
     elseif event == "LOOT_SLOT_CHANGED" then
         RefreshUI()
-    elseif (event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE") and current.state == STATE_PENDING then
-        FailSafe("the group changed while assignment was pending")
-    elseif event == "PLAYER_ENTERING_WORLD" and current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED then
-        AA.Cancel("world changed")
+    elseif event == "PARTY_MEMBERS_CHANGED" or event == "PARTY_LOOT_METHOD_CHANGED" or event == "RAID_ROSTER_UPDATE" then
+        local isMaster = PlayerIsMasterLooter()
+        if not isMaster then
+            if frame then frame:Hide() end
+            if current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED and current.state ~= STATE_CANCELLED and current.state ~= STATE_FAILED then
+                AA.Cancel("you are no longer the master looter")
+            end
+        elseif current.state == STATE_PENDING then
+            FailSafe("the group or loot method changed while assignment was pending")
+        elseif event == "PARTY_LOOT_METHOD_CHANGED" and lootOpen then
+            ShowWindowIfMaster(false)
+        end
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        if current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED then AA.Cancel("world changed") end
+        local isMaster = PlayerIsMasterLooter()
+        if frame and not isMaster then frame:Hide() end
     elseif event == "LOOT_BIND_CONFIRM" and current.state == STATE_PENDING then
         current.pendingAward.awaitingBindConfirmation = true
         Log("Bind confirmation requires a manual click until target-server behavior is verified.", "warn")
@@ -1086,7 +1114,7 @@ SlashCmdList["AUTOEVERYTHINGAWARD"] = function(message)
     command = string.lower(command or "")
     if command == "" then
         if not frame then return end
-        if frame:IsShown() then frame:Hide() else frame:Show(); RefreshUI() end
+        if frame:IsShown() then frame:Hide() else ShowWindowIfMaster(true) end
     elseif command == "start" then AA.Start(argument ~= "" and argument or nil)
     elseif command == "stop" then AA.Stop()
     elseif command == "cancel" then AA.Cancel()
