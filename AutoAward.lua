@@ -85,7 +85,10 @@ local function SamePlayer(a, b)
 end
 
 local function GroupChannel()
-    if GetNumRaidMembers and (GetNumRaidMembers() or 0) > 0 then return "RAID" end
+    if GetNumRaidMembers and (GetNumRaidMembers() or 0) > 0 then
+        local canRaidWarn = (IsRaidLeader and IsRaidLeader()) or (IsRaidOfficer and IsRaidOfficer())
+        return canRaidWarn and "RAID_WARNING" or "RAID"
+    end
     if GetNumPartyMembers and (GetNumPartyMembers() or 0) > 0 then return "PARTY" end
     return nil
 end
