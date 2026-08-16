@@ -2056,9 +2056,8 @@ end
 
 pageBuilders.Buff = function(parent)
     SectionCard(parent, 12, -76, 700, 140)
-    SectionCard(parent, 12, -228, 700, 90)
-    SectionCard(parent, 12, -330, 700, 280)
-    PageHeader(parent, "Auto Buff", "Choose learned helpful spells, decide who receives them, then click the secure Buff Next action.")
+    SectionCard(parent, 12, -228, 700, 374)
+    PageHeader(parent, "Auto Buff", "Assign learned helpful spells to yourself or a group role, then click the secure Buff Next action.")
 
     if not AutoBuff then
         local warning = Label(parent, "AutoBuff.lua did not load. Fully restart the game client after updating the addon.", 28, -88)
@@ -2078,7 +2077,7 @@ pageBuilders.Buff = function(parent)
         "Hides the status window when every configured buff is present above the rebuff threshold.")
     BindToggleDependency(windowToggle, hideToggle)
     ScalarCheck(parent, "buff", AutoBuffConfig, "includeSelf", "Include yourself", 20, -140, true,
-        "Includes the player when a buff's target policy is Everyone or Self only.")
+        "Includes your character when buffs are assigned to Self.")
     ScalarCheck(parent, "buff", AutoBuffConfig, "includeParty", "Include party", 246, -140, true,
         "Scans party members for configured buffs.")
     ScalarCheck(parent, "buff", AutoBuffConfig, "includeRaid", "Include raid", 472, -140, true,
@@ -2087,76 +2086,36 @@ pageBuilders.Buff = function(parent)
         "Treat a configured buff as missing when it has this many seconds or less remaining.",
         "Rebuff Threshold", 650, " sec")
 
-    Label(parent, "Add Learned Buff", 28, -238, 13)
+    Label(parent, "Buff Assignments", 28, -238, 13)
     local learnedChoices = {}
     for _, record in ipairs(AutoBuff and AutoBuff.GetAvailableBuffs and AutoBuff.GetAvailableBuffs() or {}) do
         table.insert(learnedChoices, { text = record.name, value = record.name })
     end
-    local selectedSpell = learnedChoices[1] and learnedChoices[1].value or ""
     if #learnedChoices == 0 then
         learnedChoices[1] = { text = "No helpful spells found", value = "" }
     end
-    local targetChoices = {
-        { text = "Everyone", value = "all" },
-        { text = "Self only", value = "self" },
-        { text = "Group only", value = "group" },
-        { text = "Casters", value = "caster" },
-        { text = "Melee DPS", value = "melee" },
-        { text = "Tanks", value = "tank" },
-        { text = "Healers", value = "healer" },
+    local assignmentRows = {
+        { label = "Self", target = "self", help = "Buffs assigned here are cast only on your character." },
+        { label = "Caster", target = "caster", help = "Buffs assigned here are cast on group members assigned as casters." },
+        { label = "Tank", target = "tank", help = "Buffs assigned here are cast on group members assigned as tanks." },
+        { label = "Healer", target = "healer", help = "Buffs assigned here are cast on group members assigned as healers." },
+        { label = "Melee", target = "melee", help = "Buffs assigned here are cast on group members assigned as melee." },
     }
-    ChoiceButton(parent, "Spell", 28, -266, 344, learnedChoices, selectedSpell, function(value) selectedSpell = value end)
-    local addTargets = MultiChoiceEditor(parent, "Targets", 384, -266, 190,
-        targetChoices, { "all" }, "No targets", "all")
-    local addButton = Button(parent, "Add", 586, -266, 106, function()
-        local ok, err = AutoBuff.AddBuff(selectedSpell, addTargets:GetSelected() or {})
-        if not ok then Alert(err) end
-    end)
-    EmphasizeButton(addButton, BRAND)
-    if selectedSpell == "" then addButton:Disable() end
-    AddTooltip(addButton, "Add buff", "Adds this learned helpful spell to the active profile. A buff can target any number of categories.")
-
-    Label(parent, "Configured Buffs", 28, -340, 13)
-    local buffs = AutoBuff and AutoBuff.GetBuffs and AutoBuff.GetBuffs() or {}
-    local buffScroll = Track(CreateFrame("ScrollFrame", nil, parent))
-    buffScroll:SetPoint("TOPLEFT", 24, -360)
-    buffScroll:SetSize(638, 240)
-    local buffList = CreateFrame("Frame", nil, buffScroll)
-    buffList:SetWidth(616)
-    buffScroll:SetScrollChild(buffList)
-    local buffContentHeight = #buffs * 30 + 8
-    local ScrollBuffsBy, BindBuffWheel = AttachVerticalScroll(parent, buffScroll, buffList,
-        buffContentHeight, 240, 668, -390, 166, 60)
-    local previousBuffs = Button(parent, "Previous page", 488, -332, 98, function() ScrollBuffsBy(-240) end, 22)
-    local nextBuffs = Button(parent, "Next page", 594, -332, 98, function() ScrollBuffsBy(240) end, 22)
-    if buffContentHeight <= 240 then previousBuffs:Disable(); nextBuffs:Disable() end
-    if #buffs == 0 then
-        local empty = Label(buffList, "No buffs configured. Add a learned helpful spell above.", 8, -12)
-        empty:SetTextColor(Unpack(TEXT_MUTED))
-    end
-    for index, entry in ipairs(buffs) do
-        local rowIndex = index
-        local y = -4 - ((index - 1) * 30)
-        local spell = Label(buffList, entry.spell or "Unknown spell", 8, y - 4)
-        spell:SetWidth(270)
-        spell:SetJustifyH("LEFT")
-        local targets = MultiChoiceEditor(buffList, "Targets", 284, y, 214, targetChoices,
-            AutoBuff.GetBuffTargets(entry), "No targets", "all")
-        BindBuffWheel(targets)
-        targets:SetOnSelectionChanged(function()
-            local list = Core.DeepCopy(AutoBuff.GetBuffs())
-            if not list[rowIndex] then return end
-            local selected = targets:GetSelected()
-            list[rowIndex].target = nil
-            list[rowIndex].targets = AutoBuff.GetBuffTargets({ targets=selected or {} })
+    for index, definition in ipairs(assignmentRows) do
+        local assignmentTarget = definition.target
+        local y = -270 - ((index - 1) * 58)
+        local roleLabel = Label(parent, definition.label, 28, y - 3, 12)
+        roleLabel:SetWidth(104)
+        roleLabel:SetJustifyH("LEFT")
+        local selector = MultiChoiceEditor(parent, "Buffs", 144, y, 548, learnedChoices,
+            AutoBuff.GetAssignedBuffs(assignmentTarget), "None")
+        selector:SetOnSelectionChanged(function()
+            local list, err = AutoBuff.BuildAssignedBuffs(assignmentTarget, selector:GetSelected() or {})
+            if not list then Alert(err); return end
             SetSettingWithoutRefresh("buff", "buffs", list)
         end)
-        local remove = Button(buffList, "Remove", 508, y, 100, function()
-            local ok, err = AutoBuff.RemoveBuff(rowIndex)
-            if not ok then Alert(err) end
-        end)
-        BindBuffWheel(remove)
-        AddTooltip(remove, "Remove " .. tostring(entry.spell), "Removes this buff from the active profile; it does not alter your spellbook.")
+        AddTooltip(roleLabel, definition.label .. " buffs", definition.help)
+        AddTooltip(selector, definition.label .. " buffs", definition.help)
     end
 end
 

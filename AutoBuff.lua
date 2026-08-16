@@ -71,6 +71,10 @@ local VALID_TARGETS = {
     caster = true, melee = true, tank = true, healer = true,
 }
 local TARGET_ORDER = { "all", "self", "group", "caster", "melee", "tank", "healer" }
+local ASSIGNMENT_TARGET_ORDER = { "self", "caster", "tank", "healer", "melee" }
+local ASSIGNMENT_TARGETS = {
+    self = true, caster = true, tank = true, healer = true, melee = true,
+}
 
 local function NormalizeTargets(value)
     local selected = {}
@@ -87,6 +91,28 @@ local function NormalizeTargets(value)
         if selected[target] then result[#result + 1] = target end
     end
     return result
+end
+
+-- Older profiles could store broad "all" and "group" policies. The
+-- role-first editor expands those policies into its five explicit rows so a
+-- profile keeps the same visible selections when it is next edited.
+local function ExpandAssignmentTargets(value)
+    local expanded = {}
+    for _, target in ipairs(NormalizeTargets(value)) do
+        if target == "all" then
+            for _, assignmentTarget in ipairs(ASSIGNMENT_TARGET_ORDER) do
+                expanded[assignmentTarget] = true
+            end
+        elseif target == "group" then
+            expanded.caster = true
+            expanded.tank = true
+            expanded.healer = true
+            expanded.melee = true
+        elseif ASSIGNMENT_TARGETS[target] then
+            expanded[target] = true
+        end
+    end
+    return expanded
 end
 
 local function NormalizeName(name)
@@ -183,6 +209,82 @@ function AB.GetBuffTargets(entry)
     return NormalizeTargets(entry.targets or entry.target or "all")
 end
 
+function AB.GetAssignedBuffs(target)
+    if not ASSIGNMENT_TARGETS[target] then return {} end
+    local assigned = {}
+    for _, entry in ipairs(BuffList()) do
+        if type(entry) == "table" and entry.spell then
+            local targets = ExpandAssignmentTargets(entry.targets or entry.target or "all")
+            if targets[target] then table.insert(assigned, entry.spell) end
+        end
+    end
+    return assigned
+end
+
+local function SelectedSpellSet(spells)
+    local selected = {}
+    if type(spells) == "table" then
+        for key, value in pairs(spells) do
+            local spell = type(key) == "number" and value or (value and key or nil)
+            if type(spell) == "string" and spell ~= "" then selected[spell] = true end
+        end
+    elseif type(spells) == "string" and spells ~= "" then
+        selected[spells] = true
+    end
+    return selected
+end
+
+function AB.BuildAssignedBuffs(target, spells)
+    if not ASSIGNMENT_TARGETS[target] then return nil, "Unknown buff target group." end
+    local selected = SelectedSpellSet(spells)
+    local orderedSpells, targetsBySpell, seen = {}, {}, {}
+
+    for _, entry in ipairs(BuffList()) do
+        if type(entry) == "table" and type(entry.spell) == "string" and entry.spell ~= "" then
+            if not seen[entry.spell] then
+                seen[entry.spell] = true
+                table.insert(orderedSpells, entry.spell)
+            end
+            local expanded = ExpandAssignmentTargets(entry.targets or entry.target or "all")
+            local spellTargets = targetsBySpell[entry.spell] or {}
+            targetsBySpell[entry.spell] = spellTargets
+            for assignmentTarget in pairs(expanded) do spellTargets[assignmentTarget] = true end
+        end
+    end
+
+    local selectedSpells = {}
+    for spell in pairs(selected) do table.insert(selectedSpells, spell) end
+    table.sort(selectedSpells, function(a, b) return string.lower(a) < string.lower(b) end)
+    for _, spell in ipairs(selectedSpells) do
+        if not seen[spell] then
+            seen[spell] = true
+            table.insert(orderedSpells, spell)
+            targetsBySpell[spell] = {}
+        end
+    end
+    for spell, spellTargets in pairs(targetsBySpell) do
+        spellTargets[target] = selected[spell] or nil
+    end
+
+    local list = {}
+    for _, spell in ipairs(orderedSpells) do
+        local targets = {}
+        local spellTargets = targetsBySpell[spell] or {}
+        for _, assignmentTarget in ipairs(ASSIGNMENT_TARGET_ORDER) do
+            if spellTargets[assignmentTarget] then table.insert(targets, assignmentTarget) end
+        end
+        if #targets > 0 then table.insert(list, { spell = spell, targets = targets }) end
+    end
+    return list
+end
+
+function AB.SetAssignedBuffs(target, spells)
+    local list, err = AB.BuildAssignedBuffs(target, spells)
+    if not list then return false, err end
+    AutoCore.SetSetting("buff", "buffs", list)
+    return true
+end
+
 function AB.AddBuff(spell, target)
     spell = strtrim(tostring(spell or ""))
     if spell == "" then return false, "Choose a learned helpful spell." end
@@ -193,7 +295,7 @@ function AB.AddBuff(spell, target)
     local list = AutoCore.DeepCopy(BuffList())
     for _, entry in ipairs(list) do
         if entry.spell == spell then
-            return false, "That buff is already configured; add categories in its Targets menu."
+            return false, "That buff is already configured; edit it in the role assignment rows."
         end
     end
     table.insert(list, { spell = spell, targets = targets })
@@ -306,7 +408,6 @@ end
 
 local function RosterUnits()
     local units = {}
-    AddRosterUnit(units, "player", true)
     local raidCount = GetNumRaidMembers and (GetNumRaidMembers() or 0) or 0
     if raidCount > 0 then
         for index = 1, raidCount do
@@ -318,7 +419,6 @@ local function RosterUnits()
         for index = 1, partyCount do AddRosterUnit(units, "party" .. index, false) end
     end
     table.sort(units, function(a, b)
-        if a.isSelf ~= b.isSelf then return a.isSelf end
         return string.lower(a.name) < string.lower(b.name)
     end)
     return units
@@ -357,7 +457,8 @@ local function TargetAllowed(entry, unit)
         if policy == "all" then return true end
         if policy == "self" and unit.isSelf then return true end
         if policy == "group" and not unit.isSelf then return true end
-        if (policy == "caster" or policy == "melee" or policy == "tank" or policy == "healer")
+        if not unit.isSelf
+            and (policy == "caster" or policy == "melee" or policy == "tank" or policy == "healer")
             and unit.role == policy
         then
             return true
