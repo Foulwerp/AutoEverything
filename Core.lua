@@ -2753,7 +2753,7 @@ end
 ----------------------------------------------------------------------
 -- IsUpgrade
 -- options: armorTypes, mainHandTypes, offHandTypes, rangedTypes, canOffHandWithTwoHand,
---          usable, location (preferred), or legacy bag/slot/roll/quest fields
+--          lockedSlots, usable, location (preferred), or legacy bag/slot/roll/quest fields
 ----------------------------------------------------------------------
 local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debugInfo)
     local function SetReason(msg)
@@ -2801,6 +2801,11 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
     local mainHandTypes = options and options.mainHandTypes or {}
     local offHandTypes = options and options.offHandTypes or {}
     local rangedTypes = options and options.rangedTypes or {}
+    local lockedSlots = options and options.lockedSlots or {}
+    if type(lockedSlots) ~= "table" then lockedSlots = {} end
+    local function IsSlotLocked(invSlot)
+        return lockedSlots[invSlot] == true
+    end
     -- Selecting the same two-handed family for both hands is the capability
     -- declaration. One-handed dual wield is already inferred the same way.
     local canOffHandWithTwoHand = Core.InferCanOffHandWithTwoHand(mainHandTypes, offHandTypes)
@@ -2856,16 +2861,27 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
     local function CompareWeakerOfTwo(slotA, slotB)
         local scoreA, linkA = ScoreInvSlot(slotA)
         local scoreB, linkB = ScoreInvSlot(slotB)
-        local equippedScore = math.min(scoreA, scoreB)
+        local eligibleA, eligibleB = not IsSlotLocked(slotA), not IsSlotLocked(slotB)
+        if not eligibleA and not eligibleB then
+            SetComparisons({
+                { slot = slotA, score = scoreA, eligible = false },
+                { slot = slotB, score = scoreB, eligible = false },
+            }, nil, false)
+            SetReason("all compatible equipment slots are locked")
+            return false, newScore, 0, nil, nil
+        end
+        local equippedScore
         local equippedLink, equipTargetSlot
-        if scoreA <= scoreB then
+        if eligibleA and (not eligibleB or scoreA <= scoreB) then
+            equippedScore = scoreA
             equippedLink, equipTargetSlot = linkA, slotA
         else
+            equippedScore = scoreB
             equippedLink, equipTargetSlot = linkB, slotB
         end
         SetComparisons({
-            { slot = slotA, score = scoreA },
-            { slot = slotB, score = scoreB },
+            { slot = slotA, score = scoreA, eligible = eligibleA },
+            { slot = slotB, score = scoreB, eligible = eligibleB },
         }, equipTargetSlot, false)
         if equippedScore <= 0 then
             SetReason("both slots are empty but item has no weighted stats (score " .. string.format("%.2f", newScore) .. ")")
@@ -2878,6 +2894,10 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
     local function CompareSingleSlot(invSlot)
         local equippedScore, equippedLink = ScoreInvSlot(invSlot)
         SetComparisons({ { slot = invSlot, score = equippedScore } }, invSlot, false)
+        if IsSlotLocked(invSlot) then
+            SetReason("equipment slot is locked")
+            return false, newScore, equippedScore, equippedLink, nil
+        end
         if equippedScore <= 0 then
             SetReason("nothing is equipped in that slot but item has no weighted stats (score " .. string.format("%.2f", newScore) .. ")")
             return newScore > 0, newScore, equippedScore, equippedLink, invSlot
@@ -2889,6 +2909,16 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
     local function CompareEligibleHands(allowMain, allowOff)
         local scoreMain, linkMain = ScoreInvSlot(16)
         local scoreOff, linkOff = ScoreInvSlot(17)
+        allowMain = allowMain and not IsSlotLocked(16)
+        allowOff = allowOff and not IsSlotLocked(17)
+        if not allowMain and not allowOff then
+            SetComparisons({
+                { slot = 16, score = scoreMain, eligible = false },
+                { slot = 17, score = scoreOff, eligible = false },
+            }, nil, false)
+            SetReason("all compatible hand slots are locked")
+            return false, newScore, 0, nil, nil
+        end
         local equippedScore, equippedLink, equipTargetSlot
         if allowMain and allowOff then
             if scoreMain <= scoreOff then
@@ -2918,25 +2948,7 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
 
     if slotId == 11 or slotId == 12 or slotId == 13 or slotId == 14 then
         local baseSlot = (slotId == 11 or slotId == 12) and 11 or 13
-        local scoreA, linkA = ScoreInvSlot(baseSlot)
-        local scoreB, linkB = ScoreInvSlot(baseSlot + 1)
-        local equippedScore = math.min(scoreA, scoreB)
-        local equippedLink, equipTargetSlot
-        if scoreA <= scoreB then
-            equippedLink, equipTargetSlot = linkA, baseSlot
-        else
-            equippedLink, equipTargetSlot = linkB, baseSlot + 1
-        end
-        SetComparisons({
-            { slot = baseSlot, score = scoreA },
-            { slot = baseSlot + 1, score = scoreB },
-        }, equipTargetSlot, false)
-        if equippedScore <= 0 then
-            SetReason("both " .. ((baseSlot == 11) and "rings" or "trinkets") .. " are empty but item has no weighted stats (score " .. string.format("%.2f", newScore) .. ")")
-            return newScore > 0, newScore, equippedScore, equippedLink, equipTargetSlot
-        end
-        SetReason("score " .. string.format("%.2f", newScore) .. " is not at least " .. string.format("%.2f", equippedScore * (1 + threshold / 100)) .. " (" .. threshold .. "% over weaker " .. ((baseSlot == 11) and "ring" or "trinket") .. " " .. string.format("%.2f", equippedScore) .. ")")
-        return MeetsUpgradeThreshold(newScore, equippedScore), newScore, equippedScore, equippedLink, equipTargetSlot
+        return CompareWeakerOfTwo(baseSlot, baseSlot + 1)
     end
 
     if newEquipSlot == "INVTYPE_WEAPONMAINHAND" then
@@ -3002,20 +3014,11 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
         if canOffHandWithTwoHand then
             return CompareEligibleHands(inMain, inOff)
         end
-        local scoreMain, linkMain = ScoreInvSlot(16)
-        local scoreOff, linkOff = ScoreInvSlot(17)
-        local equippedScore = scoreMain + scoreOff
-        local equippedLink = linkMain or linkOff
-        SetComparisons({
-            { slot = 16, score = scoreMain },
-            { slot = 17, score = scoreOff },
-        }, 16, true)
-        if equippedScore <= 0 then
-            SetReason("main hand and off hand are both empty but item has no weighted stats (score " .. string.format("%.2f", newScore) .. ")")
-            return newScore > 0, newScore, equippedScore, equippedLink, 16
+        if IsSlotLocked(16) or IsSlotLocked(17) then
+            SetReason("a hand slot replaced by this two-handed weapon is locked")
+            return false, newScore, 0, nil, nil
         end
-        SetReason("score " .. string.format("%.2f", newScore) .. " is not at least " .. string.format("%.2f", equippedScore * (1 + threshold / 100)) .. " (" .. threshold .. "% over combined main+off " .. string.format("%.2f", equippedScore) .. ")")
-        return MeetsUpgradeThreshold(newScore, equippedScore), newScore, equippedScore, equippedLink, 16
+        return CompareSingleSlot(16)
     end
 
     if newEquipSlot == "INVTYPE_SHIELD" or newEquipSlot == "INVTYPE_HOLDABLE" then
@@ -3032,6 +3035,10 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
 
     local equippedScore, equippedLink = ScoreInvSlot(slotId)
     SetComparisons({ { slot = slotId, score = equippedScore } }, slotId, false)
+    if IsSlotLocked(slotId) then
+        SetReason("equipment slot is locked")
+        return false, newScore, equippedScore, equippedLink, nil
+    end
     if equippedScore <= 0 then
         SetReason("nothing is equipped in that slot but item has no weighted stats (score " .. string.format("%.2f", newScore) .. ")")
         return newScore > 0, newScore, equippedScore, equippedLink, slotId

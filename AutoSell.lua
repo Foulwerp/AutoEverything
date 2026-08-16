@@ -237,9 +237,7 @@ local function ShouldSell(data, boundStatus, usable, playerLevel, location)
     then
         return false
     end
-    -- Preserve the strongest bag candidates for each enabled weapon role.
-    -- This lets a future one-hand/off-hand pair develop while a stronger
-    -- two-hander is currently equipped.
+    -- Preserve hand-slot items that are individual upgrades.
     if (not config or config.protectWeaponBench ~= false)
         and AutoUpgrade and AutoUpgrade.IsWeaponBenchItem
         and AutoUpgrade.IsWeaponBenchItem(location and location.link, location)
@@ -714,7 +712,7 @@ SlashCmdList["AUTOSELL"] = function(msg)
             print("  Active rules: " .. #cfg.rules .. " (active profile order)")
             print("  Never-sell entries: " .. #cfg.never)
             print("  Maximum sell quality: " .. tostring(cfg.maxQuality ~= nil and cfg.maxQuality or "none"))
-            print("  Protect weapon candidates: " .. tostring(cfg.protectWeaponBench ~= false))
+            print("  Protect weapon upgrades: " .. tostring(cfg.protectWeaponBench ~= false))
             print("  Sale messages: " .. tostring(cfg.printMessages ~= false))
         end
     elseif msg == "debug" then
@@ -764,7 +762,7 @@ SlashCmdList["AUTOSELL"] = function(msg)
                             and AutoUpgrade and AutoUpgrade.IsWeaponBenchItem
                             and AutoUpgrade.IsWeaponBenchItem(link, { link = link, bag = bag, slot = slot })
                         then
-                            verdict = "WEAPON BENCH CANDIDATE - protected for a future weapon set"
+                            verdict = "WEAPON UPGRADE - protected from selling"
                         -- 4. No vendor price?
                         elseif not data.vendorPrice or data.vendorPrice <= 0 then
                             verdict = "no vendor price (can't be sold)"

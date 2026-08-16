@@ -2116,11 +2116,131 @@ pageBuilders.Buff = function(parent)
     end
 end
 
+local LOCKED_GEAR_SLOTS = {
+    { 1, "Head" }, { 2, "Neck" }, { 3, "Shoulder" }, { 4, "Shirt" },
+    { 5, "Chest" }, { 6, "Waist" }, { 7, "Legs" }, { 8, "Feet" },
+    { 9, "Wrist" }, { 10, "Hands" }, { 11, "Ring 1" }, { 12, "Ring 2" },
+    { 13, "Trinket 1" }, { 14, "Trinket 2" }, { 15, "Back" },
+    { 16, "Main Hand" }, { 17, "Off Hand" }, { 18, "Ranged / Relic" },
+    { 19, "Tabard" },
+}
+
+local function OpenLockedGearWindow()
+    local blocker = CreateFrame("Frame", nil, pageHost)
+    table.insert(ruleEditorBlockers, blocker)
+    blocker:SetAllPoints(pageHost)
+    blocker:SetFrameStrata("DIALOG"); blocker:SetFrameLevel(90); blocker:EnableMouse(true)
+
+    local dim = blocker:CreateTexture(nil, "BACKGROUND")
+    dim:SetAllPoints(blocker); dim:SetTexture(WHITE_TEX); dim:SetVertexColor(0, 0, 0, 0.55)
+
+    local window = CreateFrame("Frame", nil, blocker)
+    window:SetFrameStrata("DIALOG"); window:SetFrameLevel(100); window:EnableMouse(true)
+    window:SetPoint("CENTER", blocker, "CENTER", 0, 20)
+    window:SetSize(640, 430)
+    ModalSurface(window)
+
+    local function Close()
+        GameTooltip:Hide()
+        ForgetRuleEditor(blocker)
+        blocker:Hide()
+    end
+    StyledCloseButton(window, Close)
+
+    local heading = window:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    heading:SetPoint("TOPLEFT", 20, -18); heading:SetText("Locked Gear")
+    heading:SetTextColor(Unpack(BRAND))
+    local subtitle = window:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    subtitle:SetPoint("TOPLEFT", 20, -44); subtitle:SetWidth(590); subtitle:SetJustifyH("LEFT")
+    subtitle:SetText("Click an equipped item to protect or unprotect its slot from automatic upgrades.")
+    subtitle:SetTextColor(Unpack(TEXT_MUTED))
+
+    local resolved = Core.GetSetting("upgrade", "lockedSlots", {})
+    local lockedSlots = {}
+    if type(resolved) == "table" then
+        for slotId, locked in pairs(resolved) do
+            if locked == true then lockedSlots[slotId] = true end
+        end
+    end
+
+    local shown = 0
+    for _, definition in ipairs(LOCKED_GEAR_SLOTS) do
+        local slotId, slotName = definition[1], definition[2]
+        local link = GetInventoryItemLink("player", slotId)
+        if link then
+            local index = shown
+            shown = shown + 1
+            local column = math.floor(index / 10)
+            local rowIndex = index % 10
+            local x = 20 + column * 305
+            local y = -76 - rowIndex * 32
+            local row = SkinnedButton(window, "", x, y, 295, function(self)
+                lockedSlots[slotId] = not lockedSlots[slotId] or nil
+                SetSettingWithoutRefresh("upgrade", "lockedSlots", lockedSlots)
+                self:PaintLock()
+            end, 28)
+
+            local icon = row:CreateTexture(nil, "ARTWORK")
+            icon:SetPoint("LEFT", row, "LEFT", 4, 0); icon:SetSize(22, 22)
+            icon:SetTexture(GetInventoryItemTexture("player", slotId))
+
+            local slotLabel = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            slotLabel:SetPoint("LEFT", icon, "RIGHT", 7, 7); slotLabel:SetWidth(235)
+            slotLabel:SetJustifyH("LEFT"); slotLabel:SetText(slotName)
+            slotLabel:SetTextColor(Unpack(TEXT_MUTED))
+
+            local itemLabel = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            itemLabel:SetPoint("LEFT", icon, "RIGHT", 7, -7); itemLabel:SetWidth(235)
+            itemLabel:SetJustifyH("LEFT"); itemLabel:SetText(link)
+
+            local lockIcon = row:CreateTexture(nil, "OVERLAY")
+            lockIcon:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 5, -4)
+            lockIcon:SetSize(16, 16)
+            lockIcon:SetTexture("Interface\\Buttons\\LockButton-Locked-Up")
+
+            function row:PaintLock()
+                if lockedSlots[slotId] then
+                    lockIcon:Show()
+                    self:SetBackdropColor(Unpack(SELECT_BG))
+                    self:SetBackdropBorderColor(Unpack(BRAND))
+                else
+                    lockIcon:Hide()
+                    self:SetBackdropColor(Unpack(CTRL_BG))
+                    self:SetBackdropBorderColor(Unpack(BORDER))
+                end
+            end
+            row:HookScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetInventoryItem("player", slotId)
+                GameTooltip:AddLine(lockedSlots[slotId]
+                    and (slotName .. " is locked. Click to allow automatic replacement.")
+                    or (slotName .. " is unlocked. Click to prevent automatic replacement."),
+                    0.35, 0.85, 1, true)
+                GameTooltip:Show()
+            end)
+            row:HookScript("OnLeave", function(self) GameTooltip:Hide(); self:PaintLock() end)
+            row:PaintLock()
+        end
+    end
+
+    if shown == 0 then
+        local empty = window:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        empty:SetPoint("CENTER", window, "CENTER", 0, 0)
+        empty:SetText("No equipped items are available to lock.")
+        empty:SetTextColor(Unpack(TEXT_MUTED))
+    end
+
+    local done = SkinnedButton(window, "Done", 0, 0, 100, Close)
+    done:ClearAllPoints(); done:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -20, 16)
+end
+
 pageBuilders.Upgrade = function(parent)
     SectionCard(parent, 12, -76, 700, 76)
     SectionCard(parent, 12, -156, 700, 88)
     SectionCard(parent, 12, -248, 700, 60)
     PageHeader(parent, "Upgrade", "Choose what can be equipped, how much better it must be, and how each stat is valued.")
+    local lockedGearButton = Button(parent, "Locked Gear", 580, -20, 120, OpenLockedGearWindow)
+    AddTooltip(lockedGearButton, "Locked gear", "Choose equipped slots that automatic upgrades must never replace.")
     local autoEquipToggle = ScalarCheck(parent, "upgrade", AutoUpgradeConfig, "autoEquip", "Auto equip upgrades", 20, -84, false,
         "Automatically equips items found in your bags that beat what you have equipped. Turn off to only report upgrades in chat without equipping them.")
     ScalarCheck(parent, "upgrade", AutoUpgradeConfig, "printMessages", "Print upgrade results", 20, -110, true)
@@ -3810,8 +3930,8 @@ local function RulePage(spec)
                 local repairEnabled = RepairToggle("enabled", "Auto repair", 20, true, "Repairs equipped and bagged gear when a merchant opens.")
                 local guildRepair = RepairToggle("useGuildBank", "Use guild funds", 190, true, "Uses guild repair funds when available, then falls back to personal gold.")
                 local repairMessages = RepairToggle("printMessages", "Announce repairs", 360, true, "Prints repair cost and funding source in chat.")
-                ScalarCheck(parent, "sell", AutoSellConfig, "protectWeaponBench", "Protect weapon bench", 530, -112, true,
-                    "Keeps useful weapon comparisons from being sold automatically.")
+                ScalarCheck(parent, "sell", AutoSellConfig, "protectWeaponBench", "Protect weapon upgrades", 530, -112, true,
+                    "Keeps individually better hand-slot items from being sold automatically.")
                 BindToggleDependency(repairEnabled, guildRepair, repairMessages)
             end
             local maximumSellQuality = Core.GetSetting("sell", "maxQuality", ResolvedDefault(AutoSellConfig, "maxQuality", 0))

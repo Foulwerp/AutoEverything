@@ -13,11 +13,8 @@
 --     via AutoCore.IsUpgrade. Candidate items are scored via
 --     SetBagItem (bag/slot) and equipped items via SetInventoryItem
 --     so Ascension scaled stats are read correctly.
---   * Hand slots are optimized as a complete set. Every legal combination
---     of eligible bag weapons/off-hands and currently equipped hand items
---     is scored, allowing one-hand + off-hand pairs to beat two-handers.
---     Only weapon subTypes listed in mainHandTypes/offHandTypes are used;
---     selecting the same family for both hands declares dual-wield capability.
+--   * Every candidate is compared with one eligible equipment slot. Rings,
+--     trinkets, and hand items are not evaluated as hypothetical sets.
 --   * Unusable items (wrong class/level) get score 0 and are never
 --     upgrades - they are not even evaluated.
 --   * Items whose required level is ABOVE the player's current level
@@ -72,7 +69,6 @@ local scanDeferredForCombat = false
 local scanTimerFrame = CreateFrame("Frame")
 local GetActiveConfig
 local ScheduleScan
-local AnalyzeSetCandidate
 local pendingEquip = nil
 local equipVerifyFrame = CreateFrame("Frame")
 
@@ -95,15 +91,6 @@ local function ScheduleDelayedCallback(delay, callback)
         if #delayedCallbacks == 0 then self:SetScript("OnUpdate", nil) end
     end)
 end
-
--- A weapon-set swap can look immediately reversible on the very next scan:
--- Ascension scores an item slightly differently while it's bagged (SetBagItem)
--- than while it's equipped (SetInventoryItem), so the item just displaced can
--- appear to "beat" the one that just replaced it. Without a cooldown this
--- flips back and forth forever. Hold off on any further hand-slot swap for a
--- few seconds after one happens so the state settles.
-local WEAPON_EQUIP_SETTLE_DELAY = 5
-local lastWeaponSetChangeAt = 0
 
 local function PrintUpgradeAction(info, actionText)
     if not info or not info.printMessages then return end
@@ -212,7 +199,6 @@ end
 -- override any global setting. Cached after first build.
 ----------------------------------------------------------------------
 local activeConfig = nil
-local setRecordCache = nil
 local pvpSetCache = nil
 
 GetActiveConfig = function()
@@ -258,6 +244,8 @@ GetActiveConfig = function()
         local mainHandTypes = resolve("mainHandTypes", {})
         local offHandTypes = resolve("offHandTypes", {})
         local rangedTypes = resolve("rangedTypes", {})
+        local lockedSlots = resolve("lockedSlots", {})
+        if type(lockedSlots) ~= "table" then lockedSlots = {} end
         activeConfig = {
             enabled          = resolve("enabled", true),
             autoEquip        = resolve("autoEquip", true),
@@ -275,6 +263,7 @@ GetActiveConfig = function()
             mainHandTypes    = mainHandTypes,
             offHandTypes     = offHandTypes,
             rangedTypes      = rangedTypes,
+            lockedSlots      = lockedSlots,
             canOffHandWithTwoHand = AutoCore.InferCanOffHandWithTwoHand(mainHandTypes, offHandTypes),
             charKey          = charKey,
         }
@@ -284,7 +273,6 @@ end
 
 function AU.ClearConfigCache()
     activeConfig = nil
-    setRecordCache = nil
     pvpSetCache = nil
 end
 
@@ -462,6 +450,7 @@ function AU.EvaluateItem(link, location, evaluation)
             mainHandTypes = cfg.mainHandTypes,
             offHandTypes = cfg.offHandTypes,
             rangedTypes = cfg.rangedTypes,
+            lockedSlots = cfg.lockedSlots,
             canOffHandWithTwoHand = cfg.canOffHandWithTwoHand,
             usable = usable,
             itemScore = itemScore,
@@ -781,17 +770,11 @@ local function ShouldAutoConfirmBind(quality)
 end
 
 ----------------------------------------------------------------------
--- Weapon-set optimization
--- Evaluating hand items independently misses upgrades where neither a
--- one-hander nor an off-hand beats a staff by itself, but their combined
--- score does. Build every legal set from eligible bag items plus the items
--- already equipped in their current slots, then compare complete sets. This
--- owned-set analysis is retained for weapon-bench protection and explicit
--- callers; actual upgrade decisions compare the item with what it replaces.
+-- Individual weapon protection
+-- AutoSell calls this helper before selling gear. Keep only weapons that are
+-- upgrades on their own; do not reserve hypothetical future combinations.
 ----------------------------------------------------------------------
-local TypeInList = AutoCore.TypeInList
-
-local function IsOptimizedHandSlot(equipSlot)
+local function IsHandSlot(equipSlot)
     return equipSlot == "INVTYPE_WEAPON"
         or equipSlot == "INVTYPE_WEAPONMAINHAND"
         or equipSlot == "INVTYPE_WEAPONOFFHAND"
@@ -799,392 +782,13 @@ local function IsOptimizedHandSlot(equipSlot)
         or equipSlot == "INVTYPE_SHIELD"
         or equipSlot == "INVTYPE_HOLDABLE"
 end
-
--- Single source of truth for "which hand-slot role(s) can this equipSlot/
--- subType combination fill" - {main=true, off=true} either/both/neither.
--- Shared by weapon-set candidate collection,
--- and exposed publicly so AutoRoll can classify a loot-roll item the same
--- way without duplicating this mapping.
-local function HandSlotKindsFor(equipSlot, subType, cfg)
-    local kinds = {}
-    if equipSlot == "INVTYPE_2HWEAPON" then
-        if TypeInList(subType, cfg.mainHandTypes) then kinds.main = true end
-        if cfg.canOffHandWithTwoHand and TypeInList(subType, cfg.offHandTypes) then kinds.off = true end
-    elseif equipSlot == "INVTYPE_WEAPON" then
-        if TypeInList(subType, cfg.mainHandTypes) then kinds.main = true end
-        if TypeInList(subType, cfg.offHandTypes) then kinds.off = true end
-    elseif equipSlot == "INVTYPE_WEAPONMAINHAND" then
-        if TypeInList(subType, cfg.mainHandTypes) then kinds.main = true end
-    elseif equipSlot == "INVTYPE_WEAPONOFFHAND" then
-        if TypeInList(subType, cfg.offHandTypes) then kinds.off = true end
-    elseif equipSlot == "INVTYPE_SHIELD" then
-        if TypeInList("Shields", cfg.offHandTypes) then kinds.off = true end
-    elseif equipSlot == "INVTYPE_HOLDABLE" then
-        if TypeInList("Held In Off-hand", cfg.offHandTypes) then kinds.off = true end
-    end
-    return kinds
-end
-
-local function AddWeaponSetCandidate(record, mainCandidates, offCandidates, cfg)
-    local kinds = HandSlotKindsFor(record.equipSlot, record.subType, cfg)
-    if kinds.main then
-        record.canMain = true
-        table.insert(mainCandidates, record)
-    end
-    if kinds.off then
-        record.canOff = true
-        table.insert(offCandidates, record)
-    end
-end
-
-local function SameBagItem(a, b)
-    return a and b and a.bag ~= nil and b.bag ~= nil
-        and a.bag == b.bag and a.slot == b.slot
-end
-
-local function IsCurrentSlot(record, invSlot)
-    return record and record.invSlot == invSlot
-end
-
-local function SameRecord(a, b)
-    if not a or not b then return false end
-    if a == b then return true end
-    if a.invSlot and b.invSlot then return a.invSlot == b.invSlot end
-    if a.bag ~= nil and b.bag ~= nil then return SameBagItem(a, b) end
-    return a.isVirtual and b.isVirtual and a.isVirtual == b.isVirtual
-end
-
-local function MakeSetRecord(link, location, cfg, evaluation)
-    if not link then return nil end
-    local _, _, _, _, _, _, _, _, equipSlot = GetItemInfo(link)
-    if not equipSlot or equipSlot == "" then return nil end
-    local snapshot = evaluation and evaluation.tooltipSnapshot
-        or AutoCore.GetTooltipSnapshot(link, location, cfg.weights)
-    -- Only exclude PvP items while they are candidates in bags. If one is
-    -- already equipped, keep it in the current-set score
-    -- so comparisons remain accurate and AutoUpgrade can still replace it.
-    if location and location.bag ~= nil
-        and AutoCore.GetPvPItemInfo(link, location, snapshot).isPvPGear
-    then
-        if not cfg.pvpGearToggle then return nil end
-    end
-    local data = AutoCore.GetItemData(link, location, snapshot)
-    if not data or not data.equipSlot or data.equipSlot == "" then return nil end
-    if data.quality and data.quality < cfg.minQuality then return nil end
-    if cfg.minItemLevel and (not data.iLevel or data.iLevel < cfg.minItemLevel) then return nil end
-    if data.reqLevel and data.reqLevel > UnitLevel("player") then return nil end
-    if snapshot.usable == false then return nil end
-    local score = evaluation and evaluation.itemScore
-    if type(score) ~= "number" then
-        score = 0
-        for statName, value in pairs(snapshot.stats) do
-            score = score + value * (cfg.weights[statName] or 0)
-        end
-    end
-    return {
-        link = link,
-        equipSlot = data.equipSlot,
-        subType = data.subType,
-        score = score,
-        bag = location and location.bag,
-        slot = location and location.slot,
-        invSlot = location and location.invSlot,
-        isVirtual = location and location.questIndex
-            and (tostring(location.questType or "quest") .. ":" .. tostring(location.questIndex)) or nil,
-    }
-end
-
-local function CollectSetRecords(cfg, extra)
-    if not setRecordCache or setRecordCache.cfg ~= cfg then
-        local cachedRecords = {}
-        for invSlot = 11, 17 do
-            if invSlot <= 14 or invSlot >= 16 then
-                local link = GetInventoryItemLink("player", invSlot)
-                local record = MakeSetRecord(link, { invSlot = invSlot }, cfg)
-                if record then table.insert(cachedRecords, record) end
-            end
-        end
-        for bag = 0, 4 do
-            for slot = 1, GetContainerNumSlots(bag) do
-                local _, count, locked, quality, _, _, link = GetContainerItemInfo(bag, slot)
-                if link and not locked and count and count > 0 then
-                    local record = MakeSetRecord(link, { bag = bag, slot = slot }, cfg)
-                    if record then table.insert(cachedRecords, record) end
-                end
-            end
-        end
-        setRecordCache = { cfg = cfg, records = cachedRecords }
-    end
-    local records = {}
-    for _, record in ipairs(setRecordCache.records) do table.insert(records, record) end
-    if extra then
-        local found = false
-        for _, record in ipairs(records) do
-            if SameRecord(record, extra) then found = true; break end
-        end
-        if not found then table.insert(records, extra) end
-    end
-    return records
-end
-
-local function AnalyzeRingCandidate(candidate, records, cfg)
-    local currentA, currentB
-    local rings = {}
-    for _, record in ipairs(records) do
-        if record.equipSlot == "INVTYPE_FINGER" then
-            table.insert(rings, record)
-            if record.invSlot == 11 then currentA = record end
-            if record.invSlot == 12 then currentB = record end
-        end
-    end
-    local currentScore = (currentA and currentA.score or 0) + (currentB and currentB.score or 0)
-    local best, bestEquipped
-    local function Consider(partner)
-        if SameRecord(candidate, partner) then return end
-        local set = { first = candidate, second = partner, score = candidate.score + (partner and partner.score or 0) }
-        if not best or set.score > best.score then best = set end
-        if (not partner or partner.invSlot) and (not bestEquipped or set.score > bestEquipped.score) then
-            bestEquipped = set
-        end
-    end
-    Consider(nil)
-    for _, ring in ipairs(rings) do Consider(ring) end
-    local bestScore = best and best.score or candidate.score
-    local thresholdScore = currentScore * (1 + cfg.upgradeThreshold / 100)
-    local targetSlotId = 11
-    if candidate.invSlot then
-        targetSlotId = candidate.invSlot
-    elseif best and best.second and best.second.invSlot == 11 then
-        targetSlotId = 12
-    elseif best and best.second and best.second.invSlot == 12 then
-        targetSlotId = 11
-    elseif (currentA and currentA.score or 0) > (currentB and currentB.score or 0) then
-        targetSlotId = 12
-    end
-    return {
-        kind = "ring", itemScore = candidate.score, currentScore = currentScore,
-        currentSet = { first = currentA, second = currentB, score = currentScore },
-        equippedSet = bestEquipped, equippedPartner = bestEquipped and bestEquipped.second,
-        bestSet = best, bestPartner = best and best.second, bestScore = bestScore,
-        isUpgrade = bestScore > currentScore and bestScore >= thresholdScore,
-        gain = bestScore - currentScore, targetSlotId = targetSlotId,
-        reason = "best ring pair " .. string.format("%.2f", bestScore)
-            .. " vs current pair " .. string.format("%.2f", currentScore),
-    }
-end
-
-local function AnalyzeWeaponCandidate(candidate, records, cfg)
-    local mains, offs = {}, {}
-    local currentMain, currentOff
-    for _, record in ipairs(records) do
-        if IsOptimizedHandSlot(record.equipSlot) then
-            AddWeaponSetCandidate(record, mains, offs, cfg)
-            if record.invSlot == 16 then currentMain = record end
-            if record.invSlot == 17 then currentOff = record end
-        end
-    end
-    local currentScore = (currentMain and currentMain.score or 0)
-    if not (currentMain and currentMain.equipSlot == "INVTYPE_2HWEAPON" and not cfg.canOffHandWithTwoHand) then
-        currentScore = currentScore + (currentOff and currentOff.score or 0)
-    end
-
-    local best, bestEquipped
-    local function Consider(main, off)
-        if not main or SameRecord(main, off) then return end
-        if not SameRecord(main, candidate) and not SameRecord(off, candidate) then return end
-        if main.equipSlot == "INVTYPE_2HWEAPON" and off and not cfg.canOffHandWithTwoHand then return end
-        local set = { main = main, off = off, score = main.score + (off and off.score or 0) }
-        if not best or set.score > best.score then best = set end
-        local partner = SameRecord(main, candidate) and off or main
-        if (not partner or partner.invSlot) and (not bestEquipped or set.score > bestEquipped.score) then
-            bestEquipped = set
-        end
-    end
-    for _, main in ipairs(mains) do
-        Consider(main, nil)
-        for _, off in ipairs(offs) do Consider(main, off) end
-    end
-    if not best then return nil end
-    local function PartnerIn(set)
-        if not set then return nil end
-        if SameRecord(set.main, candidate) then return set.off end
-        if SameRecord(set.off, candidate) then return set.main end
-        return nil
-    end
-    local thresholdScore = currentScore * (1 + cfg.upgradeThreshold / 100)
-    return {
-        kind = "weapon", itemScore = candidate.score, currentScore = currentScore,
-        currentSet = { main = currentMain, off = currentOff, score = currentScore },
-        equippedSet = bestEquipped, equippedPartner = PartnerIn(bestEquipped),
-        bestSet = best, bestPartner = PartnerIn(best), bestScore = best.score,
-        isUpgrade = best.score > currentScore and best.score >= thresholdScore,
-        gain = best.score - currentScore,
-        targetSlotId = SameRecord(best.main, candidate) and 16 or 17,
-        reason = "best weapon set " .. string.format("%.2f", best.score)
-            .. " vs current set " .. string.format("%.2f", currentScore),
-    }
-end
-
-AnalyzeSetCandidate = function(link, location, cfg, evaluation)
-    cfg = cfg or GetActiveConfig()
-    if not cfg then return nil end
-    local candidate = MakeSetRecord(link, location, cfg, evaluation)
-    if not candidate then return nil end
-    local isRing = candidate.equipSlot == "INVTYPE_FINGER"
-    local isWeapon = IsOptimizedHandSlot(candidate.equipSlot)
-    if not isRing and not isWeapon then return nil end
-    local records = CollectSetRecords(cfg, candidate)
-    if isRing then return AnalyzeRingCandidate(candidate, records, cfg) end
-    return AnalyzeWeaponCandidate(candidate, records, cfg)
-end
-
-function AU.AnalyzeItemSet(link, location)
-    return AnalyzeSetCandidate(link, location, GetActiveConfig())
-end
-
--- AutoSell uses this small weapon bench to avoid deleting the first half of
--- a future one-hand/off-hand set merely because a two-hander currently wins.
 function AU.IsWeaponBenchItem(link, location)
     local cfg = GetActiveConfig()
     if not cfg or cfg.enabled == false or not link then return false end
     local data = AutoCore.GetItemData(link, location)
-    if not data or not IsOptimizedHandSlot(data.equipSlot) then return false end
-    local candidate = MakeSetRecord(link, location, cfg)
-    if not candidate then return false end
-    local records = CollectSetRecords(cfg, candidate)
-    local mains, offs, flex, twoHands = {}, {}, {}, {}
-    for _, record in ipairs(records) do
-        if IsOptimizedHandSlot(record.equipSlot) then
-            local recordMains, recordOffs = {}, {}
-            AddWeaponSetCandidate(record, recordMains, recordOffs, cfg)
-            if not record.invSlot then
-                if #recordMains > 0 and record.equipSlot ~= "INVTYPE_2HWEAPON" then table.insert(mains, record) end
-                if #recordOffs > 0 then table.insert(offs, record) end
-                if record.equipSlot == "INVTYPE_WEAPON" and record.canMain and record.canOff then
-                    table.insert(flex, record)
-                end
-                if record.equipSlot == "INVTYPE_2HWEAPON" then table.insert(twoHands, record) end
-            end
-        end
-    end
-    local function SortScore(list)
-        table.sort(list, function(a, b)
-            if a.score == b.score then return tostring(a.link) < tostring(b.link) end
-            return a.score > b.score
-        end)
-    end
-    SortScore(mains); SortScore(offs); SortScore(flex); SortScore(twoHands)
-    local protected = { mains[1], offs[1], flex[1], flex[2], twoHands[1] }
-    for _, record in ipairs(protected) do
-        if SameRecord(record, candidate) then return true end
-    end
-    local analysis = AnalyzeWeaponCandidate(candidate, records, cfg)
-    return analysis and analysis.isUpgrade or false
-end
-
-local function DescribeWeaponSet(set)
-    local mainText = set.main and set.main.link or "empty main hand"
-    local offText = set.off and set.off.link or "empty off hand"
-    return mainText .. " + " .. offText
-end
-
--- Reads the two hand slots currently equipped. Called once per scan, before
--- the single bag pass in AU.ScanBags collects bag-side hand-slot candidates.
-local function BuildEquippedHandRecords(cfg)
-    local function MakeEquippedRecord(invSlot)
-        local link = GetInventoryItemLink("player", invSlot)
-        if not link then return nil end
-        local data = AutoCore.GetItemData(link, { invSlot = invSlot })
-        if not data or not IsOptimizedHandSlot(data.equipSlot) then return nil end
-        return {
-            link = link,
-            equipSlot = data.equipSlot,
-            subType = data.subType,
-            score = AutoCore.GetItemScore(link, cfg.weights, { invSlot = invSlot }),
-            invSlot = invSlot,
-        }
-    end
-    return MakeEquippedRecord(16), MakeEquippedRecord(17)
-end
-
--- Given the equipped hand records and the bag-side candidates already
--- collected by AU.ScanBags's single bag pass, pick and (optionally) equip the
--- best weapon set. Kept separate from candidate collection so ScanBags does
--- not need a second full bag sweep just to build these candidate lists.
-local function FinalizeWeaponSet(cfg, actualDryRun, mainCandidates, offCandidates, currentMain, currentOff)
-    -- Give a swap time to settle before proposing another one (see
-    -- WEAPON_EQUIP_SETTLE_DELAY above) - skip evaluation entirely rather than
-    -- just skipping the equip, so a dry-run/notify pass doesn't nag about an
-    -- "upgrade" that's really just settle-delay jitter.
-    if not actualDryRun and GetTime() - lastWeaponSetChangeAt < WEAPON_EQUIP_SETTLE_DELAY then
-        return false
-    end
-
-    local currentScore = (currentMain and currentMain.score or 0) + (currentOff and currentOff.score or 0)
-    local bestSet = { main = currentMain, off = currentOff, score = currentScore }
-
-    local function ConsiderSet(main, off)
-        if not main or SameBagItem(main, off) then return end
-        local mainIsTwoHanded = main.equipSlot == "INVTYPE_2HWEAPON"
-        if mainIsTwoHanded and off and not cfg.canOffHandWithTwoHand then return end
-        local score = main.score + (off and off.score or 0)
-        if score > bestSet.score then
-            bestSet = { main = main, off = off, score = score }
-        end
-    end
-
-    for _, main in ipairs(mainCandidates) do
-        ConsiderSet(main, nil)
-        for _, off in ipairs(offCandidates) do
-            ConsiderSet(main, off)
-        end
-    end
-
-    local thresholdScore = currentScore * (1 + cfg.upgradeThreshold / 100)
-    if bestSet.score <= currentScore or bestSet.score < thresholdScore then
-        return false
-    end
-
-    local gain = bestSet.score - currentScore
-    if cfg.printMessages then
-        print("|cff00ff00AutoUpgrade:|r Best weapon set: " .. DescribeWeaponSet(bestSet)
-            .. " | " .. string.format("%.1f", bestSet.score)
-            .. " vs " .. string.format("%.1f", currentScore)
-            .. " (|cff00ff00+" .. string.format("%.1f", gain) .. "|r) | "
-            .. (actualDryRun and "would equip." or "selected."))
-    end
-    if actualDryRun then return false, true end
-
-    -- Equip the main hand first. Re-scanning after each operation safely
-    -- handles a staff becoming a one-hander, displaced items moving to bags,
-    -- and bind confirmations before the off-hand is equipped.
-    local desired = nil
-    local targetSlotId = nil
-    if not IsCurrentSlot(bestSet.main, 16) then
-        desired = bestSet.main
-        targetSlotId = 16
-    elseif bestSet.off and not IsCurrentSlot(bestSet.off, 17) then
-        desired = bestSet.off
-        targetSlotId = 17
-    end
-    if not desired or desired.bag == nil then return false, true end
-
-    lastWeaponSetChangeAt = GetTime()
-
-    local equipped, reason = AutoCore.EquipItem(desired.bag, desired.slot, targetSlotId, desired.link)
-    if equipped then
-        ScheduleScan(SCAN_DEBOUNCE)
-    elseif reason == "pending_bind" then
-        StartEquipVerification({
-            link = desired.link, newScore = bestSet.score, equippedScore = currentScore,
-            gain = gain, targetSlotId = targetSlotId, printMessages = cfg.printMessages,
-        })
-    elseif reason == "in_combat" then
-        DeferScanUntilCombatEnds()
-    elseif cfg.printMessages then
-        print("|cffffcc00AutoUpgrade:|r Could not equip weapon-set item " .. desired.link .. ".")
-    end
-    return true, true
+    if not data or not IsHandSlot(data.equipSlot) then return false end
+    local isUpgrade = AU.EvaluateItem(link, location)
+    return isUpgrade == true
 end
 
 ----------------------------------------------------------------------
@@ -1229,18 +833,9 @@ function AU.ScanBags(dryRun, manual)
     -- Mode 1 is notify only - always treat as dry run
     local actualDryRun = dryRun or AU.db.notifyOnly or not cfg.autoEquip
 
-    -- Single bag pass: collect hand-slot (weapon/off-hand) candidates and
-    -- non-hand-slot candidates together, instead of scanning all 5 bags
-    -- twice (once for the weapon set, once for everything else).
-    local currentMain, currentOff = BuildEquippedHandRecords(cfg)
-    local mainCandidates, offCandidates = {}, {}
-    -- Keep equipped items fixed to their current hands. Bag items may fill
-    -- any hand allowed by their type; this avoids proposing an equipped-item
-    -- hand swap that cannot be performed directly by EquipItem.
-    if currentMain then table.insert(mainCandidates, currentMain) end
-    if currentOff then table.insert(offCandidates, currentOff) end
-
-    local armorCandidates = {}
+    -- Every item is evaluated against an individual eligible slot. The scan
+    -- does not construct hypothetical ring, trinket, or weapon sets.
+    local candidates = {}
     local playerLevel = UnitLevel("player")
 
     for bag = 0, 4 do
@@ -1268,25 +863,6 @@ function AU.ScanBags(dryRun, manual)
                         if excludedPvP then
                             -- Leave Bloodforged/pure-PvP bag items manual unless the
                             -- player explicitly enables PvP gear upgrades.
-                        elseif IsOptimizedHandSlot(data.equipSlot) then
-                            -- Hand-slot items are evaluated globally as a
-                            -- weapon set below, not one at a time.
-                            if (not data.reqLevel or data.reqLevel <= playerLevel)
-                                and (not cfg.minItemLevel or (data.iLevel and data.iLevel >= cfg.minItemLevel))
-                            then
-                                local _, usable = AutoCore.ScanTooltip(link, nil, location)
-                                if usable ~= false then
-                                    local record = {
-                                        link = link,
-                                        equipSlot = data.equipSlot,
-                                        subType = data.subType,
-                                        score = AutoCore.GetItemScore(link, cfg.weights, location),
-                                        bag = bag,
-                                        slot = slot,
-                                    }
-                                    AddWeaponSetCandidate(record, mainCandidates, offCandidates, cfg)
-                                end
-                            end
                         -- Required level gate: never attempt to equip
                         -- an item whose required level is above the
                         -- player's current level. Checked explicitly
@@ -1298,7 +874,7 @@ function AU.ScanBags(dryRun, manual)
                         elseif data.reqLevel and data.reqLevel > playerLevel then
                             -- skip: required level too high for the player
                         elseif not cfg.minItemLevel or (data.iLevel and data.iLevel >= cfg.minItemLevel) then
-                            table.insert(armorCandidates, { bag = bag, slot = slot, link = link })
+                            table.insert(candidates, { bag = bag, slot = slot, link = link })
                         end
                     end
                 end
@@ -1306,25 +882,15 @@ function AU.ScanBags(dryRun, manual)
         end
     end
 
-    -- Optimize the two hand slots as one complete gear set before evaluating
-    -- independent armor/jewelry slots. In active mode, perform at most one
-    -- hand-slot operation and let the settled follow-up scan continue.
-    local weaponEquipStarted, weaponUpgradeFound = FinalizeWeaponSet(cfg, actualDryRun, mainCandidates, offCandidates, currentMain, currentOff)
-    if weaponEquipStarted then
-        return
-    end
-
-    local equippedCount = weaponUpgradeFound and 1 or 0
+    local equippedCount = 0
     local checkedCount = 0
 
-    for _, item in ipairs(armorCandidates) do
+    for _, item in ipairs(candidates) do
         local bag, slot, link = item.bag, item.slot, item.link
         checkedCount = checkedCount + 1
         -- Check usability: unusable items get score 0
         -- and are never upgrades.
         local boundStatus, usable = AutoCore.ScanTooltip(link, nil, { bag = bag, slot = slot })
-        -- Evaluate rings as complete two-item sets; other
-        -- slots retain the normal single-slot comparison.
         local isUpgrade, newScore, equippedScore, targetSlotId = AU.EvaluateItem(
             link, { bag = bag, slot = slot }
         )
@@ -1397,7 +963,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "BAG_UPDATE" or event == "PLAYER_EQUIPMENT_CHANGED"
         or event == "PLAYER_LEVEL_UP" or event == "PLAYER_ENTERING_WORLD"
     then
-        setRecordCache = nil
         pvpSetCache = nil
     end
     if event == "ADDON_LOADED" then

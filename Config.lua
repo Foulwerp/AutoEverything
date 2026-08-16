@@ -177,6 +177,7 @@ AutoUpgradeConfig = {
     mainHandTypes = { "Any" },
     offHandTypes = {},
     rangedTypes = {},
+    lockedSlots = {},
     weights = {},
     pvpGearToggle = false,   -- Set to true to allow upgrading PvP gear (e.g., from Battlegrounds)
 }
