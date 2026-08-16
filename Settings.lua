@@ -2201,8 +2201,8 @@ local function OpenLockedGearWindow()
             itemLabel:SetJustifyH("LEFT"); itemLabel:SetText(link)
 
             local lockIcon = row:CreateTexture(nil, "OVERLAY")
-            lockIcon:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 5, -4)
-            lockIcon:SetSize(16, 16)
+            lockIcon:SetPoint("CENTER", icon, "CENTER", 4, -3)
+            lockIcon:SetSize(22, 22)
             lockIcon:SetTexture("Interface\\Buttons\\LockButton-Locked-Up")
 
             function row:PaintLock()
