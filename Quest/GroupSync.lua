@@ -630,6 +630,12 @@ local function ProcessQuestUpdate()
     localQuests = current
     itemQuestKeys = itemMap
     baselineReady = true
+    -- This snapshot is also the settled state used for completion
+    -- announcements. Invalidate the independently cached nameplate and map
+    -- indexes now so a completed objective cannot keep its old marker, pin,
+    -- or remaining count until another quest-log event happens.
+    if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
+    if AQ.Map and AQ.Map.RequestRefresh then AQ.Map.RequestRefresh() end
     FlushPendingSnapshots()
     if requestPending or not wasReady then SendRequest() end
 end
