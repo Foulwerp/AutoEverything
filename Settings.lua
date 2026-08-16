@@ -1563,7 +1563,7 @@ pageBuilders.Convenience = function(parent)
     Label(parent, "Whisper Invites", 20, -276, 13)
     local whisperInvite = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoInviteOnWhisper",
         "Auto invite on whisper", 20, -308, false,
-        "Sends a party invite to anyone who whispers you the keyword below. The keyword is matched anywhere in the message.")
+        "Sends a party or raid invite to anyone who whispers you the keyword below. The keyword is matched anywhere in the message. In a raid, you must be the leader or an assistant.")
     local whisperFriends = ScalarSettingRow(parent, "core", AutoCoreConfig, "autoInviteFriendsOnly",
         "Only from friends/guild", 50, -336, false,
         "When auto-inviting on a whisper, only invite friends or guildmates.")
@@ -1578,7 +1578,7 @@ pageBuilders.Convenience = function(parent)
     keyEdit:SetScript("OnEnterPressed", function(self) SaveKeyword(self); self:ClearFocus() end)
     keyEdit:HookScript("OnEditFocusLost", SaveKeyword)
     AddEditHint(keyEdit, "inv",
-        "The whisper keyword that triggers an auto party invite. Matched as a case-insensitive substring, "
+        "The whisper keyword that triggers an automatic group invite. Matched as a case-insensitive substring, "
         .. "so \"inv\" also fires on \"invite\" or \"invite me warrior\".")
     Label(parent, "Minimum level", 50, -400, 11)
     local minimumLevel = Core.GetSetting("core", "autoInviteMinimumLevel",

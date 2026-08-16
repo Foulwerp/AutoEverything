@@ -363,6 +363,7 @@ end)
 ----------------------------------------------------------------------
 local inviteThrottle = {}
 local INVITE_THROTTLE = 10   -- seconds; ignore repeat keywords from the same sender
+local MAX_AUTO_INVITE_RAID_MEMBERS = 40
 local WHO_LEVEL_CACHE = 60    -- seconds; avoids repeating an intrusive /who lookup
 local WHO_QUERY_TIMEOUT = 8
 local WHO_QUERY_INTERVAL = 5 -- the 3.3.5 client/server throttle Who requests
@@ -376,10 +377,17 @@ whisperFrame:RegisterEvent("CHAT_MSG_WHISPER")
 whisperFrame:RegisterEvent("WHO_LIST_UPDATE")
 
 local function CanInviteWhisperSender(sender)
-    -- Only invite when we are able to: solo, or leading a party that has room.
-    if GetNumRaidMembers and GetNumRaidMembers() > 0 then return false end
+    -- InviteUnit selects the active group type itself. We only need to verify
+    -- that the player has invite permission and that the current group has
+    -- room before allowing the keyword through.
+    local raid = GetNumRaidMembers and GetNumRaidMembers() or 0
+    if raid > 0 then
+        local canInviteRaid = (IsRaidLeader and IsRaidLeader())
+            or (IsRaidOfficer and IsRaidOfficer())
+        if not canInviteRaid or raid >= MAX_AUTO_INVITE_RAID_MEMBERS then return false end
+    end
     local party = GetNumPartyMembers and GetNumPartyMembers() or 0
-    if party > 0 then
+    if raid == 0 and party > 0 then
         if not (IsPartyLeader and IsPartyLeader()) then return false end
         if party >= 4 then return false end
     end
