@@ -10,25 +10,34 @@
 
 AutoQuest = AutoQuest or {}
 local AQ = AutoQuest
+local SpawnStore = AQ.NPCSpawnStore
 
 AQ.GroupSync = AQ.GroupSync or {}
 local Sync = AQ.GroupSync
 
-local PREFIX = "AEQ1"
-local VERSION = "2"
+local PREFIX = "AEQ2"
+local VERSION = "3"
+local CAPABILITIES = "ids,seq,stale,class"
 local SEP = "\31"
 local SEND_INTERVAL = 0.12
 local UPDATE_DELAY = 0.65
 local MAX_QUEUE = 1000
 local MAX_PAYLOAD_BYTES = 240
+local MAX_REMOTE_QUESTS = 75
+local MAX_REMOTE_OBJECTIVES = 600
+local MAX_MESSAGES_PER_WINDOW = 180
+local MESSAGE_WINDOW = 10
 local RETRY_INTERVAL = 5
 local PARTY_AUDIT_INTERVAL = 300
 local RAID_AUDIT_INTERVAL = 600
+local STALE_AFTER = 90
+local EXPIRE_AFTER = 600
 
 local localQuests = {}
 local memberQuests = {}
 local itemQuestKeys = {}
-local outgoing = {}
+local outgoing = { urgent = {}, bulk = {} }
+local outgoingKeys = {}
 local baselineReady = false
 local updateAt = nil
 local acceptedSharedTitle = nil
@@ -44,6 +53,8 @@ local profileSyncActive = false
 local rewardQuestTitle = nil
 local pendingTurnIns = {}
 local rewardHooked = false
+local localSequence = 0
+local sessionID = tostring(time and time() or 0) .. "-" .. tostring(math.random(100000, 999999))
 
 local driver = CreateFrame("Frame")
 
@@ -80,23 +91,34 @@ end
 
 local function NormalizeName(name)
     if not name then return nil end
-    name = string.lower(tostring(name))
-    return string.match(name, "^[^-]+") or name
+    return string.lower(tostring(name))
+end
+
+local function ShortName(name)
+    name = NormalizeName(name)
+    return name and (string.match(name, "^[^-]+") or name) or nil
+end
+
+local function UnitFullName(unit)
+    if not UnitName then return nil end
+    local name, realm = UnitName(unit)
+    if name and realm and realm ~= "" then return name .. "-" .. realm end
+    return name
 end
 
 local function CurrentRoster()
     local roster = {}
-    local playerName = UnitName and UnitName("player")
+    local playerName = UnitFullName("player")
     if playerName then roster[NormalizeName(playerName)] = playerName end
 
     if RaidCount() > 0 then
         for index = 1, RaidCount() do
-            local name = UnitName and UnitName("raid" .. index)
+            local name = UnitFullName("raid" .. index)
             if name then roster[NormalizeName(name)] = name end
         end
     else
         for index = 1, PartyCount() do
-            local name = UnitName and UnitName("party" .. index)
+            local name = UnitFullName("party" .. index)
             if name then roster[NormalizeName(name)] = name end
         end
     end
@@ -104,7 +126,29 @@ local function CurrentRoster()
 end
 
 local function IsRosterMember(name)
-    return CurrentRoster()[NormalizeName(name)] ~= nil
+    local roster = CurrentRoster()
+    local normalized = NormalizeName(name)
+    if roster[normalized] then return true end
+    local short = ShortName(name)
+    local matches = 0
+    for rosterName in pairs(roster) do
+        if ShortName(rosterName) == short then matches = matches + 1 end
+    end
+    return matches == 1
+end
+
+local function RosterKey(name)
+    local roster = CurrentRoster()
+    local normalized = NormalizeName(name)
+    if roster[normalized] then return normalized end
+    local short, match = ShortName(name), nil
+    for rosterName in pairs(roster) do
+        if ShortName(rosterName) == short then
+            if match then return nil end
+            match = rosterName
+        end
+    end
+    return match
 end
 
 local function CleanField(value, maximum)
@@ -150,6 +194,71 @@ local function ObjectiveProgressValues(text)
     return current, required
 end
 
+local function PlayerClass()
+    if not UnitClass then return "" end
+    local _, class = UnitClass("player")
+    return CleanField(class or "", 16)
+end
+
+local function SafeInteger(value, minimum, maximum)
+    local number = tonumber(value)
+    if not number or number ~= math.floor(number) then return nil end
+    if minimum and number < minimum then return nil end
+    if maximum and number > maximum then return nil end
+    return number
+end
+
+local function NextSequence()
+    localSequence = localSequence + 1
+    if localSequence > 2147483647 then localSequence = 1 end
+    return localSequence
+end
+
+local function ObjectiveTarget(questID, title, objectiveIndex, objectiveText, objectiveType)
+    local normalized = AQ.ObjectiveResolver and AQ.ObjectiveResolver.Normalize
+        and AQ.ObjectiveResolver.Normalize(objectiveText) or string.lower(objectiveText or "")
+    local resolved = AQ.ResolveQuestEntries and AQ.ResolveQuestEntries(questID, title) or {}
+    local fallbackType = string.lower(objectiveType or "")
+
+    for _, match in ipairs(resolved) do
+        for _, record in ipairs(match.entry and match.entry.records or {}) do
+            local recordIndex = tonumber(record.objective)
+            local recordName = string.lower(record.item or record.name or "")
+            local exactIndex = recordIndex ~= nil and recordIndex + 1 == objectiveIndex
+            local exactName = recordName ~= "" and string.find(normalized, recordName, 1, true) ~= nil
+            if exactIndex or exactName then
+                if record.item and SpawnStore and SpawnStore.GetQuestItemSources then
+                    for _, source in ipairs(SpawnStore.GetQuestItemSources(match.id) or {}) do
+                        local itemName = string.lower(source.itemName or "")
+                        if itemName ~= "" and string.find(normalized, itemName, 1, true) then
+                            return "item", tonumber(source.itemID)
+                        end
+                    end
+                end
+                local recordType = tonumber(record.type)
+                local targetID = tonumber(record.id)
+                if targetID and targetID > 0 then
+                    if recordType == 2 then return "object", targetID end
+                    if recordType == -1 then return "event", targetID end
+                    return "monster", targetID
+                end
+            end
+        end
+    end
+
+    if fallbackType == "item" and SpawnStore and SpawnStore.GetQuestItemSources then
+        for _, match in ipairs(resolved) do
+            for _, source in ipairs(SpawnStore.GetQuestItemSources(match.id) or {}) do
+                local itemName = string.lower(source.itemName or "")
+                if itemName ~= "" and string.find(normalized, itemName, 1, true) then
+                    return "item", tonumber(source.itemID)
+                end
+            end
+        end
+    end
+    return "", nil
+end
+
 local function BuildLocalState()
     local quests = {}
     local items = {}
@@ -162,6 +271,7 @@ local function BuildLocalState()
             local key = QuestKey(questID, title)
             local quest = {
                 key = key,
+                id = tonumber(questID),
                 title = title,
                 complete = IsComplete(questComplete),
                 objectives = {},
@@ -170,12 +280,17 @@ local function BuildLocalState()
             for objectiveIndex = 1, objectiveCount do
                 local text, objectiveType, finished = GetQuestLogLeaderBoard(objectiveIndex, questIndex)
                 local current, required = ObjectiveProgressValues(text)
+                local targetType, targetID = ObjectiveTarget(
+                    tonumber(questID), title, objectiveIndex, text or "", objectiveType
+                )
                 quest.objectives[objectiveIndex] = {
                     text = text or ("Objective " .. objectiveIndex),
                     finished = IsComplete(finished),
                     type = objectiveType or "",
                     current = current,
                     required = required,
+                    targetType = targetType,
+                    targetID = targetID,
                 }
             end
             quests[key] = quest
@@ -190,35 +305,73 @@ local function BuildLocalState()
     return quests, items
 end
 
-local function QueueMessage(message, channel, target)
+local function QueueCount()
+    return #outgoing.urgent + #outgoing.bulk
+end
+
+local function ClearOutgoing()
+    wipe(outgoing.urgent)
+    wipe(outgoing.bulk)
+    wipe(outgoingKeys)
+    outgoing.activeBatch = nil
+end
+
+local function QueueMessage(message, channel, target, priority, coalesceKey, batch, batchEnd)
     if not SendAddonMessage or type(message) ~= "string"
-        or string.len(message) > MAX_PAYLOAD_BYTES or #outgoing >= MAX_QUEUE
+        or string.len(message) > MAX_PAYLOAD_BYTES or QueueCount() >= MAX_QUEUE
     then
         return false
     end
-    table.insert(outgoing, { message = message, channel = channel, target = target })
+    local queueName = priority == "bulk" and "bulk" or "urgent"
+    local queue = outgoing[queueName]
+    if coalesceKey and queueName == "urgent" then
+        local key = table.concat({ channel or "", target or "", coalesceKey }, SEP)
+        local existing = outgoingKeys[key]
+        if existing then
+            for index = #queue, 1, -1 do
+                if queue[index] == existing then
+                    table.remove(queue, index)
+                    break
+                end
+            end
+            existing.message = message
+            queue[#queue + 1] = existing
+            return true
+        end
+        local entry = { message=message, channel=channel, target=target, key=key }
+        queue[#queue + 1] = entry
+        outgoingKeys[key] = entry
+        return true
+    end
+    queue[#queue + 1] = {
+        message=message, channel=channel, target=target,
+        batch=batch, batchEnd=batchEnd,
+    }
     return true
 end
 
-local function EncodeQuest(quest)
+local function EncodeQuest(quest, sequence)
     return table.concat({
-        "Q", quest.key, CleanField(quest.title, 100), quest.complete and "1" or "0",
+        "Q", VERSION, sessionID, tostring(sequence or 0), quest.key,
+        tostring(quest.id or ""), CleanField(quest.title, 80), quest.complete and "1" or "0",
         tostring(#quest.objectives),
     }, SEP)
 end
 
-local function EncodeObjective(questKey, index, objective)
+local function EncodeObjective(questKey, index, objective, sequence)
     return table.concat({
-        "O", questKey, tostring(index), objective.finished and "1" or "0",
-        CleanField(objective.text, 125), CleanField(objective.type, 12),
+        "O", VERSION, sessionID, tostring(sequence or 0), questKey, tostring(index),
+        objective.finished and "1" or "0", CleanField(objective.type, 12),
+        CleanField(objective.targetType, 8), tostring(objective.targetID or ""),
         tostring(objective.current or ""), tostring(objective.required or ""),
+        CleanField(objective.text, 100),
     }, SEP)
 end
 
-local function QueueQuest(quest, channel, target)
-    QueueMessage(EncodeQuest(quest), channel, target)
+local function QueueQuest(quest, channel, target, batch)
+    QueueMessage(EncodeQuest(quest, 0), channel, target, "bulk", nil, batch)
     for index, objective in ipairs(quest.objectives) do
-        QueueMessage(EncodeObjective(quest.key, index, objective), channel, target)
+        QueueMessage(EncodeObjective(quest.key, index, objective, 0), channel, target, "bulk", nil, batch)
     end
 end
 
@@ -226,7 +379,8 @@ local function ObjectiveChanged(before, after)
     if not before then return true end
     return before.finished ~= after.finished or before.text ~= after.text
         or before.type ~= after.type or before.current ~= after.current
-        or before.required ~= after.required
+        or before.required ~= after.required or before.targetType ~= after.targetType
+        or before.targetID ~= after.targetID
 end
 
 local function QueueDelta(before, after)
@@ -234,17 +388,25 @@ local function QueueDelta(before, after)
     if not channel or not SyncActive() then return end
 
     for key in pairs(before or {}) do
-        if not after[key] then QueueMessage(table.concat({ "X", key }, SEP), channel) end
+        if not after[key] then
+            local sequence = NextSequence()
+            QueueMessage(table.concat({
+                "X", VERSION, sessionID, tostring(sequence), key,
+            }, SEP), channel, nil, "urgent", "X:" .. key)
+        end
     end
     for key, quest in pairs(after) do
         local previous = before and before[key]
         if not previous or previous.title ~= quest.title or previous.complete ~= quest.complete
             or #previous.objectives ~= #quest.objectives then
-            QueueMessage(EncodeQuest(quest), channel)
+            local sequence = NextSequence()
+            QueueMessage(EncodeQuest(quest, sequence), channel, nil, "urgent", "Q:" .. key)
         end
         for index, objective in ipairs(quest.objectives) do
             if not previous or ObjectiveChanged(previous.objectives[index], objective) then
-                QueueMessage(EncodeObjective(key, index, objective), channel)
+                local sequence = NextSequence()
+                QueueMessage(EncodeObjective(key, index, objective, sequence), channel, nil,
+                    "urgent", "O:" .. key .. ":" .. index)
             end
         end
     end
@@ -267,21 +429,23 @@ local function QueueSnapshot(target)
         objectiveCount = objectiveCount + #quest.objectives
     end
     local requiredCapacity = questCount + objectiveCount + 2
-    if requiredCapacity > MAX_QUEUE or #outgoing + requiredCapacity > MAX_QUEUE then
+    if requiredCapacity > MAX_QUEUE or QueueCount() + requiredCapacity > MAX_QUEUE then
         if targetKey then pendingSnapshotTargets[targetKey] = target end
         return false
     end
 
     snapshotSerial = snapshotSerial + 1
-    local snapshotID = tostring(snapshotSerial)
+    local snapshotID = sessionID .. ":" .. tostring(snapshotSerial)
     if targetKey then lastSnapshotAt[targetKey] = GetTime() end
     QueueMessage(table.concat({
-        "B", VERSION, snapshotID, tostring(questCount), tostring(objectiveCount),
-    }, SEP), "WHISPER", target)
-    for _, quest in pairs(localQuests) do QueueQuest(quest, "WHISPER", target) end
+        "B", VERSION, sessionID, snapshotID, tostring(localSequence),
+        tostring(questCount), tostring(objectiveCount), PlayerClass(), CAPABILITIES,
+    }, SEP), "WHISPER", target, "bulk", nil, snapshotID)
+    for _, quest in pairs(localQuests) do QueueQuest(quest, "WHISPER", target, snapshotID) end
     QueueMessage(table.concat({
-        "E", VERSION, snapshotID, tostring(questCount), tostring(objectiveCount),
-    }, SEP), "WHISPER", target)
+        "E", VERSION, sessionID, snapshotID, tostring(localSequence),
+        tostring(questCount), tostring(objectiveCount),
+    }, SEP), "WHISPER", target, "bulk", nil, snapshotID, true)
     if targetKey then pendingSnapshotTargets[targetKey] = nil end
     return true
 end
@@ -300,7 +464,9 @@ local function SendRequest()
     local channel = GroupChannel()
     if not baselineReady then requestPending = true; return false end
     if SyncActive() and channel and GetTime() - lastRequestAt >= 2 then
-        if QueueMessage(table.concat({ "R", VERSION }, SEP), channel) then
+        if QueueMessage(table.concat({
+            "R", VERSION, sessionID, CAPABILITIES,
+        }, SEP), channel, nil, "urgent", "R") then
             lastRequestAt = GetTime()
             requestPending = false
             return true
@@ -475,43 +641,89 @@ end
 
 local function ReceiveMessage(prefix, message, channel, sender)
     if prefix ~= PREFIX or not sender or not IsRosterMember(sender) then return end
-    if NormalizeName(sender) == NormalizeName(UnitName("player")) then return end
+    if ShortName(sender) == ShortName(UnitFullName("player")) then return end
     if not SyncActive() then return end
 
     local fields = Split(message)
     local kind = fields[1]
-    local senderKey = NormalizeName(sender)
-
-    if kind == "R" then
-        QueueSnapshot(sender)
-        return
-    end
+    if fields[2] ~= VERSION then return end
+    local remoteSession = CleanField(fields[3], 40)
+    if remoteSession == "" then return end
+    local senderKey = RosterKey(sender)
+    if not senderKey then return end
 
     local member = memberQuests[senderKey]
     if not member then
-        member = { name = sender, quests = {}, completeSnapshot = false, updated = GetTime() }
+        member = {
+            name=sender, quests={}, completeSnapshot=false, updated=GetTime(),
+            rateStarted=GetTime(), rateCount=0,
+        }
         memberQuests[senderKey] = member
     end
     member.name = sender
-    member.updated = GetTime()
+    local now = GetTime()
+    if now - (member.rateStarted or 0) >= MESSAGE_WINDOW then
+        member.rateStarted, member.rateCount = now, 0
+    end
+    member.rateCount = (member.rateCount or 0) + 1
+    if member.rateCount > MAX_MESSAGES_PER_WINDOW then return end
+
+    if member.session ~= remoteSession then
+        member.session = remoteSession
+        member.quests = {}
+        member.snapshot = nil
+        member.completeSnapshot = false
+        member.lastSequence = 0
+    end
+    member.updated = now
+
+    if kind == "R" then
+        if channel == GroupChannel() then QueueSnapshot(sender) end
+        return
+    end
+
+    local sequence
+    if kind == "B" or kind == "E" then
+        sequence = 0
+    else
+        sequence = SafeInteger(fields[4], 0, 2147483647)
+        if not sequence then return end
+    end
+    local snapshotPacket = sequence == 0
+    if (kind == "B" or kind == "E" or snapshotPacket) and channel ~= "WHISPER" then return end
+    if not snapshotPacket and kind ~= "B" and kind ~= "E" and channel ~= GroupChannel() then return end
+
+    if sequence > 0 then
+        local previous = member.lastSequence or 0
+        if sequence <= previous then return end
+        member.lastSequence = sequence
+    end
 
     if kind == "B" then
+        local expectedQuests = SafeInteger(fields[6], 0, MAX_REMOTE_QUESTS)
+        local expectedObjectives = SafeInteger(fields[7], 0, MAX_REMOTE_OBJECTIVES)
+        local snapshotSequence = SafeInteger(fields[5], 0, 2147483647)
+        if not expectedQuests or not expectedObjectives or not snapshotSequence then return end
         member.snapshot = {
-            id = fields[3],
-            expectedQuests = tonumber(fields[4]),
-            expectedObjectives = tonumber(fields[5]),
+            id = fields[4],
+            sequence = snapshotSequence,
+            expectedQuests = expectedQuests,
+            expectedObjectives = expectedObjectives,
             receivedQuests = 0,
             receivedObjectives = 0,
             quests = {},
             hadComplete = member.completeSnapshot,
         }
+        member.class = CleanField(fields[8], 16)
+        member.capabilities = CleanField(fields[9], 80)
     elseif kind == "E" then
         local snapshot = member.snapshot
         local valid = snapshot ~= nil
         if valid and snapshot.expectedQuests ~= nil then
-            valid = snapshot.id == fields[3]
-                and snapshot.expectedQuests == tonumber(fields[4])
-                and snapshot.expectedObjectives == tonumber(fields[5])
+            valid = snapshot.id == fields[4]
+                and snapshot.sequence == SafeInteger(fields[5], 0, 2147483647)
+                and snapshot.expectedQuests == SafeInteger(fields[6], 0, MAX_REMOTE_QUESTS)
+                and snapshot.expectedObjectives == SafeInteger(fields[7], 0, MAX_REMOTE_OBJECTIVES)
                 and snapshot.receivedQuests == snapshot.expectedQuests
                 and snapshot.receivedObjectives == snapshot.expectedObjectives
             local actualQuests, actualObjectives = 0, 0
@@ -535,6 +747,9 @@ local function ReceiveMessage(prefix, message, channel, sender)
         if valid then
             member.quests = snapshot.quests
             member.completeSnapshot = true
+            member.lastSequence = snapshot.sequence
+            member.validSnapshotAt = now
+            member.stale = false
         else
             member.completeSnapshot = snapshot and snapshot.hadComplete or false
         end
@@ -543,36 +758,43 @@ local function ReceiveMessage(prefix, message, channel, sender)
             requestPending = true
             nextAuditAt = 0
         end
-    elseif kind == "X" and fields[2] then
-        local quests = member.snapshot and member.snapshot.quests or member.quests
-        quests[fields[2]] = nil
-    elseif kind == "Q" and fields[2] then
-        local key = fields[2]
-        local quests = member.snapshot and member.snapshot.quests or member.quests
+    elseif kind == "X" and fields[5] and not snapshotPacket then
+        member.quests[fields[5]] = nil
+    elseif kind == "Q" and fields[5] then
+        local key = CleanField(fields[5], 40)
+        local count = SafeInteger(fields[9], 0, 20)
+        if key == "" or not count then return end
+        local quests = snapshotPacket and member.snapshot and member.snapshot.quests or member.quests
+        if not quests then return end
         local quest = quests[key] or { objectives = {} }
         quest.key = key
-        quest.title = fields[3] or "Unknown quest"
-        quest.complete = fields[4] == "1"
-        local count = tonumber(fields[5]) or 0
+        quest.id = SafeInteger(fields[6], 1, 20000000)
+        quest.title = CleanField(fields[7] or "Unknown quest", 80)
+        quest.complete = fields[8] == "1"
         quest.objectiveCount = count
         TrimMemberObjectives(quest, count)
         quests[key] = quest
-        if member.snapshot then
+        if snapshotPacket then
             member.snapshot.receivedQuests = member.snapshot.receivedQuests + 1
         end
-    elseif kind == "O" and fields[2] and tonumber(fields[3]) then
-        local key, index = fields[2], tonumber(fields[3])
-        local quests = member.snapshot and member.snapshot.quests or member.quests
+    elseif kind == "O" and fields[5] then
+        local key = CleanField(fields[5], 40)
+        local index = SafeInteger(fields[6], 1, 20)
+        if key == "" or not index then return end
+        local quests = snapshotPacket and member.snapshot and member.snapshot.quests or member.quests
+        if not quests then return end
         local quest = quests[key] or { key = key, title = "Unknown quest", objectives = {} }
         quest.objectives[index] = {
-            finished = fields[4] == "1",
-            text = fields[5] or ("Objective " .. index),
-            type = fields[6] or "",
-            current = tonumber(fields[7]),
-            required = tonumber(fields[8]),
+            finished = fields[7] == "1",
+            type = CleanField(fields[8], 12),
+            targetType = CleanField(fields[9], 8),
+            targetID = SafeInteger(fields[10], 1, 20000000),
+            current = SafeInteger(fields[11], 0, 100000000),
+            required = SafeInteger(fields[12], 0, 100000000),
+            text = CleanField(fields[13] or ("Objective " .. index), 100),
         }
         quests[key] = quest
-        if member.snapshot then
+        if snapshotPacket then
             member.snapshot.receivedObjectives = member.snapshot.receivedObjectives + 1
         end
     end
@@ -582,6 +804,7 @@ local function ReceiveMessage(prefix, message, channel, sender)
     -- RequestRefresh is deliberately cheap and coalesces rapid objective rows.
     if kind == "B" or kind == "E" or kind == "X" or kind == "Q" or kind == "O" then
         if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
+        if AQ.Map and AQ.Map.RequestRefresh then AQ.Map.RequestRefresh() end
     end
 end
 
@@ -597,13 +820,14 @@ local function CleanupRoster()
         if not roster[name] then pendingSnapshotTargets[name] = nil end
     end
     if not SyncActive() then
-        wipe(outgoing)
+        ClearOutgoing()
         wipe(memberQuests)
         wipe(pendingSnapshotTargets)
         requestPending = false
         nextAuditAt = 0
         profileSyncActive = false
         if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
+        if AQ.Map and AQ.Map.RequestRefresh then AQ.Map.RequestRefresh() end
         return
     end
     profileSyncActive = true
@@ -613,18 +837,38 @@ local function CleanupRoster()
 end
 
 local function MissingMemberData()
-    local playerKey = NormalizeName(UnitName("player"))
+    local playerKey = NormalizeName(UnitFullName("player"))
     for name in pairs(CurrentRoster()) do
         if name ~= playerKey then
             local member = memberQuests[name]
-            if not member or not member.completeSnapshot then return true end
+            if not member or not member.completeSnapshot or member.stale then return true end
         end
     end
     return false
 end
 
 local function AuditSync(now)
-    if not SyncActive() or not baselineReady or now < nextAuditAt then return end
+    if not SyncActive() or not baselineReady then return end
+    local freshnessChanged = false
+    for _, member in pairs(memberQuests) do
+        local age = now - (member.updated or 0)
+        if age >= STALE_AFTER and not member.stale then
+            member.stale = true
+            member.completeSnapshot = false
+            freshnessChanged = true
+            requestPending = true
+            nextAuditAt = 0
+        end
+        if age >= EXPIRE_AFTER and next(member.quests or {}) then
+            member.quests = {}
+            freshnessChanged = true
+        end
+    end
+    if freshnessChanged then
+        if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
+        if AQ.Map and AQ.Map.RequestRefresh then AQ.Map.RequestRefresh() end
+    end
+    if now < nextAuditAt then return end
     local missing = MissingMemberData()
     if requestPending or missing then
         SendRequest()
@@ -633,6 +877,30 @@ local function AuditSync(now)
         SendRequest()
         nextAuditAt = now + (RaidCount() > 0 and RAID_AUDIT_INTERVAL or PARTY_AUDIT_INTERVAL)
     end
+end
+
+local function PopOutgoing()
+    local entry
+    if outgoing.activeBatch then
+        entry = table.remove(outgoing.bulk, 1)
+        if not entry or entry.batch ~= outgoing.activeBatch then
+            outgoing.activeBatch = nil
+            if entry then table.insert(outgoing.bulk, 1, entry) end
+            entry = nil
+        end
+    end
+    if not entry and not outgoing.activeBatch and #outgoing.urgent > 0 then
+        entry = table.remove(outgoing.urgent, 1)
+    end
+    if not entry and #outgoing.bulk > 0 then
+        entry = table.remove(outgoing.bulk, 1)
+        if entry.batch then outgoing.activeBatch = entry.batch end
+    end
+    if entry and entry.key then outgoingKeys[entry.key] = nil end
+    if entry and entry.batchEnd and outgoing.activeBatch == entry.batch then
+        outgoing.activeBatch = nil
+    end
+    return entry
 end
 
 local function ObjectiveProgress(objective)
@@ -925,9 +1193,10 @@ driver:SetScript("OnUpdate", function(self, elapsed)
     AuditSync(now)
 
     sendElapsed = sendElapsed + elapsed
-    if sendElapsed < SEND_INTERVAL or #outgoing == 0 then return end
+    if sendElapsed < SEND_INTERVAL or QueueCount() == 0 then return end
     sendElapsed = 0
-    local entry = table.remove(outgoing, 1)
+    local entry = PopOutgoing()
+    if not entry then return end
     if entry.channel == "WHISPER" or entry.channel == GroupChannel() then
         pcall(SendAddonMessage, PREFIX, entry.message, entry.channel, entry.target)
     end
@@ -945,7 +1214,7 @@ function Sync.ApplyProfile()
         nextAuditAt = 0
         ScheduleUpdate(0)
     elseif not active and profileSyncActive then
-        wipe(outgoing)
+        ClearOutgoing()
         wipe(memberQuests)
         wipe(pendingSnapshotTargets)
         requestPending = false
@@ -965,8 +1234,9 @@ function Sync.Debug()
     print("|cff33ccffQuest Sync|r")
     print("  active=" .. tostring(SyncActive()) .. " channel=" .. tostring(GroupChannel())
         .. " baseline=" .. tostring(baselineReady) .. " localQuests=" .. localCount
-        .. " queued=" .. #outgoing)
-    local playerKey = NormalizeName(UnitName("player"))
+        .. " queued=" .. QueueCount() .. " protocol=" .. VERSION
+        .. " session=" .. sessionID .. " sequence=" .. localSequence)
+    local playerKey = NormalizeName(UnitFullName("player"))
     for name, displayName in pairs(CurrentRoster()) do
         if name ~= playerKey then
             local member = memberQuests[name]
@@ -974,6 +1244,10 @@ function Sync.Debug()
             for _ in pairs(member and member.quests or {}) do questCount = questCount + 1 end
             print("  " .. tostring(displayName) .. ": snapshot="
                 .. tostring(member and member.completeSnapshot or false)
+                .. " stale=" .. tostring(member and member.stale or false)
+                .. " class=" .. tostring(member and member.class or "unknown")
+                .. " protocol=" .. tostring(member and member.capabilities or "unknown")
+                .. " sequence=" .. tostring(member and member.lastSequence or "none")
                 .. " quests=" .. questCount .. " age="
                 .. tostring(member and math.floor(GetTime() - member.updated) or "never"))
         end
