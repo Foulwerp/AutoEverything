@@ -330,7 +330,7 @@ local function RefreshUI()
     ui.state:SetText("State: " .. tostring(current.state))
     ui.rolls:SetText("MS: " .. CountRolls("MS") .. "    OS: " .. CountRolls("OS") .. "    Rejected: " .. #(current.rejectedRolls or {}))
     ui.winner:SetText("Leader: " .. PredictedWinnerText())
-    ui.auto:SetText(Setting("autoAward") and "Auto Award: ON" or "Auto Award: OFF")
+    ui.auto:SetText(Setting("autoAward") and "Auto: ON" or "Auto: OFF")
     if Theme then
         ui.auto.themeAccentColor = Setting("autoAward") and Theme.Colors.brand or nil
         if Theme.RefreshButtonTheme then Theme.RefreshButtonTheme(ui.auto) end
@@ -588,6 +588,32 @@ local function MakeButton(parent, text, width, callback, accentColor)
     return button
 end
 
+-- Compact code-drawn chevrons avoid stock gold navigation art while remaining
+-- readable on clients whose bundled font lacks Unicode arrow glyphs.
+local function MakeArrowButton(parent, direction, callback)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetSize(28, 22)
+    button:SetScript("OnClick", callback)
+    if Theme and Theme.SkinButton then Theme.SkinButton(button, Theme.Colors.brand) end
+
+    local color = Theme and Theme.Colors.brand or { 0.35, 0.65, 1 }
+    local points = {
+        { direction * 5, 0 },
+        { direction * 2, 3 },
+        { direction * 2, -3 },
+        { -direction, 6 },
+        { -direction, -6 },
+    }
+    for _, point in ipairs(points) do
+        local pixel = button:CreateTexture(nil, "ARTWORK")
+        pixel:SetTexture(Theme and Theme.Textures.white or "Interface\\Buttons\\WHITE8X8")
+        pixel:SetSize(3, 3)
+        pixel:SetPoint("CENTER", button, "CENTER", point[1], point[2])
+        pixel:SetVertexColor(color[1], color[2], color[3], 1)
+    end
+    return button
+end
+
 local function AddTooltip(object, title, body)
     object:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -619,7 +645,7 @@ local function CreateWindow()
     ui.state:SetPoint("TOPLEFT", 18, -40)
     if Theme then Theme.ApplyFont(ui.state, 11); ui.state:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
     ui.timer = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    ui.timer:SetPoint("TOPRIGHT", -20, -40)
+    ui.timer:SetPoint("TOP", 0, -40)
     if Theme then Theme.ApplyFont(ui.timer, 12); ui.timer:SetTextColor(Theme.Unpack(Theme.Colors.brand)) end
 
     local iconFrame = CreateFrame("Frame", nil, frame)
@@ -637,29 +663,30 @@ local function CreateWindow()
     ui.winner:SetPoint("TOPLEFT", 18, -113)
     if Theme then Theme.ApplyFont(ui.winner, 11); ui.winner:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
 
-    local previous = MakeButton(frame, "<", 28, function() SelectAdjacent(-1) end)
+    local controlWidth = 71
+    local previous = MakeArrowButton(frame, -1, function() SelectAdjacent(-1) end)
     previous:SetPoint("BOTTOMLEFT", 16, 16)
     AddTooltip(previous, "Previous loot slot", "Selects the previous item in the current loot window.")
-    local nextButton = MakeButton(frame, ">", 28, function() SelectAdjacent(1) end)
+    local nextButton = MakeArrowButton(frame, 1, function() SelectAdjacent(1) end)
     nextButton:SetPoint("LEFT", previous, "RIGHT", 2, 0)
     AddTooltip(nextButton, "Next loot slot", "Selects the next item in the current loot window.")
-    ui.start = MakeButton(frame, "Start", 58, function() AA.Start() end, Theme and Theme.Colors.brand)
+    ui.start = MakeButton(frame, "Start", controlWidth, function() AA.Start() end, Theme and Theme.Colors.brand)
     ui.start:SetPoint("LEFT", nextButton, "RIGHT", 8, 0)
     AddTooltip(ui.start, "Start roll", "Snapshots the current group and starts MS /roll 100 and OS /roll 99 tracking for the selected item.")
-    local stop = MakeButton(frame, "Stop", 52, function() AA.Stop() end)
+    local stop = MakeButton(frame, "Stop", controlWidth, function() AA.Stop() end)
     stop:SetPoint("LEFT", ui.start, "RIGHT", 2, 0)
     AddTooltip(stop, "Stop roll", "Ends the timer now and resolves the accepted rolls.")
-    ui.award = MakeButton(frame, "Award", 58, function() AA.Award() end, Theme and Theme.Colors.success)
+    ui.award = MakeButton(frame, "Award", controlWidth, function() AA.Award() end, Theme and Theme.Colors.success)
     ui.award:SetPoint("LEFT", stop, "RIGHT", 2, 0)
     AddTooltip(ui.award, "Validated award", "Rechecks the loot item, group, master looter, winner, and candidate immediately before assigning once.")
-    local cancel = MakeButton(frame, "Cancel", 58, function() AA.Cancel() end, Theme and Theme.Colors.danger)
+    local cancel = MakeButton(frame, "Cancel", controlWidth, function() AA.Cancel() end, Theme and Theme.Colors.danger)
     cancel:SetPoint("LEFT", ui.award, "RIGHT", 2, 0)
     AddTooltip(cancel, "Cancel", "Stops without assigning the item.")
-    ui.auto = MakeButton(frame, "Auto Award: OFF", 104, function()
+    ui.auto = MakeButton(frame, "Auto: OFF", controlWidth, function()
         SetSetting("autoAward", not Setting("autoAward"))
         RefreshUI()
     end)
-    ui.auto:SetPoint("BOTTOMRIGHT", -16, 42)
+    ui.auto:SetPoint("TOPRIGHT", -42, -32)
     AddTooltip(ui.auto, "Automatic assignment", "Off by default. When armed, a unique validated winner is assigned after the timer and grace period. Ambiguity always stops safely.")
 
     local close = MakeButton(frame, "x", 22, function() frame:Hide() end)
