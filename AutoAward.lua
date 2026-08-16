@@ -330,7 +330,11 @@ local function RefreshUI()
     ui.rolls:SetText("MS: " .. CountRolls("MS") .. "    OS: " .. CountRolls("OS") .. "    Rejected: " .. #(current.rejectedRolls or {}))
     ui.winner:SetText("Leader: " .. PredictedWinnerText())
     ui.auto:SetText(Setting("autoAward") and "Auto Award: ON" or "Auto Award: OFF")
-    if Setting("autoAward") then ui.auto:SetTextColor(0.2, 1, 0.2) else ui.auto:SetTextColor(1, 0.35, 0.2) end
+    local autoText = ui.auto.GetFontString and ui.auto:GetFontString()
+    if autoText and autoText.SetTextColor then
+        if Setting("autoAward") then autoText:SetTextColor(0.2, 1, 0.2)
+        else autoText:SetTextColor(1, 0.35, 0.2) end
+    end
 
     local now = GetTime and GetTime() or 0
     local remaining = current.deadline and math.max(0, current.deadline - now) or 0
