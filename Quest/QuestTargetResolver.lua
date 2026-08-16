@@ -19,7 +19,7 @@ local auditElapsed = 0
 -- and nameplate markers must not take an earlier snapshot and then remain
 -- stale until the next unrelated quest update.
 Resolver.QUEST_LOG_SETTLE_DELAY = 0.75
-Resolver.QUEST_STATE_AUDIT_INTERVAL = 0.4
+Resolver.QUEST_STATE_AUDIT_INTERVAL = 1
 
 local function Trim(value)
     value = string.gsub(value or "", "^%s+", "")
