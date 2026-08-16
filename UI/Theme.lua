@@ -84,12 +84,27 @@ function UI.CreateVerticalScrollbar(parent, height, onValueChanged, step)
     scrollbar.scrollValue = 0
     scrollbar.scrollStep = math.max(1, step or 1)
 
-    local track = scrollbar:CreateTexture(nil, "BACKGROUND")
-    track:SetTexture(UI.Textures.white)
-    track:SetWidth(3)
-    track:SetPoint("TOP", 0, 0)
-    track:SetPoint("BOTTOM", 0, 0)
-    track:SetVertexColor(UI.Unpack(UI.Colors.track, 0.9))
+    local trackWidth = 4
+    local trackCapHeight = trackWidth / 2
+    local trackTop = scrollbar:CreateTexture(nil, "BACKGROUND")
+    trackTop:SetTexture(UI.Textures.circle)
+    trackTop:SetTexCoord(0, 1, 0, 0.5)
+    trackTop:SetSize(trackWidth, trackCapHeight)
+    trackTop:SetPoint("TOP", scrollbar, "TOP", 0, 0)
+    trackTop:SetVertexColor(UI.Unpack(UI.Colors.track, 0.9))
+
+    local trackBottom = scrollbar:CreateTexture(nil, "BACKGROUND")
+    trackBottom:SetTexture(UI.Textures.circle)
+    trackBottom:SetTexCoord(0, 1, 0.5, 1)
+    trackBottom:SetSize(trackWidth, trackCapHeight)
+    trackBottom:SetPoint("BOTTOM", scrollbar, "BOTTOM", 0, 0)
+    trackBottom:SetVertexColor(UI.Unpack(UI.Colors.track, 0.9))
+
+    local trackCenter = scrollbar:CreateTexture(nil, "BACKGROUND")
+    trackCenter:SetTexture(UI.Textures.white)
+    trackCenter:SetPoint("TOPLEFT", trackTop, "BOTTOMLEFT", 0, 0)
+    trackCenter:SetPoint("BOTTOMRIGHT", trackBottom, "TOPRIGHT", 0, 0)
+    trackCenter:SetVertexColor(UI.Unpack(UI.Colors.track, 0.9))
 
     local pillWidth, pillHeight = 12, 26
     local capHeight = pillWidth / 2
