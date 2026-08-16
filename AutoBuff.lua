@@ -18,6 +18,7 @@ local availableBuffs = nil
 local currentMissing = {}
 local currentCandidate = nil
 local rejectedTrivialTargets = {}
+local rejectedPowerfulBuffs = {}
 local lastBuffAttempt = nil
 local castReadyAt = nil
 local window, castButton, statusText
@@ -112,6 +113,14 @@ end
 local function IsTrivialTargetError(message)
     if type(message) ~= "string" then return false end
     return string.find(string.lower(message), "target trivial", 1, true) ~= nil
+end
+
+local function IsMorePowerfulBuffError(message)
+    if type(message) ~= "string" then return false end
+    if type(SPELL_FAILED_AURA_BOUNCED) == "string" and message == SPELL_FAILED_AURA_BOUNCED then return true end
+    local lowered = string.lower(message)
+    return string.find(lowered, "more powerful", 1, true) ~= nil
+        and string.find(lowered, "already active", 1, true) ~= nil
 end
 
 local function InCombat()
@@ -396,18 +405,34 @@ local function TargetAllowed(entry, unit, hasSelfAssignments)
 end
 
 local function ReadAuraTimers(unit)
-    local timers = {}
-    if not UnitAura then return timers end
+    local timers, auraKeys = {}, {}
+    if not UnitAura then return timers, auraKeys end
     for index = 1, 40 do
-        local name, _, _, _, _, duration, expires = UnitAura(unit, index, "HELPFUL")
+        local name, rank, _, _, _, duration, expires, _, _, _, spellID = UnitAura(unit, index, "HELPFUL")
         if not name then break end
         if not duration or duration <= 0 or not expires or expires <= 0 then
             timers[name] = math.huge
         else
             timers[name] = math.max(0, expires - GetTime())
         end
+        local key = spellID and ("id:" .. tostring(spellID))
+            or ("name:" .. tostring(name) .. ":" .. tostring(rank or ""))
+        auraKeys[key] = true
     end
-    return timers
+    return timers, auraKeys
+end
+
+local function HasRejectedPowerfulBuff(identity, spell, auraKeys)
+    local bySpell = identity and rejectedPowerfulBuffs[identity]
+    local snapshot = bySpell and bySpell[spell]
+    if not snapshot then return false end
+    for key in pairs(snapshot) do
+        if not auraKeys[key] then
+            bySpell[spell] = nil
+            return false
+        end
+    end
+    return true
 end
 
 local function NeedsBuff(timers, spell)
@@ -442,8 +467,10 @@ local function BuildMissing()
     local missing = {}
     local units = GroupUnits()
     local hasSelfAssignments = HasSelfAssignments()
-    local auraTimers = {}
-    for _, unit in ipairs(units) do auraTimers[unit.unit] = ReadAuraTimers(unit.unit) end
+    local auraTimers, auraKeys = {}, {}
+    for _, unit in ipairs(units) do
+        auraTimers[unit.unit], auraKeys[unit.unit] = ReadAuraTimers(unit.unit)
+    end
     for _, entry in ipairs(BuffList()) do
         local learned = type(entry) == "table" and LearnedSpell(entry.spell)
         if learned then
@@ -451,7 +478,8 @@ local function BuildMissing()
             for _, unit in ipairs(units) do
                 if TargetAllowed(entry, unit, hasSelfAssignments) then
                     local needed, remaining = NeedsBuff(auraTimers[unit.unit], learned.name)
-                    if needed then
+                    local identity = UnitIdentity(unit.unit)
+                    if needed and not HasRejectedPowerfulBuff(identity, learned.name, auraKeys[unit.unit]) then
                         table.insert(missing, {
                             spell = learned.name,
                             icon = learned.icon,
@@ -535,6 +563,8 @@ local function CreateWindow()
         end
         lastBuffAttempt = {
             identity = UnitIdentity(currentCandidate.unit),
+            unit = currentCandidate.unit,
+            spell = currentCandidate.spell,
             name = currentCandidate.name,
             at = GetTime(),
         }
@@ -693,6 +723,11 @@ events:SetScript("OnEvent", function(self, event, arg1)
                         .. " after the client rejected the buff as trivial.")
                 end
                 ScheduleScan(0)
+            elseif lastBuffAttempt.identity and lastBuffAttempt.spell and IsMorePowerfulBuffError(arg1) then
+                local _, auraKeys = ReadAuraTimers(lastBuffAttempt.unit)
+                rejectedPowerfulBuffs[lastBuffAttempt.identity] = rejectedPowerfulBuffs[lastBuffAttempt.identity] or {}
+                rejectedPowerfulBuffs[lastBuffAttempt.identity][lastBuffAttempt.spell] = auraKeys
+                ScheduleScan(0)
             end
             lastBuffAttempt = nil
         end
@@ -708,6 +743,7 @@ events:SetScript("OnEvent", function(self, event, arg1)
             or event == "RAID_ROSTER_UPDATE"
         then
             rejectedTrivialTargets = {}
+            rejectedPowerfulBuffs = {}
             lastBuffAttempt = nil
         end
         ScheduleScan(0.4)
