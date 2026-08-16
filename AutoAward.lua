@@ -1037,9 +1037,10 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         and current.pendingAward.kind == "trade" and ERR_TRADE_COMPLETE
         and (arg1 == ERR_TRADE_COMPLETE or arg2 == ERR_TRADE_COMPLETE)
     then
+        local completedTrade = current.pendingAward
         SetState(STATE_AWARDED)
         current.pendingAward = nil
-        Log("Inventory item trade confirmed.")
+        Announce("Gave " .. completedTrade.itemLink .. " to " .. completedTrade.winner .. ".")
         RefreshUI()
     end
 end)
