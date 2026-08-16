@@ -588,28 +588,17 @@ local function MakeButton(parent, text, width, callback, accentColor)
     return button
 end
 
--- Compact code-drawn chevrons avoid stock gold navigation art while remaining
--- readable on clients whose bundled font lacks Unicode arrow glyphs.
+-- ASCII arrows remain reliable on every 3.3.5 font renderer. A larger outlined
+-- theme font gives them enough weight without returning to stock button art.
 local function MakeArrowButton(parent, direction, callback)
-    local button = CreateFrame("Button", nil, parent)
-    button:SetSize(28, 22)
-    button:SetScript("OnClick", callback)
-    if Theme and Theme.SkinButton then Theme.SkinButton(button, Theme.Colors.brand) end
-
-    local color = Theme and Theme.Colors.brand or { 0.35, 0.65, 1 }
-    local points = {
-        { direction * 5, 0 },
-        { direction * 2, 3 },
-        { direction * 2, -3 },
-        { -direction, 6 },
-        { -direction, -6 },
-    }
-    for _, point in ipairs(points) do
-        local pixel = button:CreateTexture(nil, "ARTWORK")
-        pixel:SetTexture(Theme and Theme.Textures.white or "Interface\\Buttons\\WHITE8X8")
-        pixel:SetSize(3, 3)
-        pixel:SetPoint("CENTER", button, "CENTER", point[1], point[2])
-        pixel:SetVertexColor(color[1], color[2], color[3], 1)
+    local button = MakeButton(parent, direction < 0 and "<" or ">", 28, callback)
+    local font = button.GetFontString and button:GetFontString()
+    if Theme and font then
+        local original = font:GetFont()
+        if not font:SetFont(Theme.Font, 18, "OUTLINE") and original then
+            font:SetFont(original, 18, "OUTLINE")
+        end
+        font:SetTextColor(Theme.Unpack(Theme.Colors.brand))
     end
     return button
 end
@@ -627,7 +616,7 @@ end
 local function CreateWindow()
     frame = CreateFrame("Frame", "AutoEverythingAwardFrame", UIParent)
     frame:SetWidth(390)
-    frame:SetHeight(190)
+    frame:SetHeight(215)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -642,14 +631,14 @@ local function CreateWindow()
     title:SetText("Master Loot Awards")
     if Theme then Theme.ApplyFont(title, 16); title:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
     ui.state = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ui.state:SetPoint("TOPLEFT", 18, -40)
+    ui.state:SetPoint("TOPLEFT", 18, -59)
     if Theme then Theme.ApplyFont(ui.state, 11); ui.state:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
     ui.timer = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    ui.timer:SetPoint("TOP", 0, -40)
+    ui.timer:SetPoint("TOP", 0, -59)
     if Theme then Theme.ApplyFont(ui.timer, 12); ui.timer:SetTextColor(Theme.Unpack(Theme.Colors.brand)) end
 
     local iconFrame = CreateFrame("Frame", nil, frame)
-    iconFrame:SetSize(36, 36); iconFrame:SetPoint("TOPLEFT", 18, -57)
+    iconFrame:SetSize(36, 36); iconFrame:SetPoint("TOPLEFT", 18, -82)
     if Theme then Theme.Backdrop(iconFrame, Theme.Colors.surface, 1) end
     ui.icon = iconFrame:CreateTexture(nil, "ARTWORK")
     ui.icon:SetPoint("TOPLEFT", 2, -2); ui.icon:SetPoint("BOTTOMRIGHT", -2, 2)
@@ -657,10 +646,10 @@ local function CreateWindow()
     ui.item:SetPoint("LEFT", iconFrame, "RIGHT", 10, 0); ui.item:SetWidth(309); ui.item:SetJustifyH("LEFT")
     if Theme then Theme.ApplyFont(ui.item, 12) end
     ui.rolls = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ui.rolls:SetPoint("TOPLEFT", 18, -96)
+    ui.rolls:SetPoint("TOPLEFT", 18, -123)
     if Theme then Theme.ApplyFont(ui.rolls, 11); ui.rolls:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
     ui.winner = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ui.winner:SetPoint("TOPLEFT", 18, -113)
+    ui.winner:SetPoint("TOPLEFT", 18, -140)
     if Theme then Theme.ApplyFont(ui.winner, 11); ui.winner:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
 
     local controlWidth = 71
@@ -686,7 +675,7 @@ local function CreateWindow()
         SetSetting("autoAward", not Setting("autoAward"))
         RefreshUI()
     end)
-    ui.auto:SetPoint("TOPRIGHT", -42, -32)
+    ui.auto:SetPoint("TOPRIGHT", -18, -51)
     AddTooltip(ui.auto, "Automatic assignment", "Off by default. When armed, a unique validated winner is assigned after the timer and grace period. Ambiguity always stops safely.")
 
     local close = MakeButton(frame, "x", 22, function() frame:Hide() end)
