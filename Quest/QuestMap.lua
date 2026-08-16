@@ -123,39 +123,6 @@ local function MinimapPinRadiusPercent() return Setting("minimapPinRadiusPercent
 local function MaxWorldPins() return Setting("maxWorldPins", 500) end
 local function MaxMinimapPins() return Setting("maxMinimapPins", 150) end
 
--- Use direct database facts where available, then the client-reported type of
--- the exact live objective. Unknown types are deliberately not guessed.
-local function RecordKind(record, objective)
-    if tonumber(record.type) == -1 then return "scout" end
-    if tonumber(record.type) == 2 then return "object" end
-    if record.item then return "loot" end
-
-    local objectiveType = objective and string.lower(objective.kind or "") or ""
-    if objectiveType == "monster" or objectiveType == "player" then return "kill" end
-    if objectiveType == "item" then return "loot" end
-    if objectiveType == "object" or objectiveType == "event" then return "object" end
-    return nil
-end
-
--- Tie every scraped record to a live objective before it can create a pin.
-local function ObjectiveForRecord(objectives, record)
-    -- Mapper objective indexes are zero-based and disambiguate overlapping
-    -- names such as "Rockjaw Trogg" and "Burly Rockjaw Trogg".
-    local index = tonumber(record.objective)
-    if index ~= nil then return objectives[index + 1] end
-
-    local needle = string.lower(record.item or record.name or "")
-    if needle ~= "" then
-        for _, objective in ipairs(objectives) do
-            if string.find(string.lower(objective.text or ""), needle, 1, true) then
-                return objective
-            end
-        end
-    end
-
-    return nil
-end
-
 -- Pulls the "3/10" style count out of a live quest-log objective line (e.g.
 -- "Defias Bandits slain: 3/10") so pin tooltips can show real progress
 -- instead of just re-stating the quest's static requirement text.
@@ -488,27 +455,9 @@ local function AddConfirmedLocations(objectives)
     end
 end
 
--- An NPC page's "Objective of" relationship identifies the quest but not its
--- objective slot. Use it only for a single-monster quest; multi-kill quests
--- stay on their exact mapper records so completed NPC types cannot inherit a
--- different objective's remaining count.
-local function ObjectiveForQuestNPC(objectives)
-    local monsters = {}
-    for _, objective in ipairs(objectives or {}) do
-        local objectiveType = string.lower(objective.kind or "")
-        if objectiveType == "monster" or objectiveType == "player" then
-            monsters[#monsters + 1] = objective
-        end
-    end
-    if #monsters == 1 and not monsters[1].done then return monsters[1] end
-    if #monsters == 0 and #(objectives or {}) == 1 and not objectives[1].done then
-        return objectives[1]
-    end
-end
-
 local function AddQuestObjectiveNPCs(questID, questTitle, objectives, npcIDs, partyMember, partyClass)
-    local objective = ObjectiveForQuestNPC(objectives)
-    local kind = objective and RecordKind({}, objective)
+    local objective = Resolver.ObjectiveForQuestNPC(objectives)
+    local kind = objective and Resolver.RecordKind({}, objective, "map")
     if not objective or not kind then return end
 
     local _, displayLabel = Resolver.Normalize(objective.text)
@@ -527,24 +476,9 @@ local function AddQuestObjectiveNPCs(questID, questTitle, objectives, npcIDs, pa
     end
 end
 
-local function ObjectiveForQuestItem(objectives, itemName)
-    local needle = Resolver.Normalize(itemName)
-    local itemObjectives = {}
-    for _, objective in ipairs(objectives or {}) do
-        if not objective.done and string.lower(objective.kind or "") == "item" then
-            itemObjectives[#itemObjectives + 1] = objective
-            local normalized = Resolver.Normalize(objective.text)
-            if needle ~= "" and string.find(normalized, needle, 1, true) then
-                return objective
-            end
-        end
-    end
-    if #itemObjectives == 1 then return itemObjectives[1] end
-end
-
 local function AddQuestItemNPCs(questID, questTitle, objectives, sources, partyMember, partyClass)
     for _, source in ipairs(sources or {}) do
-        local objective = ObjectiveForQuestItem(objectives, source.itemName)
+        local objective = Resolver.ObjectiveForQuestItem(objectives, source.itemName)
         if objective then
             local _, displayLabel = Resolver.Normalize(objective.text)
             local itemName = source.itemName or displayLabel
@@ -607,8 +541,8 @@ local function IndexRemoteQuest(quest, member)
         local matchQuestID = match.id
         for _, record in ipairs(match.entry.records or {}) do
             local recordType = tonumber(record.type) or 1
-            local objective = ObjectiveForRecord(objectives, record)
-            local kind = RecordKind(record, objective)
+            local objective = Resolver.ObjectiveForRecord(objectives, record)
+            local kind = Resolver.RecordKind(record, objective, "map")
             if objective and kind and not objective.done then
                 local progress = ExtractProgress(objective.text)
                 if recordType == 2 or recordType == -1 then
@@ -653,7 +587,7 @@ local function IndexRemoteQuest(quest, member)
         if not objective.done and objective.targetType == "monster" and targetID then
             local _, display = Resolver.Normalize(objective.text)
             local record = { id=targetID, name=display ~= "" and display or title }
-            local kind = RecordKind(record, objective)
+            local kind = Resolver.RecordKind(record, objective, "map")
             for _, location in ipairs(SpawnStore.Get(targetID) or {}) do
                 for _, coord in ipairs(location.coords or {}) do
                     if AddLocation(location.zoneID, location.zone, location.floor,
@@ -740,8 +674,8 @@ function QuestMap.RebuildIndex()
                 local matchPointsBefore = buildStats.points
                 for _, record in ipairs(match.entry.records or {}) do
                     local recordType = tonumber(record.type) or 1
-                    local objective = ObjectiveForRecord(objectives, record)
-                    local kind = RecordKind(record, objective)
+                    local objective = Resolver.ObjectiveForRecord(objectives, record)
+                    local kind = Resolver.RecordKind(record, objective, "map")
                     -- The quest database is keyed by the same quest ID exposed
                     -- by the client. Its source requirements therefore become
                     -- useful immediately while that exact quest and objective

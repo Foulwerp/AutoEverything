@@ -105,81 +105,10 @@ local function ParseProgress(objective)
     return complete, remaining
 end
 
--- Use direct database facts where available, then the client-reported type of
--- the exact live objective. Unknown types are deliberately not guessed.
-local function RecordKind(record, objective)
-    -- Mapped events are coordinate-only objectives and never belong on unit
-    -- nameplates, even when their numeric event ID happens to match an NPC ID.
-    if tonumber(record.type) == -1 then return nil end
-    if tonumber(record.type) == 2 then return "talk" end
-    if record.item then return "loot" end
-
-    local objectiveType = objective and string.lower(objective.kind or "") or ""
-    if objectiveType == "monster" or objectiveType == "player" then return "kill" end
-    if objectiveType == "item" then return "loot" end
-    if objectiveType == "object" or objectiveType == "event" then return "talk" end
-    return nil
-end
-
--- Tie every scraped record to a live objective before it can create a badge.
-local function ObjectiveForRecord(objectives, record)
-    -- Ascension Mapper indexes are zero-based and identify the exact slot.
-    -- Prefer them over names: "Rockjaw Trogg" is also a substring of
-    -- "Burly Rockjaw Trogg" and must not cross-match that other objective.
-    local index = tonumber(record.objective)
-    if index ~= nil then return objectives[index + 1] end
-
-    local needle = string.lower(record.item or record.name or "")
-    if needle ~= "" then
-        for _, objective in ipairs(objectives) do
-            if string.find(string.lower(objective.text or ""), needle, 1, true) then
-                return objective
-            end
-        end
-    end
-
-    -- Do not accept a database record that cannot be tied to a real live
-    -- objective; stale/cross-referenced records are otherwise
-    -- indistinguishable from valid targets.
-    return nil
-end
-
 local function ObjectiveStatus(objectives, record)
-    local objective = ObjectiveForRecord(objectives, record)
+    local objective = Resolver.ObjectiveForRecord(objectives, record)
     local done, remaining = ParseProgress(objective)
     return done, remaining, objective
-end
-
--- NPC-page relationships identify the quest but not its objective slot. They
--- are safe only when the quest has exactly one monster objective. Otherwise a
--- completed target can inherit another target's remaining count.
-local function ObjectiveForQuestNPC(objectives)
-    local monsters = {}
-    for _, objective in ipairs(objectives or {}) do
-        local objectiveType = string.lower(objective.kind or "")
-        if objectiveType == "monster" or objectiveType == "player" then
-            monsters[#monsters + 1] = objective
-        end
-    end
-    if #monsters == 1 and not monsters[1].done then return monsters[1] end
-    if #monsters == 0 and #(objectives or {}) == 1 and not objectives[1].done then
-        return objectives[1]
-    end
-end
-
-local function ObjectiveForQuestItem(objectives, itemName)
-    local needle = Resolver.Normalize(itemName)
-    local itemObjectives = {}
-    for _, objective in ipairs(objectives or {}) do
-        if not objective.done and string.lower(objective.kind or "") == "item" then
-            itemObjectives[#itemObjectives + 1] = objective
-            local normalized = Resolver.Normalize(objective.text)
-            if needle ~= "" and string.find(normalized, needle, 1, true) then
-                return objective
-            end
-        end
-    end
-    if #itemObjectives == 1 then return itemObjectives[1] end
 end
 
 local function AddMatch(index, key, kind, questTitle, itemName, remaining,
@@ -238,7 +167,7 @@ local function IndexQuestTargets(title, questID, objectives, memberName, memberC
     for _, match in ipairs(resolved) do
         for _, record in ipairs(match.entry.records or {}) do
             local done, remaining, objective = ObjectiveStatus(objectives, record)
-            local kind = RecordKind(record, objective)
+            local kind = Resolver.RecordKind(record, objective, "marker")
             if objective and kind and not done then
                 AddMatch(activeByNPC, tonumber(record.id), kind, title, record.item,
                     remaining, memberName, objective, memberClass)
@@ -254,10 +183,10 @@ local function IndexQuestTargets(title, questID, objectives, memberName, memberC
             local _, display = Resolver.Normalize(objective.text)
             local done, remaining = ParseProgress(objective)
             if not done then
-                AddMatch(activeByNPC, targetID, RecordKind({}, objective) or "kill",
+                AddMatch(activeByNPC, targetID, Resolver.RecordKind({}, objective, "marker") or "kill",
                     title, nil, remaining, memberName, objective, memberClass)
                 if display ~= "" then
-                    AddMatch(activeByName, string.lower(display), RecordKind({}, objective) or "kill",
+                    AddMatch(activeByName, string.lower(display), Resolver.RecordKind({}, objective, "marker") or "kill",
                         title, nil, remaining, memberName, objective, memberClass)
                 end
             end
@@ -276,9 +205,9 @@ local function IndexQuestTargets(title, questID, objectives, memberName, memberC
     AddRelationshipQuestID(questID)
     for _, match in ipairs(resolved) do AddRelationshipQuestID(match.id) end
 
-    local npcObjective = ObjectiveForQuestNPC(objectives)
+    local npcObjective = Resolver.ObjectiveForQuestNPC(objectives)
     local npcDone, npcRemaining = ParseProgress(npcObjective)
-    local npcKind = RecordKind({}, npcObjective)
+    local npcKind = Resolver.RecordKind({}, npcObjective, "marker")
     for _, relationshipQuestID in ipairs(relationshipQuestIDs) do
         if npcObjective and npcKind and not npcDone then
             for _, npcID in ipairs(SpawnStore.GetObjectiveNPCs(relationshipQuestID) or {}) do
@@ -288,7 +217,7 @@ local function IndexQuestTargets(title, questID, objectives, memberName, memberC
         end
 
         for _, source in ipairs(SpawnStore.GetQuestItemSources(relationshipQuestID) or {}) do
-            local itemObjective = ObjectiveForQuestItem(objectives, source.itemName)
+            local itemObjective = Resolver.ObjectiveForQuestItem(objectives, source.itemName)
             local itemDone, itemRemaining = ParseProgress(itemObjective)
             if itemObjective and not itemDone then
                 for _, npcID in ipairs(source.npcIDs or {}) do

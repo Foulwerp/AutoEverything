@@ -62,6 +62,76 @@ function Resolver.ObjectiveIsComplete(text, finished)
     return current ~= nil and required ~= nil and required > 0 and current >= required
 end
 
+-- Mapper records and live objectives describe the same target in different
+-- shapes. Keep their association here so map pins and nameplate markers cannot
+-- silently drift into using different safety rules.
+function Resolver.ObjectiveForRecord(objectives, record)
+    record = record or {}
+
+    -- Ascension Mapper objective indexes are zero-based and identify the exact
+    -- slot. Prefer them over names because one target name may contain another.
+    local index = tonumber(record.objective)
+    if index ~= nil then return (objectives or {})[index + 1] end
+
+    local needle = string.lower(record.item or record.name or "")
+    if needle ~= "" then
+        for _, objective in ipairs(objectives or {}) do
+            if string.find(string.lower(objective.text or ""), needle, 1, true) then
+                return objective
+            end
+        end
+    end
+end
+
+-- An NPC page's quest relationship does not identify an objective slot. It is
+-- safe only for one monster objective, or for a one-objective non-monster quest.
+function Resolver.ObjectiveForQuestNPC(objectives)
+    local monsters = {}
+    for _, objective in ipairs(objectives or {}) do
+        local objectiveType = string.lower(objective.kind or "")
+        if objectiveType == "monster" or objectiveType == "player" then
+            monsters[#monsters + 1] = objective
+        end
+    end
+    if #monsters == 1 and not monsters[1].done then return monsters[1] end
+    if #monsters == 0 and #(objectives or {}) == 1 and not objectives[1].done then
+        return objectives[1]
+    end
+end
+
+function Resolver.ObjectiveForQuestItem(objectives, itemName)
+    local needle = Resolver.Normalize(itemName)
+    local itemObjectives = {}
+    for _, objective in ipairs(objectives or {}) do
+        if not objective.done and string.lower(objective.kind or "") == "item" then
+            itemObjectives[#itemObjectives + 1] = objective
+            local normalized = Resolver.Normalize(objective.text)
+            if needle ~= "" and string.find(normalized, needle, 1, true) then
+                return objective
+            end
+        end
+    end
+    if #itemObjectives == 1 then return itemObjectives[1] end
+end
+
+-- Database event/object records are rendered differently by each surface:
+-- maps show coordinate-only scouts and objects, while unit markers omit scouts
+-- and call interactable targets "talk". Kill and loot targets are shared.
+function Resolver.RecordKind(record, objective, surface)
+    record = record or {}
+    local recordType = tonumber(record.type)
+    if recordType == -1 then return surface == "map" and "scout" or nil end
+    if recordType == 2 then return surface == "map" and "object" or "talk" end
+    if record.item then return "loot" end
+
+    local objectiveType = objective and string.lower(objective.kind or "") or ""
+    if objectiveType == "monster" or objectiveType == "player" then return "kill" end
+    if objectiveType == "item" then return "loot" end
+    if objectiveType == "object" or objectiveType == "event" then
+        return surface == "map" and "object" or "talk"
+    end
+end
+
 local function ObjectiveKey(questID, title, objectiveIndex, label)
     if questID and questID > 0 then
         return table.concat({ "id", questID, objectiveIndex, label }, ":")
