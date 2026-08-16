@@ -225,27 +225,44 @@ local function ObjectiveTarget(questID, title, objectiveIndex, objectiveText, ob
     local resolved = AQ.ResolveQuestEntries and AQ.ResolveQuestEntries(questID, title) or {}
     local fallbackType = string.lower(objectiveType or "")
 
+    local function TargetFromRecord(match, record)
+        if record.item and SpawnStore and SpawnStore.GetQuestItemSources then
+            for _, source in ipairs(SpawnStore.GetQuestItemSources(match.id) or {}) do
+                local itemName = string.lower(source.itemName or "")
+                if itemName ~= "" and string.find(normalized, itemName, 1, true) then
+                    return "item", tonumber(source.itemID)
+                end
+            end
+        end
+        local recordType = tonumber(record.type)
+        local targetID = tonumber(record.id)
+        if targetID and targetID > 0 then
+            if recordType == 2 then return "object", targetID end
+            if recordType == -1 then return "event", targetID end
+            return "monster", targetID
+        end
+    end
+
+    -- Indexed records identify exact objective slots. Resolve all of them
+    -- before considering legacy name-only records, since a short target name
+    -- can be contained in another objective's name.
     for _, match in ipairs(resolved) do
         for _, record in ipairs(match.entry and match.entry.records or {}) do
             local recordIndex = tonumber(record.objective)
-            local recordName = string.lower(record.item or record.name or "")
-            local exactIndex = recordIndex ~= nil and recordIndex + 1 == objectiveIndex
-            local exactName = recordName ~= "" and string.find(normalized, recordName, 1, true) ~= nil
-            if exactIndex or exactName then
-                if record.item and SpawnStore and SpawnStore.GetQuestItemSources then
-                    for _, source in ipairs(SpawnStore.GetQuestItemSources(match.id) or {}) do
-                        local itemName = string.lower(source.itemName or "")
-                        if itemName ~= "" and string.find(normalized, itemName, 1, true) then
-                            return "item", tonumber(source.itemID)
-                        end
-                    end
-                end
-                local recordType = tonumber(record.type)
-                local targetID = tonumber(record.id)
-                if targetID and targetID > 0 then
-                    if recordType == 2 then return "object", targetID end
-                    if recordType == -1 then return "event", targetID end
-                    return "monster", targetID
+            if recordIndex ~= nil and recordIndex + 1 == objectiveIndex then
+                local targetType, targetID = TargetFromRecord(match, record)
+                if targetType then return targetType, targetID end
+            end
+        end
+    end
+
+    for _, match in ipairs(resolved) do
+        for _, record in ipairs(match.entry and match.entry.records or {}) do
+            if tonumber(record.objective) == nil then
+                local recordName = string.lower(record.item or record.name or "")
+                if recordName ~= "" and string.find(normalized, recordName, 1, true) then
+                    local targetType, targetID = TargetFromRecord(match, record)
+                    if targetType then return targetType, targetID end
                 end
             end
         end

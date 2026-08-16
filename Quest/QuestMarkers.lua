@@ -123,6 +123,12 @@ end
 
 -- Tie every scraped record to a live objective before it can create a badge.
 local function ObjectiveForRecord(objectives, record)
+    -- Ascension Mapper indexes are zero-based and identify the exact slot.
+    -- Prefer them over names: "Rockjaw Trogg" is also a substring of
+    -- "Burly Rockjaw Trogg" and must not cross-match that other objective.
+    local index = tonumber(record.objective)
+    if index ~= nil then return objectives[index + 1] end
+
     local needle = string.lower(record.item or record.name or "")
     if needle ~= "" then
         for _, objective in ipairs(objectives) do
@@ -132,11 +138,10 @@ local function ObjectiveForRecord(objectives, record)
         end
     end
 
-    -- Ascension Mapper indexes are zero-based. Do not accept a database record
-    -- that cannot be tied to a real live objective; stale/cross-referenced
-    -- records are otherwise indistinguishable from valid targets.
-    local index = tonumber(record.objective)
-    return index and objectives[index + 1] or nil
+    -- Do not accept a database record that cannot be tied to a real live
+    -- objective; stale/cross-referenced records are otherwise
+    -- indistinguishable from valid targets.
+    return nil
 end
 
 local function ObjectiveStatus(objectives, record)
@@ -145,22 +150,21 @@ local function ObjectiveStatus(objectives, record)
     return done, remaining, objective
 end
 
--- NPC-page relationships identify the quest but not its objective slot. Match
--- them to the same safe live objective selection used by map pins: prefer an
--- unfinished monster objective, or accept the only unfinished objective.
+-- NPC-page relationships identify the quest but not its objective slot. They
+-- are safe only when the quest has exactly one monster objective. Otherwise a
+-- completed target can inherit another target's remaining count.
 local function ObjectiveForQuestNPC(objectives)
-    local unfinished, monster = {}, nil
+    local monsters = {}
     for _, objective in ipairs(objectives or {}) do
-        if not objective.done then
-            unfinished[#unfinished + 1] = objective
-            local objectiveType = string.lower(objective.kind or "")
-            if not monster and (objectiveType == "monster" or objectiveType == "player") then
-                monster = objective
-            end
+        local objectiveType = string.lower(objective.kind or "")
+        if objectiveType == "monster" or objectiveType == "player" then
+            monsters[#monsters + 1] = objective
         end
     end
-    if monster then return monster end
-    if #unfinished == 1 then return unfinished[1] end
+    if #monsters == 1 and not monsters[1].done then return monsters[1] end
+    if #monsters == 0 and #(objectives or {}) == 1 and not objectives[1].done then
+        return objectives[1]
+    end
 end
 
 local function ObjectiveForQuestItem(objectives, itemName)

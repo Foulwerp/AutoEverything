@@ -139,6 +139,11 @@ end
 
 -- Tie every scraped record to a live objective before it can create a pin.
 local function ObjectiveForRecord(objectives, record)
+    -- Mapper objective indexes are zero-based and disambiguate overlapping
+    -- names such as "Rockjaw Trogg" and "Burly Rockjaw Trogg".
+    local index = tonumber(record.objective)
+    if index ~= nil then return objectives[index + 1] end
+
     local needle = string.lower(record.item or record.name or "")
     if needle ~= "" then
         for _, objective in ipairs(objectives) do
@@ -148,8 +153,7 @@ local function ObjectiveForRecord(objectives, record)
         end
     end
 
-    local index = tonumber(record.objective)
-    return index and objectives[index + 1] or nil
+    return nil
 end
 
 -- Pulls the "3/10" style count out of a live quest-log objective line (e.g.
@@ -485,22 +489,21 @@ local function AddConfirmedLocations(objectives)
 end
 
 -- An NPC page's "Objective of" relationship identifies the quest but not its
--- objective slot. Prefer an unfinished monster objective, then a sole
--- unfinished objective. Mixed ambiguous quests remain on the mapper/tooltip
--- paths instead of receiving a guessed pin type.
+-- objective slot. Use it only for a single-monster quest; multi-kill quests
+-- stay on their exact mapper records so completed NPC types cannot inherit a
+-- different objective's remaining count.
 local function ObjectiveForQuestNPC(objectives)
-    local unfinished, monster = {}, nil
+    local monsters = {}
     for _, objective in ipairs(objectives or {}) do
-        if not objective.done then
-            unfinished[#unfinished + 1] = objective
-            local objectiveType = string.lower(objective.kind or "")
-            if not monster and (objectiveType == "monster" or objectiveType == "player") then
-                monster = objective
-            end
+        local objectiveType = string.lower(objective.kind or "")
+        if objectiveType == "monster" or objectiveType == "player" then
+            monsters[#monsters + 1] = objective
         end
     end
-    if monster then return monster end
-    if #unfinished == 1 then return unfinished[1] end
+    if #monsters == 1 and not monsters[1].done then return monsters[1] end
+    if #monsters == 0 and #(objectives or {}) == 1 and not objectives[1].done then
+        return objectives[1]
+    end
 end
 
 local function AddQuestObjectiveNPCs(questID, questTitle, objectives, npcIDs, partyMember, partyClass)
