@@ -13,7 +13,6 @@ local AB = AutoBuff
 AB.db = {}
 
 local scanAt = nil
-local settingsRefreshAt = nil
 local periodicElapsed = 0
 local availableBuffs = nil
 local currentMissing = {}
@@ -22,30 +21,11 @@ local rejectedTrivialTargets = {}
 local lastBuffAttempt = nil
 local castReadyAt = nil
 local window, castButton, statusText
-local roleRows = {}
-local roleOverflowText
-local roleScrollSlider
-local roleFirstIndex = 1
-local roleScrollUpdating = false
-local PaintRoleRows
-local ScrollRoleRows
 
-local MAX_WINDOW_ROLES = 8
 local BASE_WINDOW_HEIGHT = 88
-local ROLE_ROW_HEIGHT = 24
--- Blizzard character names are capped at 12 characters. The compact side
--- window shows only the character portion (not the realm), so 118 px leaves
--- enough room at the addon's narrow UI font while keeping all five role
--- buttons beside a narrow raid-roster scrollbar.
 local WINDOW_WIDTH = 298
 local WINDOW_INSET = 8
-local ROLE_SCROLLBAR_WIDTH = 14
-local ROLE_SCROLLBAR_GAP = 4
 local WINDOW_CONTENT_WIDTH = WINDOW_WIDTH - (WINDOW_INSET * 2)
-    - ROLE_SCROLLBAR_WIDTH - ROLE_SCROLLBAR_GAP
-local ROLE_NAME_WIDTH = 118
-local ROLE_BUTTON_SIZE = 24
-local ROLE_BUTTON_GAP = 4
 local CAST_DELAY_SECONDS = 1
 local TRIVIAL_ERROR_WINDOW_SECONDS = 0.75
 
@@ -119,11 +99,6 @@ local function NormalizeName(name)
     name = strtrim(tostring(name or ""))
     if name == "" then return nil end
     return string.lower(name)
-end
-
-local function PlayerRoles()
-    local roles = Setting("playerRoles", Default("playerRoles", {}))
-    return type(roles) == "table" and roles or {}
 end
 
 local function UnitIdentity(unit)
@@ -332,30 +307,6 @@ function AB.GetInferredRole(unit)
     return (result and result.role) or "unknown"
 end
 
-function AB.GetPlayerRole(name, unit)
-    local key = NormalizeName(name)
-    local manual = key and PlayerRoles()[key]
-    if manual then return manual end
-    return AB.GetInferredRole(unit)
-end
-
-function AB.GetPlayerRoleSetting(name)
-    local key = NormalizeName(name)
-    return (key and PlayerRoles()[key]) or "auto"
-end
-
-function AB.SetPlayerRole(name, role)
-    local key = NormalizeName(name)
-    if not key then return false, "Missing player name." end
-    if role ~= "auto" and role ~= "none" and role ~= "caster" and role ~= "melee" and role ~= "tank" and role ~= "healer" then
-        return false, "Unknown group role."
-    end
-    local roles = AutoCore.DeepCopy(PlayerRoles())
-    if role == "auto" then roles[key] = nil else roles[key] = role end
-    AutoCore.SetSetting("buff", "playerRoles", roles)
-    return true
-end
-
 function AB.ApplyProfile()
     if AutoCore and AutoCore.GetProfileSection then
         AB.db = AutoCore.GetProfileSection("buff", true)
@@ -369,18 +320,13 @@ end
 ----------------------------------------------------------------------
 local function UnitRecord(unit, isSelf)
     if not UnitExists or not UnitExists(unit) then return nil end
-    local name, realm = UnitName(unit)
+    local name = UnitName(unit)
     name = name or unit
-    local fullName = realm and realm ~= "" and (name .. "-" .. realm) or name
-    local inferredRole = AB.GetInferredRole(unit)
     return {
         unit = unit,
         name = name,
-        fullName = fullName,
         isSelf = isSelf,
-        role = PlayerRoles()[NormalizeName(fullName)] or inferredRole,
-        inferredRole = inferredRole,
-        roleSetting = AB.GetPlayerRoleSetting(fullName),
+        role = AB.GetInferredRole(unit),
     }
 end
 
@@ -401,36 +347,8 @@ local function AddUnit(units, unit, isSelf)
     if record then table.insert(units, record) end
 end
 
-local function AddRosterUnit(units, unit, isSelf)
-    local record = UnitRecord(unit, isSelf)
-    if record then table.insert(units, record) end
-end
-
-local function RosterUnits()
-    local units = {}
-    local raidCount = GetNumRaidMembers and (GetNumRaidMembers() or 0) or 0
-    if raidCount > 0 then
-        for index = 1, raidCount do
-            local unit = "raid" .. index
-            if not UnitIsUnit or not UnitIsUnit(unit, "player") then AddRosterUnit(units, unit, false) end
-        end
-    else
-        local partyCount = GetNumPartyMembers and (GetNumPartyMembers() or 0) or 0
-        for index = 1, partyCount do AddRosterUnit(units, "party" .. index, false) end
-    end
-    table.sort(units, function(a, b)
-        return string.lower(a.name) < string.lower(b.name)
-    end)
-    return units
-end
-
-function AB.GetGroupMembers()
-    return RosterUnits()
-end
-
 function AB.OnInspectionUpdated()
     ScheduleScan(0)
-    settingsRefreshAt = GetTime() + 0.1
 end
 
 local function GroupUnits()
@@ -569,157 +487,6 @@ local function SaveWindowPosition()
     AutoEverythingCharDB.buffWindow = { point = point, relativePoint = relativePoint, x = x, y = y }
 end
 
-local function ApplyRoleButtonSkin(button)
-    local UI = AutoCore and AutoCore.UI
-    if not UI then return end
-    UI.StripTemplateArt(button)
-    UI.Backdrop(button, UI.Colors.control, 1)
-    if button.SetNormalFontObject then
-        button:SetNormalFontObject("GameFontHighlightSmall")
-        button:SetHighlightFontObject("GameFontHighlightSmall")
-        if button.SetDisabledFontObject then button:SetDisabledFontObject("GameFontDisableSmall") end
-    end
-end
-
-local function RoleTooltip(button)
-    GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
-    GameTooltip:AddLine(button.roleTitle or "AutoBuff role")
-    GameTooltip:AddLine(button.roleHelp or "", nil, nil, nil, true)
-    GameTooltip:Show()
-end
-
-local function CreateRoleRow(index)
-    local row = CreateFrame("Frame", nil, window)
-    row:SetSize(WINDOW_CONTENT_WIDTH, ROLE_ROW_HEIGHT - 2)
-    row:SetPoint("TOPLEFT", WINDOW_INSET, -80 - ((index - 1) * ROLE_ROW_HEIGHT))
-    row:EnableMouse(true)
-    row:EnableMouseWheel(true)
-    row:SetScript("OnMouseWheel", function(_, delta)
-        if ScrollRoleRows then ScrollRoleRows(delta > 0 and -1 or 1) end
-    end)
-
-    row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.name:SetPoint("LEFT", 2, 0)
-    row.name:SetWidth(ROLE_NAME_WIDTH)
-    row.name:SetJustifyH("LEFT")
-    if AutoCore and AutoCore.UI and AutoCore.UI.ApplyFont then AutoCore.UI.ApplyFont(row.name, 11) end
-
-    local roles = {
-        { "A", "auto", "Automatic", "Infer this player's role from inspected gear." },
-        { "C", "caster", "Caster", "Always treat this player as a caster." },
-        { "M", "melee", "Melee", "Always treat this player as physical melee/ranged." },
-        { "T", "tank", "Tank", "Always treat this player as a tank." },
-        { "H", "healer", "Healer", "Always treat this player as a healer." },
-    }
-    row.buttons = {}
-    for roleIndex, definition in ipairs(roles) do
-        local roleValue = definition[2]
-        local button = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-        button:SetSize(ROLE_BUTTON_SIZE, 20)
-        button:SetPoint("LEFT", ROLE_NAME_WIDTH + 2
-            + ((roleIndex - 1) * (ROLE_BUTTON_SIZE + ROLE_BUTTON_GAP)), 0)
-        button:SetText(definition[1])
-        button.roleValue = roleValue
-        button.roleTitle = definition[3]
-        button.roleHelp = definition[4]
-        ApplyRoleButtonSkin(button)
-        button:SetScript("OnEnter", RoleTooltip)
-        button:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        button:EnableMouseWheel(true)
-        button:SetScript("OnMouseWheel", function(_, delta)
-            if ScrollRoleRows then ScrollRoleRows(delta > 0 and -1 or 1) end
-        end)
-        button:SetScript("OnClick", function(self)
-            if not row.memberName then return end
-            local ok, err = AB.SetPlayerRole(row.memberName, roleValue)
-            if not ok and AutoCore and AutoCore.Warn then AutoCore.Warn("Buff", err) end
-        end)
-        row.buttons[roleValue] = button
-    end
-    roleRows[index] = row
-    return row
-end
-
-local function PaintRoleButton(button, state)
-    local UI = AutoCore and AutoCore.UI
-    if not UI or not button then return end
-    local font = button:GetFontString()
-    if state == "inferred" then
-        button:SetBackdropColor(UI.Colors.brandDim[1], UI.Colors.brandDim[2], UI.Colors.brandDim[3], 0.9)
-        button:SetBackdropBorderColor(UI.Unpack(UI.Colors.brand))
-        if font then font:SetTextColor(UI.Unpack(UI.Colors.text)) end
-    elseif state == "automatic" then
-        button:SetBackdropColor(UI.Colors.surfaceRaised[1], UI.Colors.surfaceRaised[2], UI.Colors.surfaceRaised[3], 1)
-        button:SetBackdropBorderColor(UI.Unpack(UI.Colors.textMuted))
-        if font then font:SetTextColor(UI.Unpack(UI.Colors.textMuted)) end
-    elseif state == "selected" then
-        button:SetBackdropColor(UI.Colors.selected[1], UI.Colors.selected[2], UI.Colors.selected[3], 1)
-        button:SetBackdropBorderColor(UI.Unpack(UI.Colors.brand))
-        if font then font:SetTextColor(UI.Unpack(UI.Colors.text)) end
-    else
-        button:SetBackdropColor(UI.Colors.control[1], UI.Colors.control[2], UI.Colors.control[3], 1)
-        button:SetBackdropBorderColor(UI.Unpack(UI.Colors.border))
-        if font then font:SetTextColor(UI.Unpack(UI.Colors.textMuted)) end
-    end
-end
-
-PaintRoleRows = function()
-    local members = RosterUnits()
-    local shown = math.min(#members, MAX_WINDOW_ROLES)
-    local maximumFirst = math.max(1, #members - shown + 1)
-    roleFirstIndex = math.max(1, math.min(roleFirstIndex, maximumFirst))
-    for index = 1, MAX_WINDOW_ROLES do
-        local row = roleRows[index] or CreateRoleRow(index)
-        local member = members[roleFirstIndex + index - 1]
-        if member then
-            row.memberName = member.fullName or member.name
-            local inferred = member.inferredRole and member.inferredRole ~= "unknown"
-                and member.inferredRole or "inspecting"
-            row.name:SetText(member.name)
-            row.buttons.auto.roleTitle = "Automatic (" .. inferred .. ")"
-            for role, button in pairs(row.buttons) do
-                local state
-                if member.roleSetting == "auto" then
-                    if role == "auto" then state = "automatic"
-                    elseif role == member.inferredRole then state = "inferred" end
-                elseif role == member.roleSetting then
-                    state = "selected"
-                end
-                PaintRoleButton(button, state)
-            end
-            row:Show()
-        else
-            row.memberName = nil
-            row:Hide()
-        end
-    end
-
-    if #members > shown then
-        local lastIndex = math.min(#members, roleFirstIndex + shown - 1)
-        roleOverflowText:SetText(roleFirstIndex .. "-" .. lastIndex .. " of " .. #members)
-        roleOverflowText:Show()
-        roleScrollSlider:SetHeight(math.max(24, (shown * ROLE_ROW_HEIGHT) - 4))
-        roleScrollUpdating = true
-        roleScrollSlider:SetScrollRange(maximumFirst - 1, roleFirstIndex - 1)
-        roleScrollUpdating = false
-    else
-        roleOverflowText:Hide()
-        roleScrollSlider:SetScrollRange(0, 0)
-    end
-    local overflowHeight = #members > shown and 18 or 0
-    window:SetHeight(BASE_WINDOW_HEIGHT + shown * ROLE_ROW_HEIGHT + overflowHeight)
-end
-
-ScrollRoleRows = function(delta)
-    local members = RosterUnits()
-    local shown = math.min(#members, MAX_WINDOW_ROLES)
-    local maximumFirst = math.max(1, #members - shown + 1)
-    local nextIndex = math.max(1, math.min(roleFirstIndex + delta, maximumFirst))
-    if nextIndex == roleFirstIndex then return end
-    roleFirstIndex = nextIndex
-    PaintRoleRows()
-end
-
 local function CreateWindow()
     if window then return end
     window = CreateFrame("Frame", "AutoEverythingBuffWindow", UIParent)
@@ -727,14 +494,10 @@ local function CreateWindow()
     window:SetFrameStrata("MEDIUM")
     window:SetMovable(true)
     window:EnableMouse(true)
-    window:EnableMouseWheel(true)
     window:RegisterForDrag("LeftButton")
     window:SetClampedToScreen(true)
     window:SetScript("OnDragStart", function(self) if not InCombat() then self:StartMoving() end end)
     window:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); SaveWindowPosition() end)
-    window:SetScript("OnMouseWheel", function(_, delta)
-        if ScrollRoleRows then ScrollRoleRows(delta > 0 and -1 or 1) end
-    end)
 
     local UI = AutoCore and AutoCore.UI
     if UI and UI.Backdrop then UI.Backdrop(window, UI.Colors.window, 0.96) end
@@ -782,24 +545,6 @@ local function CreateWindow()
         ScheduleScan(0)
     end)
 
-    roleOverflowText = window:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    roleOverflowText:SetPoint("BOTTOMLEFT", WINDOW_INSET + 2, 6)
-    roleOverflowText:SetWidth(WINDOW_CONTENT_WIDTH - 4)
-    roleOverflowText:SetJustifyH("LEFT")
-    roleOverflowText:Hide()
-
-    roleScrollSlider = UI.CreateVerticalScrollbar(window, 24, function(value)
-        if roleScrollUpdating then return end
-        local members = RosterUnits()
-        local shown = math.min(#members, MAX_WINDOW_ROLES)
-        local maximumFirst = math.max(1, #members - shown + 1)
-        roleFirstIndex = math.max(1, math.min(math.floor(value + 0.5) + 1, maximumFirst))
-        PaintRoleRows()
-    end, 1)
-    roleScrollSlider:SetWidth(ROLE_SCROLLBAR_WIDTH)
-    roleScrollSlider:SetPoint("TOPLEFT", window, "TOPLEFT",
-        WINDOW_INSET + WINDOW_CONTENT_WIDTH + ROLE_SCROLLBAR_GAP, -82)
-
     if RegisterStateDriver then
         pcall(RegisterStateDriver, castButton, "visibility", "[combat] hide; show")
     end
@@ -828,9 +573,6 @@ local function PaintWindow()
         statusText:SetText("Paused in combat")
         return
     end
-
-
-    PaintRoleRows()
 
     if currentCandidate then
         local timerText = currentCandidate.remaining == nil and "missing"
@@ -994,10 +736,6 @@ events:SetScript("OnUpdate", function(self, elapsed)
     if scanAt and GetTime() >= scanAt and not InCombat() then
         scanAt = nil
         AB.Scan()
-    end
-    if settingsRefreshAt and GetTime() >= settingsRefreshAt then
-        settingsRefreshAt = nil
-        if AutoCore and AutoCore.Settings and AutoCore.Settings.Refresh then AutoCore.Settings.Refresh("buff") end
     end
 end)
 

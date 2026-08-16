@@ -245,5 +245,4 @@ AutoBuffConfig = {
     includeRaid = true,
     rebuffSeconds = 60,
     buffs = {},
-    playerRoles = {},
 }

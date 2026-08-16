@@ -960,7 +960,7 @@ local function Refresh(rebuild)
     local activeNavPage = currentPage
     if activeNavPage == "Never Sell" then activeNavPage = "Sell Rules"
     elseif activeNavPage == "Never Roll" then activeNavPage = "Roll Rules"
-    elseif activeNavPage == "Buff Assignments" then activeNavPage = "Buff" end
+    end
     for name, button in pairs(navButtons) do
         button.selected = name == activeNavPage
         button.hovered = false
@@ -1005,7 +1005,7 @@ local modulePages = {
     auction = { "Overview", "Auction Rules", "Never Auction" },
     roll = { "Overview", "Roll Rules", "Never Roll" },
     quest = { "Overview", "Quest" },
-    buff = { "Overview", "Buff", "Buff Assignments" },
+    buff = { "Overview", "Buff" },
     upgrade = { "Overview", "Upgrade" },
 }
 Settings.Refresh = function(moduleName)
@@ -2066,11 +2066,6 @@ pageBuilders.Buff = function(parent)
     end
 
     Label(parent, "Behavior", 28, -86, 13)
-    local assignments = Button(parent, "Group Assignments  >", 520, -84, 172, function()
-        currentPage = "Buff Assignments"
-        Refresh()
-    end)
-    AddTooltip(assignments, "Group assignments", "Assign each current party or raid member as Caster, Melee, Tank, Healer, or Unassigned. Role-targeted buffs use this list.")
     local windowToggle = ScalarCheck(parent, "buff", AutoBuffConfig, "showWindow", "Show buff window", 20, -112, true,
         "Shows the movable AutoBuff status window and secure Buff Next button.")
     local hideToggle = ScalarCheck(parent, "buff", AutoBuffConfig, "hideWhenComplete", "Hide when complete", 246, -112, false,
@@ -2117,78 +2112,6 @@ pageBuilders.Buff = function(parent)
         AddTooltip(roleLabel, definition.label .. " buffs", definition.help)
         AddTooltip(selector, definition.label .. " buffs", definition.help)
     end
-end
-
-pageBuilders["Buff Assignments"] = function(parent)
-    SectionCard(parent, 12, -76, 700, 534)
-    PageHeader(parent, "Auto Buff Assignments", "Roles are inferred from inspected gear when possible; use an override for hybrid or unusual builds.")
-
-    local back = Button(parent, "<  Auto Buff", 520, -22, 172, function()
-        currentPage = "Buff"
-        Refresh()
-    end)
-    AddTooltip(back, "Back to Auto Buff", "Return to spell and targeting configuration.")
-
-    Label(parent, "Player", 30, -90, 13)
-    Label(parent, "Detected", 284, -90, 13)
-    Label(parent, "Assigned role", 380, -90, 13)
-
-    local members = AutoBuff and AutoBuff.GetGroupMembers and AutoBuff.GetGroupMembers() or {}
-    if #members == 0 then
-        local empty = Label(parent, "No group members are currently available.", 30, -126)
-        empty:SetTextColor(Unpack(TEXT_MUTED))
-        return
-    end
-
-    local scroll = Track(CreateFrame("ScrollFrame", nil, parent))
-    scroll:SetPoint("TOPLEFT", 24, -112)
-    scroll:SetSize(638, 460)
-    local child = CreateFrame("Frame", nil, scroll)
-    child:SetWidth(632)
-    scroll:SetScrollChild(child)
-    local assignmentContentHeight = #members * 34 + 8
-    local ScrollBy, BindAssignmentWheel = AttachVerticalScroll(parent, scroll, child,
-        assignmentContentHeight, 460, 668, -144, 390, 68)
-
-    for index, member in ipairs(members) do
-        local memberName = member.fullName or member.name
-        local y = -8 - ((index - 1) * 34)
-        local row = child:CreateTexture(nil, "BACKGROUND")
-        row:SetTexture(WHITE_TEX)
-        row:SetPoint("TOPLEFT", 0, y + 4)
-        row:SetSize(632, 30)
-        row:SetVertexColor(COLORS.surfaceRaised[1], COLORS.surfaceRaised[2], COLORS.surfaceRaised[3], index % 2 == 0 and 0.30 or 0.18)
-
-        local name = Label(child, member.name .. (member.isSelf and "  (You)" or ""), 8, y - 2)
-        name:SetWidth(240)
-        name:SetJustifyH("LEFT")
-        local inferred = member.inferredRole and member.inferredRole ~= "unknown" and member.inferredRole or "Inspecting..."
-        local detected = Label(child, TitleCase(inferred), 260, y - 2)
-        detected:SetWidth(84)
-        detected:SetJustifyH("LEFT")
-        detected:SetTextColor(Unpack(member.roleSetting == "auto" and BRAND or TEXT_MUTED))
-        local roleChoices = {
-            { text = "Auto (" .. inferred .. ")", value = "auto" },
-            { text = "Unassigned", value = "none" },
-            { text = "Caster", value = "caster" },
-            { text = "Melee", value = "melee" },
-            { text = "Tank", value = "tank" },
-            { text = "Healer", value = "healer" },
-        }
-        local roleButton = ChoiceButton(child, "Role", 354, y - 6, 272, roleChoices, member.roleSetting or "auto", function(value)
-            local ok, err = AutoBuff.SetPlayerRole(memberName, value)
-            if not ok then Alert(err) end
-        end)
-        BindAssignmentWheel(roleButton)
-    end
-
-    local previousMembers = Button(parent, "Previous page", 480, -580, 102, function() ScrollBy(-460) end, 22)
-    local nextMembers = Button(parent, "Next page", 590, -580, 102, function() ScrollBy(460) end, 22)
-    if assignmentContentHeight <= 460 then previousMembers:Disable(); nextMembers:Disable() end
-
-    local note = Label(parent, "Auto inspection requires a nearby inspectable player. Manual overrides are saved by player name; Unassigned receives only broad buffs.", 30, -628)
-    note:SetWidth(650)
-    note:SetTextColor(Unpack(TEXT_MUTED))
 end
 
 pageBuilders.Upgrade = function(parent)
