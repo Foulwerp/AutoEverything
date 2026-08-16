@@ -169,6 +169,7 @@ AutoUpgradeConfig = {
     enabled = false,
     minQuality = 0,
     printMessages = true,
+    notifyCooldownMinutes = 2,
     verbose = false,
     showTooltipScores = true,
     upgradeThreshold = 0,

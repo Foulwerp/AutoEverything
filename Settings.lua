@@ -2125,6 +2125,12 @@ local LOCKED_GEAR_SLOTS = {
     { 19, "Tabard" },
 }
 
+local UPGRADE_NOTICE_COOLDOWNS = {
+    { text = "1 min", value = 1 }, { text = "2 min", value = 2 },
+    { text = "3 min", value = 3 }, { text = "4 min", value = 4 },
+    { text = "5 min", value = 5 },
+}
+
 local function OpenLockedGearWindow()
     local blocker = CreateFrame("Frame", nil, pageHost)
     table.insert(ruleEditorBlockers, blocker)
@@ -2239,6 +2245,14 @@ pageBuilders.Upgrade = function(parent)
     SectionCard(parent, 12, -156, 700, 88)
     SectionCard(parent, 12, -248, 700, 60)
     PageHeader(parent, "Upgrade", "Choose what can be equipped, how much better it must be, and how each stat is valued.")
+    local noticeCooldown = Core.GetSetting("upgrade", "notifyCooldownMinutes",
+        ResolvedDefault(AutoUpgradeConfig, "notifyCooldownMinutes", 2))
+    local noticeCooldownButton = ChoiceButton(parent, "Notify delay", 390, -20, 180,
+        UPGRADE_NOTICE_COOLDOWNS, noticeCooldown, function(value)
+            SetSettingWithoutRefresh("upgrade", "notifyCooldownMinutes", value)
+        end)
+    AddTooltip(noticeCooldownButton, "Upgrade notification cooldown",
+        "Suppresses repeat notices for the same item and equipment slot during automatic scans. Manual scans and successful equips still report immediately.")
     local lockedGearButton = Button(parent, "Locked Gear", 580, -20, 120, OpenLockedGearWindow)
     AddTooltip(lockedGearButton, "Locked gear", "Choose equipped slots that automatic upgrades must never replace.")
     local autoEquipToggle = ScalarCheck(parent, "upgrade", AutoUpgradeConfig, "autoEquip", "Auto equip upgrades", 20, -84, false,

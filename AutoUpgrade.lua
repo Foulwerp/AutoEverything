@@ -92,13 +92,34 @@ local function ScheduleDelayedCallback(delay, callback)
     end)
 end
 
+local upgradeNoticeTimes = {}
+local noticeHistoryPrunedAt = 0
+
 local function PrintUpgradeAction(info, actionText)
     if not info or not info.printMessages then return end
+    local cooldown = tonumber(info.noticeCooldownSeconds) or 0
+    if cooldown > 0 then
+        local now = GetTime()
+        local key = tostring(info.link) .. ":" .. tostring(info.targetSlotId or 0)
+        local lastNotice = upgradeNoticeTimes[key]
+        if lastNotice and now - lastNotice < cooldown then return false end
+        upgradeNoticeTimes[key] = now
+
+        -- The configured maximum is five minutes. Periodically discard older
+        -- entries so a long session does not retain every item ever seen.
+        if now - noticeHistoryPrunedAt >= 300 then
+            for noticeKey, noticeAt in pairs(upgradeNoticeTimes) do
+                if now - noticeAt >= 300 then upgradeNoticeTimes[noticeKey] = nil end
+            end
+            noticeHistoryPrunedAt = now
+        end
+    end
     print("|cff00ff00AutoUpgrade:|r " .. info.link
         .. " | " .. string.format("%.1f", info.newScore)
         .. " vs " .. string.format("%.1f", info.equippedScore)
         .. " (|cff00ff00+" .. string.format("%.1f", info.gain) .. "|r) | "
         .. actionText .. ".")
+    return true
 end
 
 local GetItemId = AutoCore.GetItemId
@@ -254,6 +275,8 @@ GetActiveConfig = function()
             minItemLevel     = tonumber(resolve("minItemLevel", nil)),
             upgradeThreshold = tonumber(resolve("upgradeThreshold", 0)) or 0,
             printMessages    = resolve("printMessages", true),
+            notifyCooldownMinutes = math.max(1, math.min(5,
+                tonumber(resolve("notifyCooldownMinutes", 2)) or 2)),
             verbose          = resolve("verbose", false),
             showTooltipScores = resolve("showTooltipScores", true),
             pvpGearToggle    = resolve("pvpGearToggle", false),
@@ -274,6 +297,8 @@ end
 function AU.ClearConfigCache()
     activeConfig = nil
     pvpSetCache = nil
+    upgradeNoticeTimes = {}
+    noticeHistoryPrunedAt = 0
 end
 
 ----------------------------------------------------------------------
@@ -905,6 +930,8 @@ function AU.ScanBags(dryRun, manual)
                 gain = gain,
                 targetSlotId = targetSlotId,
                 printMessages = cfg.printMessages,
+                noticeCooldownSeconds = actualDryRun and not manual
+                    and cfg.notifyCooldownMinutes * 60 or nil,
             }
 
             -- Equip or notify based on mode and dryRun
