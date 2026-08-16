@@ -29,6 +29,7 @@ local CloseOpenMenu
 local MultiChoiceEditor
 local OpenQuickAbandonWindow
 local OpenTextPopup
+local StyledCloseButton
 local PromptText
 local Alert
 local BuildScrollList
@@ -2828,7 +2829,7 @@ end
 -- Borderless close: just a glyph in the corner, with a soft red disc fading in
 -- behind it on hover. No backdrop box, so it reads as part of the title bar
 -- rather than as another button competing with the content.
-local function StyledCloseButton(parent, callback)
+StyledCloseButton = function(parent, callback)
     local button = CreateFrame("Button", nil, parent)
     button:SetSize(22, 22)
     button:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -8, -8)
