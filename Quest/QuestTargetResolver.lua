@@ -11,12 +11,15 @@ local activeObjectives = {}
 local activeByKey = {}
 local activeByLabel = {}
 local refreshPending, refreshAt = false, 0
+local observedQuestState
+local auditElapsed = 0
 
 -- Ascension can fire QUEST_LOG_UPDATE before the objective's finished flag
 -- has settled. GroupSync intentionally reads the log after 0.65 seconds; pins
 -- and nameplate markers must not take an earlier snapshot and then remain
 -- stale until the next unrelated quest update.
 Resolver.QUEST_LOG_SETTLE_DELAY = 0.75
+Resolver.QUEST_STATE_AUDIT_INTERVAL = 0.4
 
 local function Trim(value)
     value = string.gsub(value or "", "^%s+", "")
@@ -112,15 +115,27 @@ end
 
 function Resolver.BuildActive()
     local objectives, byKey, byLabel = {}, {}, {}
+    local stateParts = {}
     local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
     for logIndex = 1, entries do
         local title, _, _, _, isHeader, _, questComplete, _, questID =
             GetQuestLogTitle(logIndex)
+        if title and not isHeader then
+            stateParts[#stateParts + 1] = table.concat({
+                tostring(questID or ""), title,
+                Resolver.IsComplete(questComplete) and "1" or "0",
+            }, "\30")
+        end
         if title and not isHeader and not Resolver.IsComplete(questComplete) then
             local count = GetNumQuestLeaderBoards and GetNumQuestLeaderBoards(logIndex) or 0
+            stateParts[#stateParts + 1] = tostring(count)
             for objectiveIndex = 1, count do
                 local raw, objectiveType, done =
                     GetQuestLogLeaderBoard(objectiveIndex, logIndex)
+                stateParts[#stateParts + 1] = table.concat({
+                    raw or "", objectiveType or "",
+                    Resolver.ObjectiveIsComplete(raw, done) and "1" or "0",
+                }, "\30")
                 local label, display = Resolver.Normalize(raw)
                 if not Resolver.ObjectiveIsComplete(raw, done) and label ~= "" then
                     local numericQuestID = tonumber(questID)
@@ -145,8 +160,50 @@ function Resolver.BuildActive()
         end
     end
     activeObjectives, activeByKey, activeByLabel = objectives, byKey, byLabel
+    observedQuestState = table.concat(stateParts, "\31")
     Resolver.Prune(byKey)
     return objectives, byKey, byLabel
+end
+
+-- Ascension does not consistently send a second quest-log event after its
+-- first, pre-settle objective update. Audit only the compact live quest state
+-- so observed progress changes can rebuild immediately without scanning map
+-- databases or nameplates every frame.
+local function CurrentQuestState()
+    local parts = {}
+    local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
+    for logIndex = 1, entries do
+        local title, _, _, _, isHeader, _, questComplete, _, questID =
+            GetQuestLogTitle(logIndex)
+        if title and not isHeader then
+            parts[#parts + 1] = table.concat({
+                tostring(questID or ""), title,
+                Resolver.IsComplete(questComplete) and "1" or "0",
+            }, "\30")
+            if not Resolver.IsComplete(questComplete) then
+                local count = GetNumQuestLeaderBoards and GetNumQuestLeaderBoards(logIndex) or 0
+                parts[#parts + 1] = tostring(count)
+                for objectiveIndex = 1, count do
+                    local raw, objectiveType, done =
+                        GetQuestLogLeaderBoard(objectiveIndex, logIndex)
+                    parts[#parts + 1] = table.concat({
+                        raw or "", objectiveType or "",
+                        Resolver.ObjectiveIsComplete(raw, done) and "1" or "0",
+                    }, "\30")
+                end
+            end
+        end
+    end
+    return table.concat(parts, "\31")
+end
+
+local function RefreshVisualIndexes()
+    if AutoQuest.Markers and AutoQuest.Markers.RequestRefresh then
+        AutoQuest.Markers.RequestRefresh()
+    end
+    if AutoQuest.Map and AutoQuest.Map.RequestRefresh then
+        AutoQuest.Map.RequestRefresh()
+    end
 end
 
 function Resolver.GetActive()
@@ -276,12 +333,26 @@ eventFrame:RegisterEvent("QUEST_ITEM_UPDATE")
 eventFrame:RegisterEvent("QUEST_FINISHED")
 eventFrame:RegisterEvent("BAG_UPDATE")
 eventFrame:RegisterEvent("ITEM_PUSH")
-eventFrame:SetScript("OnEvent", function()
+eventFrame:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_ENTERING_WORLD" then observedQuestState = nil end
     refreshPending, refreshAt = true, GetTime() + Resolver.QUEST_LOG_SETTLE_DELAY
 end)
-eventFrame:SetScript("OnUpdate", function()
+eventFrame:SetScript("OnUpdate", function(_, elapsed)
+    auditElapsed = auditElapsed + math.min(elapsed or 0, 0.1)
+    if auditElapsed >= Resolver.QUEST_STATE_AUDIT_INTERVAL then
+        auditElapsed = 0
+        local state = CurrentQuestState()
+        if observedQuestState == nil then
+            observedQuestState = state
+        elseif state ~= observedQuestState then
+            observedQuestState = state
+            refreshPending = true
+            refreshAt = GetTime()
+        end
+    end
     if refreshPending and GetTime() >= refreshAt then
         refreshPending = false
         Resolver.BuildActive()
+        RefreshVisualIndexes()
     end
 end)
