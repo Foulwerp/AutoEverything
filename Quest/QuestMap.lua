@@ -411,13 +411,12 @@ local function ZoneForKey(key)
 end
 
 local function ConfirmedMapKind(kind)
-    if kind == "kill" or kind == "loot" then return kind end
+    if kind == "kill" then return kind end
     if kind == "interact" then return "object" end
 end
 
--- A unique live tooltip match is stronger evidence than a scraped item-source
--- association. Once the resolver has confirmed the objective/NPC pair, use
--- that NPC's known spawn list even when the quest page itself has no points.
+-- A unique live tooltip match can supplement missing kill/interact locations.
+-- Loot locations remain gated by explicit quest/item source relationships.
 local function AddConfirmedLocations(objectives)
     for _, objective in ipairs(objectives or {}) do
         local confirmation = Resolver.GetConfirmations(objective.key)

@@ -315,7 +315,16 @@ function Resolver.GetActive()
 end
 
 function Resolver.GetConfirmations(objectiveKey)
-    return SavedTargets()[objectiveKey]
+    local saved = SavedTargets()
+    local confirmation = saved[objectiveKey]
+    if confirmation and confirmation.kind == "loot" then
+        -- Loot sources must come from the quest/item relationship database.
+        -- Unit tooltips can contain objective text added by other addons and
+        -- are not reliable evidence that this particular NPC drops the item.
+        saved[objectiveKey] = nil
+        return nil
+    end
+    return confirmation
 end
 
 function Resolver.Confirm(objectiveKey, npcID, kind, npcName)
@@ -323,7 +332,10 @@ function Resolver.Confirm(objectiveKey, npcID, kind, npcName)
     npcID = tonumber(npcID)
     if not objective or not npcID or npcID <= 0 then return false end
     kind = kind or objective.kind
-    if kind == "neutral" then return false end
+    if kind == "neutral" or kind == "loot" then
+        if kind == "loot" then SavedTargets()[objectiveKey] = nil end
+        return false
+    end
 
     local saved = SavedTargets()
     local confirmation = saved[objectiveKey]

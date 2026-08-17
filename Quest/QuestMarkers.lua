@@ -294,9 +294,11 @@ end
 
 ----------------------------------------------------------------------
 -- After database matching, the shared resolver scans live unit tooltips only
--- when an unmatched unit or loot/interact verification needs live evidence.
+-- when an unmatched kill unit or interact verification needs live evidence.
 -- It also persists a unique objective/NPC confirmation for map use;
--- ambiguous duplicate labels remain immediate nameplate evidence only.
+-- ambiguous duplicate labels remain immediate nameplate evidence only. Loot
+-- sources always require the quest/item relationship database because other
+-- addons may add unrelated item-objective lines to a unit tooltip.
 ----------------------------------------------------------------------
 -- Returns remaining count and whether it was a percentage (e.g. an escort
 -- quest's "62% complete"). Percentage objectives don't map to a kill/loot
@@ -325,7 +327,7 @@ local function ScanUnitForQuestMatch(unit)
         if result.kind == "interact" then
             match = EnsureMatch(match)
             match.talk = true
-        elseif result.kind == "kill" or result.kind == "loot" then
+        elseif result.kind == "kill" then
             local remaining, isPercent = ParseTooltipProgress(result.rawLabel)
             if not isPercent and (remaining == nil or remaining > 0) then
                 match = EnsureMatch(match)
