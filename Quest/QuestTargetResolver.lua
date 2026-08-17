@@ -83,22 +83,32 @@ end
 function Resolver.ObjectiveForRecord(objectives, record)
     record = record or {}
 
+    -- Live objective ordering is not stable for every Ascension quest. Match
+    -- the record's item or NPC label first; the shortest containing label wins
+    -- so "Firegut Ogre" does not select "Firegut Ogre Brute slain" when the
+    -- exact shorter objective is also present.
+    local needle = Resolver.Normalize(record.item or record.name or "")
+    local labeledObjective, labeledExtra
+    if needle ~= "" then
+        for _, objective in ipairs(objectives or {}) do
+            local label = Resolver.Normalize(objective.text)
+            if string.find(label, needle, 1, true) then
+                local extra = string.len(label) - string.len(needle)
+                if labeledExtra == nil or extra < labeledExtra then
+                    labeledObjective, labeledExtra = objective, extra
+                end
+            end
+        end
+    end
+    if labeledObjective then return labeledObjective end
+
     -- Ascension Mapper objective indexes are zero-based and identify the exact
     -- slot. Some Ascension quests instead store a shared objective/entity ID
     -- here (for example 1005009), so only treat an in-range value as a slot.
-    -- Prefer valid slots over names because one target name may contain another.
+    -- Use a valid slot only when no live label identifies the objective.
     local index = tonumber(record.objective)
     if index ~= nil and (objectives or {})[index + 1] then
         return objectives[index + 1]
-    end
-
-    local needle = string.lower(record.item or record.name or "")
-    if needle ~= "" then
-        for _, objective in ipairs(objectives or {}) do
-            if string.find(string.lower(objective.text or ""), needle, 1, true) then
-                return objective
-            end
-        end
     end
 
     -- A shared external objective ID cannot select a slot. When the live quest
