@@ -15,6 +15,7 @@ local VISIBLE_ROWS = 10
 
 local categories = {
     { key = "all",     label = "All" },
+    { key = "mythic", label = "Mythic+" },
     { key = "dungeon", label = "Dungeons" },
     { key = "raid",    label = "Raids" },
     { key = "world",   label = "World" },
@@ -26,6 +27,9 @@ local categories = {
 -- Longer names make the short abbreviations less likely to misclassify
 -- ordinary conversation. Realm-specific activities still appear under Other.
 local categoryKeywords = {
+    mythic = {
+        "mythic+", "mythic plus", "mythic key", "keystone", "m+", "key level",
+    },
     raid = {
         "molten core", "blackwing lair", "zul'gurub", "aq20", "aq40", "naxxramas",
         "karazhan", "gruul", "magtheridon", "serpentshrine", "tempest keep", "hyjal",
@@ -35,7 +39,7 @@ local categoryKeywords = {
         "the radiant spring",
     },
     dungeon = {
-        "dungeon", "heroic", "mythic", "keystone", "ragefire", "deadmines", "wailing caverns",
+        "dungeon", "heroic", "ragefire", "deadmines", "wailing caverns",
         "shadowfang", "stockade", "blackfathom", "gnomeregan", "razorfen", "scarlet monastery",
         "uldaman", "zul'farrak", "maraudon", "sunken temple", "blackrock depths", "dire maul",
         "stratholme", "scholomance", "blackrock spire", "ramparts", "blood furnace",
@@ -165,6 +169,12 @@ local function HasGroupIntent(text)
 end
 
 local function Classify(text)
+    if ContainsAny(text, categoryKeywords.mythic)
+        or text:match("%f[%w]m%d+%f[%W]")
+        or text:match("%f[%w]key%s*%+?%d+")
+    then
+        return "mythic"
+    end
     if ContainsAny(text, categoryKeywords.world) or ContainsToken(text, categoryTokens.world) then return "world" end
     if ContainsAny(text, categoryKeywords.raid) or ContainsToken(text, categoryTokens.raid) then return "raid" end
     if ContainsAny(text, categoryKeywords.dungeon) or ContainsToken(text, categoryTokens.dungeon) then return "dungeon" end
