@@ -399,9 +399,11 @@ local function PlayerSpecName()
         local _, name = AutoActionBars.GetCurrentSpec()
         if name then
             name = tostring(name):gsub("^%s+", ""):gsub("%s+$", "")
-            local suffix = name:match("^[Ss]peciali[sz]ation%s*:%s*(.+)$")
-            if suffix and suffix ~= "" then return suffix end
-            if name ~= "" and not name:match("^[Ss]peciali[sz]ation%s*:?%s*%d*%s*$") then return name end
+            if not tonumber(name) then
+                local suffix = name:match("^[Ss]peciali[sz]ation%s*:%s*(.+)$")
+                if suffix and suffix ~= "" then return suffix end
+                if name ~= "" and not name:match("^[Ss]peciali[sz]ation%s*:?%s*%d*%s*$") then return name end
+            end
         end
     end
     if GetTalentTabInfo then

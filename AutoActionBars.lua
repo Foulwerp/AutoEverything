@@ -75,9 +75,39 @@ local function ActiveSpecID()
     return 1
 end
 
+local function CleanSpecName(value)
+    if type(value) ~= "string" then return nil end
+    local name = value:gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" or tonumber(name) then return nil end
+    local suffix = name:match("^[Ss]peciali[sz]ation%s*:%s*(.+)$")
+    if suffix and suffix ~= "" then return suffix end
+    if name:match("^[Ss]peciali[sz]ation%s*:?%s*%d*%s*$") then return nil end
+    if name:find("Interface\\", 1, true) or #name > 80 then return nil end
+    return name
+end
+
+local function NameFromSpecResults(...)
+    for index = 1, select("#", ...) do
+        local name = CleanSpecName((select(index, ...)))
+        if name then return name end
+    end
+end
+
 local function SpecName(id)
     if SpecializationUtil and SpecializationUtil.GetSpecializationInfo then
-        return SpecializationUtil.GetSpecializationInfo(id)
+        local ok, first, second, third, fourth, fifth, sixth =
+            pcall(SpecializationUtil.GetSpecializationInfo, id)
+        if ok then
+            local name = NameFromSpecResults(first, second, third, fourth, fifth, sixth)
+            if name then return name end
+        end
+    end
+    if GetSpecializationInfo then
+        local ok, first, second, third, fourth, fifth, sixth = pcall(GetSpecializationInfo, id)
+        if ok then
+            local name = NameFromSpecResults(first, second, third, fourth, fifth, sixth)
+            if name then return name end
+        end
     end
     return "Specialization " .. tostring(id or 1)
 end
