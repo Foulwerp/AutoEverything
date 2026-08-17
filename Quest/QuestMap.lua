@@ -87,6 +87,7 @@ local zoneAliases = {
 -- GetMapZones() to select the parent map.
 local subZoneParents = {
     northshirevalley = "Elwynn Forest",
+    fargodeepmine    = "Elwynn Forest",
     coldridgevalley  = "Dun Morogh",
     deathknell       = "Tirisfal Glades",
     valleyoftrials   = "Durotar",
@@ -1151,8 +1152,11 @@ local function UpdatePlayerLocation(force)
     local oldContinent = GetCurrentMapContinent and GetCurrentMapContinent()
     local oldZone = GetCurrentMapZone and GetCurrentMapZone()
     local oldFloor = GetCurrentMapDungeonLevel and GetCurrentMapDungeonLevel()
-    local name = GetZoneText and GetZoneText()
-    if not name or name == "" then name = GetRealZoneText and GetRealZoneText() end
+    local zoneName = GetZoneText and GetZoneText()
+    local realZoneName = GetRealZoneText and GetRealZoneText()
+    local subZoneName = GetSubZoneText and GetSubZoneText()
+    local name = zoneName
+    if not name or name == "" then name = realZoneName end
 
     -- GetPlayerMapPosition returns coordinates in the currently selected map,
     -- not necessarily the player's zone. A continent map (and some custom
@@ -1196,8 +1200,8 @@ local function UpdatePlayerLocation(force)
     end
 
     locationDebug = {
-        mapShown=mapShown and true or false, zoneText=GetZoneText and GetZoneText(),
-        realZoneText=GetRealZoneText and GetRealZoneText(), selectedName=selectedName,
+        mapShown=mapShown and true or false, zoneText=zoneName,
+        realZoneText=realZoneName, subZoneText=subZoneName, selectedName=selectedName,
         wrongMap=wrongMap and true or false, beforeX=beforeX,
         beforeY=beforeY, x=x, y=y, setOK=setOK, setResult=setResult,
         probeSelector=probeSelector, probeQuestID=probeQuestID,
@@ -1210,6 +1214,30 @@ local function UpdatePlayerLocation(force)
     -- when the parent actually has active objective points to show, so the
     -- SetMapZoom cost is paid only when it can produce pins.
     local parentName = name and name ~= "" and subZoneParents[NormalizeZone(name)]
+    if not parentName and subZoneName and subZoneName ~= "" then
+        parentName = subZoneParents[NormalizeZone(subZoneName)]
+    end
+    -- Indoor micro-maps such as Fargodeep Mine are not represented in the
+    -- objective database: their points use the surrounding zone's coordinate
+    -- frame. When the selected map has no records, prefer a current zone name
+    -- that does. This also covers custom cave maps without maintaining an
+    -- exhaustive subZoneParents list.
+    if not parentName and selectedName
+        and not ZoneForKey(NormalizeZone(selectedName))
+    then
+        local candidates = {}
+        if zoneName and zoneName ~= "" then candidates[#candidates + 1] = zoneName end
+        if realZoneName and realZoneName ~= "" then candidates[#candidates + 1] = realZoneName end
+        for _, candidate in ipairs(candidates) do
+            if candidate and candidate ~= ""
+                and NormalizeZone(candidate) ~= NormalizeZone(selectedName)
+                and ZoneForKey(NormalizeZone(candidate))
+            then
+                parentName = candidate
+                break
+            end
+        end
+    end
     if parentName and not mapShown and ZoneForKey(NormalizeZone(parentName)) then
         local px, py = ReadParentZonePosition(parentName)
         if px and py then
@@ -1432,6 +1460,7 @@ function QuestMap.Debug()
     print("  currentZonePoints=" .. zonePoints .. " mapSizeKnown=" .. tostring(zoneSizes[playerMap.key or ""] ~= nil))
     print("  minimap=" .. minimapStatus)
     print("  raw zoneText=" .. tostring(locationDebug.zoneText) .. " realZone=" .. tostring(locationDebug.realZoneText)
+        .. " subZone=" .. tostring(locationDebug.subZoneText)
         .. " selectedMap=" .. tostring(locationDebug.selectedName)
         .. " wrongMap=" .. tostring(locationDebug.wrongMap)
         .. " mapShown=" .. tostring(locationDebug.mapShown)
