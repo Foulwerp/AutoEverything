@@ -69,9 +69,13 @@ function Resolver.ObjectiveForRecord(objectives, record)
     record = record or {}
 
     -- Ascension Mapper objective indexes are zero-based and identify the exact
-    -- slot. Prefer them over names because one target name may contain another.
+    -- slot. Some Ascension quests instead store a shared objective/entity ID
+    -- here (for example 1005009), so only treat an in-range value as a slot.
+    -- Prefer valid slots over names because one target name may contain another.
     local index = tonumber(record.objective)
-    if index ~= nil then return (objectives or {})[index + 1] end
+    if index ~= nil and (objectives or {})[index + 1] then
+        return objectives[index + 1]
+    end
 
     local needle = string.lower(record.item or record.name or "")
     if needle ~= "" then
@@ -81,6 +85,11 @@ function Resolver.ObjectiveForRecord(objectives, record)
             end
         end
     end
+
+    -- A shared external objective ID cannot select a slot. When the live quest
+    -- exposes only one objective, every relationship record necessarily feeds
+    -- that objective (commonly an aggregate "forces slain" counter).
+    if #(objectives or {}) == 1 then return objectives[1] end
 end
 
 -- An NPC page's quest relationship does not identify an objective slot. It is
