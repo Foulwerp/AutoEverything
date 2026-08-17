@@ -118,7 +118,6 @@ jobs:
 
       - name: Publish GitHub release
         env:
-          VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$VERSION" dist/AutoEverything.zip \
