@@ -1,10 +1,10 @@
 ----------------------------------------------------------------------
 -- PlayerItemLevel.lua - average equipped item level in unit tooltips.
 --
--- WoW 3.3.5a has no GetAverageItemLevel API. Nearby players therefore
--- need a normal inspect request before their equipped item links are
--- available. Results are cached briefly to avoid spamming NotifyInspect
--- while the mouse moves across the same group.
+-- Ascension backports several generations of Blizzard item-level APIs. Use
+-- their equipped value when available; nearby players still need a normal
+-- inspect before the client can return it. The slot calculation is only a
+-- guarded WoW 3.3.5a fallback.
 ----------------------------------------------------------------------
 
 local Core = AutoCore
@@ -40,7 +40,37 @@ local function Enabled()
         (AutoCoreConfig or {}).showPlayerItemLevel ~= false) ~= false
 end
 
-local function EquippedItemLevel(unit)
+local function PositiveNumber(value)
+    value = tonumber(value)
+    if value and value > 0 then return value end
+    return nil
+end
+
+local function NativeItemLevel(unit)
+    local isPlayer = unit == "player" or (UnitIsUnit and UnitIsUnit(unit, "player"))
+    if isPlayer and GetAverageItemLevel then
+        -- Blizzard returns overall and equipped averages in that order on
+        -- clients that expose both. Prefer the equipped (second) result.
+        local ok, average, equipped = pcall(GetAverageItemLevel)
+        if ok then
+            local value = PositiveNumber(equipped) or PositiveNumber(average)
+            if value then return value end
+        end
+    end
+    if isPlayer and C_Player and C_Player.GetAverageItemLevel then
+        local ok, value = pcall(C_Player.GetAverageItemLevel, C_Player)
+        value = ok and PositiveNumber(value) or nil
+        if value then return value end
+    end
+    if UnitAverageItemLevel then
+        local ok, value = pcall(UnitAverageItemLevel, unit)
+        value = ok and PositiveNumber(value) or nil
+        if value then return value end
+    end
+    return nil
+end
+
+local function FallbackEquippedItemLevel(unit)
     if not unit or not UnitExists(unit) then return nil end
 
     local total = 0
@@ -64,6 +94,11 @@ local function EquippedItemLevel(unit)
     end
 
     return total / SLOT_COUNT
+end
+
+local function EquippedItemLevel(unit)
+    if not unit or not UnitExists(unit) then return nil end
+    return NativeItemLevel(unit) or FallbackEquippedItemLevel(unit)
 end
 
 local function AddStats(total, source)
@@ -193,6 +228,10 @@ local function FreshEntry(guid)
     local entry = guid and cache[guid]
     if entry and GetTime() - entry.time <= CACHE_SECONDS then return entry end
     return nil
+end
+
+function Inspection.GetItemLevel(unit)
+    return EquippedItemLevel(unit)
 end
 
 function Inspection.Get(unit)

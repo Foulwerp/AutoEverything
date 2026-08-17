@@ -419,33 +419,9 @@ local function PlayerSpecName()
 end
 
 local function CharacterPanelItemLevel()
-    if C_Player and C_Player.GetAverageItemLevel then
-        local ok, value = pcall(C_Player.GetAverageItemLevel, C_Player)
-        if ok and tonumber(value) and tonumber(value) > 0 then return tonumber(value) end
+    if AutoCore.PlayerInspection and AutoCore.PlayerInspection.GetItemLevel then
+        return AutoCore.PlayerInspection.GetItemLevel("player")
     end
-    if UnitAverageItemLevel then
-        local ok, value = pcall(UnitAverageItemLevel, "player")
-        if ok and tonumber(value) and tonumber(value) > 0 then return tonumber(value) end
-    end
-
-    -- This mirrors Ascension's character panel: fifteen base slots, with
-    -- ranged and off-hand included in the denominator only when equipped.
-    local itemCount, total = 15, 0
-    local firstSlot = INVSLOT_FIRST_EQUIPPED or 1
-    local lastSlot = INVSLOT_LAST_EQUIPPED or 19
-    for slot = firstSlot, lastSlot do
-        if slot ~= (INVSLOT_BODY or 4) and slot ~= (INVSLOT_TABARD or 19) then
-            local link = GetInventoryItemLink("player", slot)
-            local itemLevel = link and select(4, GetItemInfo(link))
-            if itemLevel then
-                if slot == (INVSLOT_RANGED or 18) or slot == (INVSLOT_OFFHAND or 17) then
-                    itemCount = itemCount + 1
-                end
-                total = total + itemLevel
-            end
-        end
-    end
-    if total > 0 then return total / itemCount end
     return nil
 end
 
