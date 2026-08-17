@@ -18,43 +18,85 @@ local categories = {
     { key = "mythic", label = "Mythic+" },
     { key = "dungeon", label = "Dungeons" },
     { key = "raid",    label = "Raids" },
-    { key = "world",   label = "World" },
+    { key = "world",   label = "World Boss" },
     { key = "pvp",     label = "PvP" },
     { key = "quest",   label = "Quests" },
     { key = "other",   label = "Other" },
 }
 
--- Longer names make the short abbreviations less likely to misclassify
--- ordinary conversation. Realm-specific activities still appear under Other.
+-- Full activity names use plain matching. Short abbreviations are kept in
+-- categoryTokens so word frontiers prevent matches inside ordinary words.
 local categoryKeywords = {
     mythic = {
         "mythic+", "mythic plus", "mythic key", "keystone", "m+", "key level",
     },
     raid = {
-        "molten core", "blackwing lair", "zul'gurub", "aq20", "aq40", "naxxramas",
-        "karazhan", "gruul", "magtheridon", "serpentshrine", "tempest keep", "hyjal",
-        "black temple", "zul'aman", "sunwell", "vault of archavon", "obsidian sanctum",
-        "eye of eternity", "ulduar", "trial of the crusader", "toc10", "toc25",
-        "icecrown citadel", "icc10", "icc25", "ruby sanctum", "rs10", "rs25",
-        "the radiant spring",
+        -- Classic
+        "onyxia", "onyxia's lair", "molten core", "blackwing lair", "zul'gurub",
+        "ruins of ahn'qiraj", "ruins of ahn qiraj", "temple of ahn'qiraj",
+        "temple of ahn qiraj", "naxxramas",
+        -- The Burning Crusade
+        "karazhan", "gruul's lair", "gruuls lair", "magtheridon", "serpentshrine cavern",
+        "tempest keep", "the eye", "hyjal summit", "mount hyjal",
+        "battle for mount hyjal", "black temple", "zul'aman", "sunwell plateau",
+        -- Wrath of the Lich King
+        "vault of archavon", "obsidian sanctum", "eye of eternity", "ulduar",
+        "trial of the crusader", "icecrown citadel", "ruby sanctum",
+        -- Cataclysm
+        "baradin hold", "bastion of twilight", "throne of the four winds",
+        "blackwing descent", "firelands", "dragon soul",
+        -- Mists of Pandaria and Ascension
+        "terrace of endless spring", "mogu'shan vaults", "mogushan vaults",
+        "heart of fear", "throne of thunder", "siege of orgrimmar", "the radiant spring",
     },
     dungeon = {
-        "dungeon", "heroic", "ragefire", "deadmines", "wailing caverns",
-        "shadowfang", "stockade", "blackfathom", "gnomeregan", "razorfen", "scarlet monastery",
-        "uldaman", "zul'farrak", "maraudon", "sunken temple", "blackrock depths", "dire maul",
-        "stratholme", "scholomance", "blackrock spire", "ramparts", "blood furnace",
-        "slave pens", "underbog", "mana tombs", "auchenai", "sethekk", "black morass",
-        "mechanar", "shattered halls", "botanica", "shadow labyrinth", "steamvault",
-        "arcatraz", "magisters' terrace", "utgarde", "nexus", "oculus", "ahn'kahet",
-        "azjol", "drak'tharon", "violet hold", "gundrak", "halls of stone",
-        "halls of lightning", "culling of stratholme", "trial of the champion",
-        "forge of souls", "pit of saron", "halls of reflection", "rdf", "random heroic",
-        "glittermurk", "karazhan crypt", "vault of the inquisition", "road to de' other side",
-        "tor'watha", "temple of embers", "shadowbone depths", "manastorm",
+        "dungeon", "heroic", "random dungeon", "random heroic", "daily dungeon", "daily heroic",
+        -- Classic
+        "ragefire chasm", "deadmines", "wailing caverns", "shadowfang keep", "the stockade",
+        "blackfathom deeps", "gnomeregan", "razorfen kraul", "scarlet monastery",
+        "razorfen downs", "uldaman", "zul'farrak", "maraudon", "sunken temple",
+        "blackrock depths", "dire maul", "stratholme", "scholomance",
+        "lower blackrock spire", "upper blackrock spire",
+        -- The Burning Crusade
+        "hellfire ramparts", "blood furnace", "the shattered halls", "shattered halls",
+        "slave pens", "underbog", "the steamvault", "steamvault", "mana-tombs", "mana tombs",
+        "auchenai crypts", "sethekk halls", "shadow labyrinth", "old hillsbrad foothills",
+        "old hillsbrad", "the black morass", "black morass", "mechanar", "botanica",
+        "arcatraz", "magister's terrace", "magisters terrace",
+        -- Wrath of the Lich King
+        "utgarde keep", "utgarde pinnacle", "the nexus", "the oculus", "azjol-nerub",
+        "azjol nerub", "ahn'kahet", "drak'tharon keep", "violet hold", "gundrak",
+        "halls of stone", "halls of lightning", "culling of stratholme",
+        "trial of the champion", "forge of souls", "pit of saron", "halls of reflection",
+        -- Cataclysm
+        "blackrock caverns", "throne of the tides", "vortex pinnacle", "stonecore",
+        "lost city of the tol'vir", "lost city of tol'vir", "halls of origination",
+        "grim batol", "end time", "well of eternity", "hour of twilight",
+        -- Mists of Pandaria
+        "temple of the jade serpent", "stormstout brewery", "shado-pan monastery",
+        "mogu'shan palace", "mogushan palace", "scarlet halls", "siege of niuzao temple",
+        "gate of the setting sun", "darkheart thicket",
+        -- Ascension and Epoch
+        "blackrock cavern", "tor'watha", "tor watha", "bardid hold",
+        "vault of the inquisition", "vaults of inquisition", "road to de' other side",
+        "road to de other side", "the temple of embers", "temple of embers",
+        "shadowbone depths", "glittermurk mines", "glittermurk", "karazhan crypt",
+        "de other side", "manastorm",
     },
     world = {
-        "world boss", "worldboss", "world tour", "azuregos", "kazzak", "doomwalker",
-        "emeriss", "lethon", "taerar", "ysondre", "soggoth", "snowgrave", "atal'zul",
+        "world boss", "world bosses", "worldboss", "worldbosses", "world boss tour",
+        "worldboss tour", "worldbosstour", "world tour",
+        -- Classic and The Burning Crusade
+        "azuregos", "lord kazzak", "doom lord kazzak", "kazzak", "doomwalker",
+        "emeriss", "lethon", "taerar", "ysondre", "setis",
+        -- Wrath, Cataclysm, and Mists of Pandaria
+        "archavon", "emalon", "koralon", "toravon", "toran", "akma'hat", "akmahat", "julak-doom",
+        "julak doom", "mobus", "poseidus", "xariona", "sha of anger", "galleon",
+        "salyis", "nalak", "oondasta", "celestials", "celestial world bosses",
+        -- Ascension and Epoch
+        "soggoth", "sogoth", "snowgrave", "atal'zul", "atal zul", "atal.zul", "atal azul",
+        "kaldros depthbreaker", "kaldros", "gonzor", "king gnok", "king mosh",
+        "silithid lurker", "volchan", "corrupted ancient", "settis",
     },
     pvp = {
         "arena", "battleground", "wintergrasp", "warsong", "alterac", "arathi",
@@ -64,11 +106,22 @@ local categoryKeywords = {
 }
 
 local categoryTokens = {
-    raid = { "mc", "bwl", "zg", "aq20", "aq40", "kara", "ssc", "tk", "bt", "za",
-        "swp", "naxx", "voa", "eoe", "uld", "toc", "icc", "rs", "trs" },
-    dungeon = { "rfc", "dm", "wc", "sfk", "bfd", "rfk", "rfd", "zf", "mara", "brd",
-        "strat", "scholo", "lbrs", "ubrs", "fos", "pos", "hor", "rhc", "rdf" },
-    world = { "wb" },
+    raid = {
+        "ony", "mc", "bwl", "zg", "aq20", "aq40", "naxx", "kara", "mag", "ssc", "tk",
+        "bt", "za", "swp", "voa", "os", "eoe", "uld", "toc", "icc", "rs",
+        "bh", "bot", "bwd", "t4w", "fl", "ds", "msv", "hof", "toes", "tot", "soo", "trs",
+    },
+    dungeon = {
+        "rfc", "dm", "vc", "wc", "sfk", "stocks", "bfd", "gnomer", "rfk", "sm", "rfd",
+        "ulda", "zf", "mara", "st", "brd", "dme", "dmn", "dmw", "strat", "scholo",
+        "lbrs", "ubrs", "ramps", "bf", "sp", "ub", "mt", "ac", "sh", "ohf", "bm",
+        "mecha", "shh", "bota", "sl", "sv", "arca", "mgt", "uk", "up", "nex", "ocu",
+        "an", "ak", "dtk", "vh", "gun", "hos", "hol", "cos", "fos", "pos", "hor",
+        "brc", "tott", "vp", "sc", "lct", "hoo", "gb", "et", "woe", "hot",
+        "tjs", "sb", "spm", "msp", "gss", "gmm", "kc", "roads", "toe", "sbd",
+        "rhc", "rdf", "lfd",
+    },
+    world = { "wb", "wbs" },
     pvp = { "bg", "wsg", "ab", "av", "eots", "wg" },
 }
 
@@ -156,19 +209,33 @@ local function ContainsToken(text, words)
     return false
 end
 
+local function ContainsSizedToken(text, words)
+    for _, word in ipairs(words or {}) do
+        if text:find("%f[%w]" .. word .. "%d+%a*%f[%W]") then return true end
+    end
+    return false
+end
+
 local function HasGroupIntent(text)
     return text:find("lfg", 1, true)
         or text:find("lfm", 1, true)
         or text:find("lfr", 1, true)
+        or text:find("%f[%w]lf%f[%W]")
         or text:find("looking for group", 1, true)
+        or text:find("looking for raid", 1, true)
         or text:find("looking for more", 1, true)
         or text:find("looking for member", 1, true)
         or text:find("group for", 1, true)
         or text:find("forming for", 1, true)
         or text:match("lf%d+%s*m")
+        or text:match("%f[%w]lf%d+%f[%W]")
+        or text:find("last spot", 1, true)
+        or text:match("%f[%d]%d+/%d+%f[%D]")
         or text:match("need%s+%d*%s*tank")
         or text:match("need%s+%d*%s*heal")
         or text:match("need%s+%d*%s*dps")
+        or text:match("need%s+%d*%s*support")
+        or text:match("need%s+%d*%s*supp")
 end
 
 local function Classify(text)
@@ -179,7 +246,11 @@ local function Classify(text)
         return "mythic"
     end
     if ContainsAny(text, categoryKeywords.world) or ContainsToken(text, categoryTokens.world) then return "world" end
-    if ContainsAny(text, categoryKeywords.raid) or ContainsToken(text, categoryTokens.raid) then return "raid" end
+    if ContainsAny(text, categoryKeywords.raid) or ContainsToken(text, categoryTokens.raid)
+        or ContainsSizedToken(text, categoryTokens.raid)
+    then
+        return "raid"
+    end
     if ContainsAny(text, categoryKeywords.dungeon) or ContainsToken(text, categoryTokens.dungeon) then return "dungeon" end
     if ContainsAny(text, categoryKeywords.pvp) or ContainsToken(text, categoryTokens.pvp) then return "pvp" end
     if ContainsAny(text, categoryKeywords.quest) then return "quest" end
