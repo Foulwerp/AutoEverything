@@ -1,17 +1,17 @@
 ----------------------------------------------------------------------
 -- PlayerItemLevel.lua - average equipped item level in unit tooltips.
 --
--- Ascension backports several generations of Blizzard item-level APIs. Use
--- their equipped value when available; nearby players still need a normal
--- inspect before the client can return it. The slot calculation is only a
--- guarded WoW 3.3.5a fallback.
+-- Ascension backports several generations of Blizzard item-level APIs, but
+-- their behavior is not documented consistently. Calculate from equipped
+-- links using the same divisor rules as Ascension's character frame, then use
+-- a native API only when item links are unavailable.
 ----------------------------------------------------------------------
 
 local Core = AutoCore
 if not Core then return end
 
 local SLOT_IDS = { 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18 }
-local SLOT_COUNT = #SLOT_IDS
+local BASE_SLOT_COUNT = 15
 local CACHE_SECONDS = 300
 local INSPECT_DELAY = 1
 local cache = {}
@@ -70,35 +70,30 @@ local function NativeItemLevel(unit)
     return nil
 end
 
-local function FallbackEquippedItemLevel(unit)
+local function CalculatedEquippedItemLevel(unit)
     if not unit or not UnitExists(unit) then return nil end
 
     local total = 0
-    local mainHandLink
+    local slotCount = BASE_SLOT_COUNT
     for _, slotID in ipairs(SLOT_IDS) do
         local link = GetInventoryItemLink(unit, slotID)
         if link then
             local itemLevel = select(4, GetItemInfo(link))
             if not itemLevel then return nil end
             total = total + itemLevel
-            if slotID == 16 then mainHandLink = link end
+            -- The 15 armor/main-hand slots always count. Off-hand and ranged
+            -- count only when occupied, matching C_Player:GetAverageItemLevel.
+            if slotID == 17 or slotID == 18 then slotCount = slotCount + 1 end
         end
     end
 
-    -- Average item level treats a two-handed weapon as filling both hands.
-    if mainHandLink and not GetInventoryItemLink(unit, 17) then
-        local equipLocation = select(9, GetItemInfo(mainHandLink))
-        if equipLocation == "INVTYPE_2HWEAPON" then
-            total = total + (select(4, GetItemInfo(mainHandLink)) or 0)
-        end
-    end
-
-    return total / SLOT_COUNT
+    if total <= 0 then return nil end
+    return total / slotCount
 end
 
 local function EquippedItemLevel(unit)
     if not unit or not UnitExists(unit) then return nil end
-    return NativeItemLevel(unit) or FallbackEquippedItemLevel(unit)
+    return CalculatedEquippedItemLevel(unit) or NativeItemLevel(unit)
 end
 
 local function AddStats(total, source)
