@@ -77,7 +77,10 @@ local filtered = {}
 local selectedCategory = "all"
 local scrollOffset = 0
 local nextCleanup = 0
-local frame, scrollbar, searchBox, statusText, channelButton
+local frame, searchBox, statusText, channelButton
+local joinSetup, joinMessageBox, joinRoleButton, joinPreview
+local joinDraftRole = "DPS"
+local joinPreviewValues
 local categoryButtons, rows = {}, {}
 local knownChannels = {}
 
@@ -242,7 +245,6 @@ local function Refresh()
     RebuildFiltered()
     local maximum = math.max(0, #filtered - VISIBLE_ROWS)
     scrollOffset = math.max(0, math.min(scrollOffset, maximum))
-    scrollbar:SetScrollRange(maximum, scrollOffset)
     for index, row in ipairs(rows) do
         local request = filtered[scrollOffset + index]
         if request then
@@ -385,6 +387,213 @@ local function Whisper(name)
     end
 end
 
+local function CategoryLabel(key)
+    for _, info in ipairs(categories) do
+        if info.key == key then return info.label end
+    end
+    return "group"
+end
+
+local function PlayerSpecName()
+    if AutoActionBars and AutoActionBars.GetCurrentSpec then
+        local _, name = AutoActionBars.GetCurrentSpec()
+        if name and name ~= "" and not tostring(name):match("^Specialization %d+$") then
+            return tostring(name)
+        end
+    end
+    if GetTalentTabInfo then
+        local talentGroup = GetActiveTalentGroup and GetActiveTalentGroup(false, false) or 1
+        local bestName, bestPoints
+        for tab = 1, 3 do
+            local ok, _, name, _, _, points = pcall(GetTalentTabInfo, tab, false, false, talentGroup)
+            if ok and name and (not bestPoints or (tonumber(points) or 0) > bestPoints) then
+                bestName, bestPoints = name, tonumber(points) or 0
+            end
+        end
+        if bestName then return tostring(bestName) end
+    end
+    return "Unknown spec"
+end
+
+local function ResolvedJoinRole(wanted)
+    wanted = wanted or AutoCore.GetSetting("core", "lfgJoinRole",
+        AutoCoreConfig and AutoCoreConfig.lfgJoinRole or "DPS")
+    if wanted ~= "Auto" then return wanted end
+    if UnitGroupRolesAssigned then
+        local assigned = UnitGroupRolesAssigned("player")
+        if assigned == "TANK" then return "Tank" end
+        if assigned == "HEALER" then return "Healer" end
+        if assigned == "DAMAGER" then return "DPS" end
+    end
+    local inspection = AutoCore.PlayerInspection and AutoCore.PlayerInspection.Get
+        and AutoCore.PlayerInspection.Get("player")
+    if inspection and inspection.role == "tank" then return "Tank" end
+    if inspection and inspection.role == "healer" then return "Healer" end
+    return "DPS"
+end
+
+local function JoinMessageValues(request, role)
+    local inspection = AutoCore.PlayerInspection and AutoCore.PlayerInspection.Get
+        and AutoCore.PlayerInspection.Get("player")
+    local localizedClass = UnitClass("player") or "Unknown class"
+    return {
+        activity = request and CategoryLabel(request.category) or "group",
+        class = localizedClass,
+        ilvl = inspection and inspection.value and string.format("%.1f", inspection.value) or "?",
+        leader = request and ShortName(request.sender) or "leader",
+        level = tostring(UnitLevel("player") or "?"),
+        player = UnitName("player") or "player",
+        role = ResolvedJoinRole(role),
+        spec = PlayerSpecName(),
+    }
+end
+
+local function BuildJoinMessage(request, template, role, suppliedValues)
+    template = template or AutoCore.GetSetting("core", "lfgJoinMessage",
+        AutoCoreConfig and AutoCoreConfig.lfgJoinMessage or "")
+    local values = suppliedValues or JoinMessageValues(request, role)
+    local message = tostring(template or ""):gsub("{([%a]+)}", function(key)
+        return values[string.lower(key)] or ("{" .. key .. "}")
+    end)
+    message = message:gsub("^%s+", ""):gsub("%s+$", "")
+    if #message > 255 then message = string.sub(message, 1, 255) end
+    return message
+end
+
+local function SendJoinMessage(request)
+    if not request or not SendChatMessage then return end
+    local message = BuildJoinMessage(request)
+    if message ~= "" then SendChatMessage(message, "WHISPER", nil, request.sender) end
+end
+
+local joinRoleMenu = CreateFrame("Frame", "AutoGroupFinderJoinRoleMenu", UIParent, "UIDropDownMenuTemplate")
+local function UpdateJoinPreview()
+    if not joinMessageBox or not joinRoleButton or not joinPreview then return end
+    joinRoleButton:SetText("Role: " .. joinDraftRole)
+    joinPreviewValues = joinPreviewValues
+        or JoinMessageValues({ category = "mythic", sender = "Leader" }, joinDraftRole)
+    joinPreview:SetText(BuildJoinMessage({ category = "mythic", sender = "Leader" },
+        joinMessageBox:GetText(), joinDraftRole, joinPreviewValues))
+end
+
+local function OpenJoinRoleMenu(anchor)
+    local entries = { { text = "Join role", isTitle = true, notCheckable = true } }
+    for _, rawRole in ipairs({ "DPS", "Tank", "Healer", "Auto" }) do
+        local role = rawRole
+        entries[#entries + 1] = {
+            text = role,
+            checked = joinDraftRole == role,
+            func = function() joinDraftRole = role; joinPreviewValues = nil; UpdateJoinPreview() end,
+        }
+    end
+    EasyMenu(entries, joinRoleMenu, anchor, 0, 0, "MENU", 0.15)
+end
+
+local function CreateJoinSetup()
+    joinSetup = CreateFrame("Frame", "AutoGroupFinderJoinMessageSetup", UIParent)
+    joinSetup:SetSize(580, 286)
+    joinSetup:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
+    joinSetup:SetFrameStrata("FULLSCREEN_DIALOG")
+    joinSetup:EnableMouse(true)
+    if joinSetup.SetClampedToScreen then joinSetup:SetClampedToScreen(true) end
+    UI.ModalSurface(joinSetup)
+
+    local title = joinSetup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 18, -16)
+    title:SetText("Join Message")
+    UI.ApplyFont(title, 16)
+    title:SetTextColor(UI.Unpack(UI.Colors.text))
+
+    local close = CreateFrame("Button", nil, joinSetup, "UIPanelButtonTemplate")
+    close:SetSize(26, 24)
+    close:SetPoint("TOPRIGHT", -12, -12)
+    close:SetText("X")
+    UI.SkinButton(close)
+    close:SetScript("OnClick", function() joinSetup:Hide() end)
+
+    local roleLabel = joinSetup:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    roleLabel:SetPoint("TOPLEFT", 18, -61)
+    roleLabel:SetText("Default role")
+    roleLabel:SetTextColor(UI.Unpack(UI.Colors.textMuted))
+    joinRoleButton = CreateFrame("Button", nil, joinSetup, "UIPanelButtonTemplate")
+    joinRoleButton:SetSize(112, 24)
+    joinRoleButton:SetPoint("LEFT", roleLabel, "RIGHT", 10, 0)
+    UI.SkinButton(joinRoleButton)
+    joinRoleButton:SetScript("OnClick", function(self) OpenJoinRoleMenu(self) end)
+
+    local placeholders = CreateFrame("Button", nil, joinSetup, "UIPanelButtonTemplate")
+    placeholders:SetSize(110, 24)
+    placeholders:SetPoint("TOPRIGHT", -18, -52)
+    placeholders:SetText("Placeholders")
+    UI.SkinButton(placeholders)
+    placeholders:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("Message placeholders")
+        GameTooltip:AddLine("{ilvl}  {spec}  {role}  {class}", 1, 1, 1)
+        GameTooltip:AddLine("{level}  {player}  {activity}  {leader}", 1, 1, 1)
+        GameTooltip:AddLine("Auto fills these values when Alt-click sends the message.", 0.75, 0.78, 0.82, true)
+        GameTooltip:Show()
+    end)
+    placeholders:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    local templateLabel = joinSetup:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    templateLabel:SetPoint("TOPLEFT", 18, -94)
+    templateLabel:SetText("Message template")
+    templateLabel:SetTextColor(UI.Unpack(UI.Colors.textMuted))
+    joinMessageBox = CreateFrame("EditBox", nil, joinSetup)
+    joinMessageBox:SetSize(544, 58)
+    joinMessageBox:SetPoint("TOPLEFT", 18, -112)
+    joinMessageBox:SetAutoFocus(false)
+    joinMessageBox:SetMultiLine(true)
+    joinMessageBox:SetMaxLetters(255)
+    joinMessageBox:SetFontObject("ChatFontNormal")
+    joinMessageBox:SetTextInsets(8, 8, 6, 6)
+    UI.Backdrop(joinMessageBox, UI.Colors.control, 1)
+    joinMessageBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    joinMessageBox:SetScript("OnTextChanged", UpdateJoinPreview)
+
+    local previewLabel = joinSetup:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    previewLabel:SetPoint("TOPLEFT", 18, -184)
+    previewLabel:SetText("Preview")
+    previewLabel:SetTextColor(UI.Unpack(UI.Colors.textMuted))
+    joinPreview = joinSetup:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    joinPreview:SetPoint("TOPLEFT", 18, -204)
+    joinPreview:SetWidth(544)
+    joinPreview:SetHeight(34)
+    joinPreview:SetJustifyH("LEFT")
+    joinPreview:SetJustifyV("TOP")
+    joinPreview:SetTextColor(UI.Unpack(UI.Colors.text))
+
+    local save = CreateFrame("Button", nil, joinSetup, "UIPanelButtonTemplate")
+    save:SetSize(92, 24)
+    save:SetPoint("BOTTOMRIGHT", -18, 14)
+    save:SetText("Save")
+    UI.SkinButton(save, UI.Colors.brand)
+    save:SetScript("OnClick", function()
+        AutoCore.SetSetting("core", "lfgJoinRole", joinDraftRole)
+        AutoCore.SetSetting("core", "lfgJoinMessage", joinMessageBox:GetText())
+        joinSetup:Hide()
+    end)
+    local cancel = CreateFrame("Button", nil, joinSetup, "UIPanelButtonTemplate")
+    cancel:SetSize(92, 24)
+    cancel:SetPoint("RIGHT", save, "LEFT", -8, 0)
+    cancel:SetText("Cancel")
+    UI.SkinButton(cancel)
+    cancel:SetScript("OnClick", function() joinSetup:Hide() end)
+    joinSetup:Hide()
+end
+
+local function ShowJoinSetup()
+    if not joinSetup then CreateJoinSetup() end
+    joinDraftRole = AutoCore.GetSetting("core", "lfgJoinRole",
+        AutoCoreConfig and AutoCoreConfig.lfgJoinRole or "DPS")
+    joinPreviewValues = nil
+    joinMessageBox:SetText(AutoCore.GetSetting("core", "lfgJoinMessage",
+        AutoCoreConfig and AutoCoreConfig.lfgJoinMessage or ""))
+    UpdateJoinPreview()
+    joinSetup:Show()
+end
+
 local function CreateWindow()
     frame = CreateFrame("Frame", "AutoGroupFinderWindow", UIParent)
     frame:SetSize(680, 438)
@@ -428,9 +637,23 @@ local function CreateWindow()
     channelButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
     RefreshChannelButton()
 
+    local joinButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    joinButton:SetSize(104, 24)
+    joinButton:SetPoint("RIGHT", channelButton, "LEFT", -8, 0)
+    joinButton:SetText("Join Message")
+    UI.SkinButton(joinButton)
+    joinButton:SetScript("OnClick", ShowJoinSetup)
+    joinButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("Join message setup")
+        GameTooltip:AddLine("Configure the message sent when you Alt-click a request.", 0.75, 0.78, 0.82, true)
+        GameTooltip:Show()
+    end)
+    joinButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
     local drag = CreateFrame("Frame", nil, frame)
     drag:SetPoint("TOPLEFT", 4, -4)
-    drag:SetPoint("TOPRIGHT", -174, -4)
+    drag:SetPoint("TOPRIGHT", -286, -4)
     drag:SetHeight(42)
     drag:EnableMouse(true)
     drag:RegisterForDrag("LeftButton")
@@ -476,10 +699,18 @@ local function CreateWindow()
 
     local list = CreateFrame("Frame", nil, frame)
     list:SetPoint("TOPLEFT", columns, "BOTTOMLEFT", 0, -5)
-    list:SetSize(486, ROW_HEIGHT * VISIBLE_ROWS)
+    list:SetSize(504, ROW_HEIGHT * VISIBLE_ROWS)
+    local function ScrollList(_, delta)
+        local maximum = math.max(0, #filtered - VISIBLE_ROWS)
+        local nextOffset = math.max(0, math.min(scrollOffset - delta, maximum))
+        if nextOffset ~= scrollOffset then scrollOffset = nextOffset; Refresh() end
+    end
+    list:EnableMouse(true)
+    list:EnableMouseWheel(true)
+    list:SetScript("OnMouseWheel", ScrollList)
     for index = 1, VISIBLE_ROWS do
         local row = CreateFrame("Button", nil, list)
-        row:SetSize(470, ROW_HEIGHT - 2)
+        row:SetSize(502, ROW_HEIGHT - 2)
         row:SetPoint("TOPLEFT", 0, -(index - 1) * ROW_HEIGHT)
         UI.Backdrop(row, index % 2 == 0 and UI.Colors.sidebar or UI.Colors.window, 0.9)
         row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -489,7 +720,7 @@ local function CreateWindow()
         row.name:SetTextColor(UI.Unpack(UI.Colors.brand))
         row.message = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.message:SetPoint("LEFT", 122, 0)
-        row.message:SetWidth(300)
+        row.message:SetWidth(332)
         row.message:SetJustifyH("LEFT")
         row.message:SetWordWrap(false)
         row.message:SetTextColor(UI.Unpack(UI.Colors.text))
@@ -504,6 +735,7 @@ local function CreateWindow()
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:AddLine(self.request.message, 1, 1, 1, true)
             GameTooltip:AddLine("Left-click: whisper", 0.75, 0.78, 0.82)
+            GameTooltip:AddLine("Alt-left-click: send join message", 0.75, 0.78, 0.82)
             GameTooltip:AddLine("Ctrl-left-click: invite", 0.75, 0.78, 0.82)
             GameTooltip:Show()
         end)
@@ -515,19 +747,16 @@ local function CreateWindow()
             if not self.request then return end
             if IsControlKeyDown and IsControlKeyDown() and InviteUnit then
                 InviteUnit(self.request.sender)
+            elseif IsAltKeyDown and IsAltKeyDown() then
+                SendJoinMessage(self.request)
             else
                 Whisper(self.request.sender)
             end
         end)
+        row:EnableMouseWheel(true)
+        row:SetScript("OnMouseWheel", ScrollList)
         rows[index] = row
     end
-
-    scrollbar = UI.CreateVerticalScrollbar(frame, ROW_HEIGHT * VISIBLE_ROWS, function(value)
-        scrollOffset = math.floor(value + 0.5)
-        Refresh()
-    end, 1)
-    scrollbar:SetPoint("TOPRIGHT", columns, "BOTTOMRIGHT", 0, -5)
-    scrollbar:BindMouseWheel(list, 1)
 
     searchBox = CreateFrame("EditBox", nil, frame)
     searchBox:SetSize(248, 24)
