@@ -26,15 +26,33 @@ local function Trim(value)
     return string.gsub(value, "%s+$", "")
 end
 
+local function PlainText(value)
+    value = string.gsub(value or "", "|c%x%x%x%x%x%x%x%x", "")
+    value = string.gsub(value, "|r", "")
+    return value
+end
+
 function Resolver.Normalize(text)
-    local label = string.gsub(text or "", "|c%x%x%x%x%x%x%x%x", "")
-    label = string.gsub(label, "|r", "")
+    local label = PlainText(text)
     label = string.gsub(label, "%s*%d+%s*/%s*%d+%s*$", "")
     label = string.gsub(label, "%s*%d+%%%s*$", "")
     label = string.gsub(label, ":%s*$", "")
     label = Trim(label)
     label = string.gsub(label, "%s+", " ")
     return string.lower(label), label
+end
+
+-- Return the final progress pair from a quest objective. Ascension can color
+-- the current and required values independently, so the raw API text may be
+-- "4|r/|cff...4" even though the player-visible tooltip reads "4/4".
+function Resolver.Progress(text)
+    local current, required
+    for rawCurrent, rawRequired in string.gmatch(
+        PlainText(text), "(%d+)%s*/%s*(%d+)"
+    ) do
+        current, required = tonumber(rawCurrent), tonumber(rawRequired)
+    end
+    return current, required
 end
 
 function Resolver.KindFromClientType(objectiveType)
@@ -55,10 +73,7 @@ end
 -- an objective's name cannot be mistaken for its progress.
 function Resolver.ObjectiveIsComplete(text, finished)
     if Resolver.IsComplete(finished) then return true end
-    local current, required
-    for rawCurrent, rawRequired in string.gmatch(text or "", "(%d+)%s*/%s*(%d+)") do
-        current, required = tonumber(rawCurrent), tonumber(rawRequired)
-    end
+    local current, required = Resolver.Progress(text)
     return current ~= nil and required ~= nil and required > 0 and current >= required
 end
 

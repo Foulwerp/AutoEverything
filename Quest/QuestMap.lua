@@ -127,7 +127,8 @@ local function MaxMinimapPins() return Setting("maxMinimapPins", 150) end
 -- "Defias Bandits slain: 3/10") so pin tooltips can show real progress
 -- instead of just re-stating the quest's static requirement text.
 local function ExtractProgress(text)
-    return text and string.match(text, "%d+%s*/%s*%d+")
+    local current, required = Resolver.Progress(text)
+    if current and required then return current .. "/" .. required end
 end
 
 local function AddLocation(zoneID, zoneName, floor, record, coord, questID, questTitle,

@@ -192,11 +192,7 @@ local function IsComplete(value)
 end
 
 local function ObjectiveProgressValues(text)
-    local current, required
-    for rawCurrent, rawRequired in string.gmatch(text or "", "(%d+)%s*/%s*(%d+)") do
-        current, required = tonumber(rawCurrent), tonumber(rawRequired)
-    end
-    return current, required
+    return AQ.ObjectiveResolver.Progress(text)
 end
 
 local function PlayerClass()
@@ -948,7 +944,7 @@ local function ObjectiveProgress(objective)
     if objective.current and objective.required then
         return tostring(objective.current) .. "/" .. tostring(objective.required)
     end
-    local current, total = string.match(objective.text or "", "(%d+)%s*/%s*(%d+)")
+    local current, total = AQ.ObjectiveResolver.Progress(objective.text)
     if current and total then return current .. "/" .. total end
     return objective.finished and "Complete" or "In progress"
 end

@@ -93,7 +93,7 @@ local function ParseProgress(objective)
     if not objective then return false, nil end
     local current, required = objective.current, objective.required
     if not current or not required then
-        current, required = string.match(objective.text or "", "(%d+)%s*/%s*(%d+)")
+        current, required = Resolver.Progress(objective.text)
     end
     local remaining
     if current and required then
@@ -302,7 +302,7 @@ end
 -- quest's "62% complete"). Percentage objectives don't map to a kill/loot
 -- count, so callers skip them rather than badge them with a wrong number.
 local function ParseTooltipProgress(text)
-    local current, required = string.match(text, "(%d+)%s*/%s*(%d+)")
+    local current, required = Resolver.Progress(text)
     if current and required then
         return math.max(tonumber(required) - tonumber(current), 0), false
     end
