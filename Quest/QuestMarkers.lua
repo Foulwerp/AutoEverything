@@ -342,9 +342,10 @@ end
 
 local function MatchUnit(unit)
     local npcID = NPCIDFromGUID(UnitGUID(unit))
+    local name = UnitName(unit)
+    local learnedName = npcID and SpawnStore.RememberName(npcID, name)
     local match = npcID and activeByNPC[npcID]
     if not match then
-        local name = UnitName(unit)
         match = name and activeByName[string.lower(name)]
     end
     local guid = UnitGUID(unit)
@@ -374,6 +375,9 @@ local function MatchUnit(unit)
         if not match.kill and not match.loot and not match.talk then match = nil end
     else
         match = tooltipMatch
+    end
+    if match and learnedName and AutoQuest.Map and AutoQuest.Map.RequestRefresh then
+        AutoQuest.Map.RequestRefresh()
     end
     return match, npcID
 end
@@ -670,6 +674,8 @@ eventFrame:RegisterEvent("BAG_UPDATE")
 eventFrame:RegisterEvent("ITEM_PUSH")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
+eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+eventFrame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
 eventFrame:SetScript("OnEvent", function(_, event, unit)
     if event == "PLAYER_ENTERING_WORLD" then
         ApplyElvUIProvider()
@@ -681,6 +687,16 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         local plate = visibleUnits[unit]
         if plate and plate.AutoEverythingQuestMarker then plate.AutoEverythingQuestMarker:Hide() end
         visibleUnits[unit] = nil
+    elseif event == "PLAYER_TARGET_CHANGED" or event == "UPDATE_MOUSEOVER_UNIT" then
+        local observedUnit = event == "PLAYER_TARGET_CHANGED" and "target" or "mouseover"
+        if UnitExists(observedUnit) and not UnitIsPlayer(observedUnit) then
+            local npcID = NPCIDFromGUID(UnitGUID(observedUnit))
+            if SpawnStore.RememberName(npcID, UnitName(observedUnit))
+                and AutoQuest.Map and AutoQuest.Map.RequestRefresh
+            then
+                AutoQuest.Map.RequestRefresh()
+            end
+        end
     else
         refreshPending, refreshAt = true,
             GetTime() + (Resolver.QUEST_LOG_SETTLE_DELAY or 0.75)

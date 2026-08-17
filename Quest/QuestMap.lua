@@ -485,7 +485,7 @@ local function AddQuestItemNPCs(questID, questTitle, objectives, sources, partyM
             local itemName = source.itemName or displayLabel
             for _, npcID in ipairs(source.npcIDs or {}) do
                 local record = {
-                    id=npcID, name="NPC " .. npcID,
+                    id=npcID, name=SpawnStore.GetName(npcID) or ("NPC " .. npcID),
                     item=itemName ~= "" and itemName or nil,
                 }
                 for _, location in ipairs(SpawnStore.Get(npcID) or {}) do

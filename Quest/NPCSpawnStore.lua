@@ -12,6 +12,7 @@ local decodedQuestNPCs = {}
 local decodedQuestItems = {}
 local decodedServices
 local decodedServiceFactions
+local observedNames = {}
 
 local serviceOrder = {
     "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
@@ -59,6 +60,21 @@ function Store.Get(npcID)
         return decoded[npcID]
     end
     return nil
+end
+
+-- The 3.3.5 API cannot resolve an arbitrary creature ID to a display name.
+-- Remember names from visible units so relationship-only loot pins can replace
+-- fallback labels such as "NPC 1245" with the creature's real name.
+function Store.RememberName(npcID, name)
+    npcID = tonumber(npcID)
+    if not npcID or type(name) ~= "string" or name == "" then return false end
+    if observedNames[npcID] == name then return false end
+    observedNames[npcID] = name
+    return true
+end
+
+function Store.GetName(npcID)
+    return observedNames[tonumber(npcID)]
 end
 
 -- NPC pages expose an "Objective of" quest list. The generator stores the
@@ -169,4 +185,5 @@ function Store.ClearCache()
     decodedQuestItems = {}
     decodedServices = nil
     decodedServiceFactions = nil
+    observedNames = {}
 end
