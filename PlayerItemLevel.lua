@@ -2,9 +2,9 @@
 -- PlayerItemLevel.lua - average equipped item level in unit tooltips.
 --
 -- Ascension backports several generations of Blizzard item-level APIs, but
--- their behavior is not documented consistently. Calculate from equipped
--- links using the same divisor rules as Ascension's character frame, then use
--- a native API only when item links are unavailable.
+-- their behavior is not documented consistently. Prefer the client's unit
+-- value because it includes Ascension-specific effective item levels, then
+-- calculate from equipped links as a guarded fallback.
 ----------------------------------------------------------------------
 
 local Core = AutoCore
@@ -48,6 +48,11 @@ end
 
 local function NativeItemLevel(unit)
     local isPlayer = unit == "player" or (UnitIsUnit and UnitIsUnit(unit, "player"))
+    if UnitAverageItemLevel then
+        local ok, value = pcall(UnitAverageItemLevel, unit)
+        value = ok and PositiveNumber(value) or nil
+        if value then return value end
+    end
     if isPlayer and GetAverageItemLevel then
         -- Blizzard returns overall and equipped averages in that order on
         -- clients that expose both. Prefer the equipped (second) result.
@@ -59,11 +64,6 @@ local function NativeItemLevel(unit)
     end
     if isPlayer and C_Player and C_Player.GetAverageItemLevel then
         local ok, value = pcall(C_Player.GetAverageItemLevel, C_Player)
-        value = ok and PositiveNumber(value) or nil
-        if value then return value end
-    end
-    if UnitAverageItemLevel then
-        local ok, value = pcall(UnitAverageItemLevel, unit)
         value = ok and PositiveNumber(value) or nil
         if value then return value end
     end
@@ -93,7 +93,7 @@ end
 
 local function EquippedItemLevel(unit)
     if not unit or not UnitExists(unit) then return nil end
-    return CalculatedEquippedItemLevel(unit) or NativeItemLevel(unit)
+    return NativeItemLevel(unit) or CalculatedEquippedItemLevel(unit)
 end
 
 local function AddStats(total, source)
@@ -184,7 +184,7 @@ local function StoreItemLevel(guid, value)
     entry.value = value
     entry.time = GetTime()
     cache[guid] = entry
-    SetTooltipValue(GameTooltip, guid, string.format("%.1f", value))
+    SetTooltipValue(GameTooltip, guid, string.format("%.2f", value))
 end
 
 local function StoreRole(guid, role, stats, scores)
@@ -321,7 +321,7 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(self)
     if not canRequest then return end
 
     self.__aeAddingItemLevel = true
-    self:AddDoubleLine("Equipped Item Level", value and string.format("%.1f", value) or "Inspecting...",
+    self:AddDoubleLine("Equipped Item Level", value and string.format("%.2f", value) or "Inspecting...",
         0.35, 0.85, 1, 1, 1, 1)
     self.__aeItemLevelLine = self:NumLines()
     self.__aeItemLevelGUID = guid
