@@ -3,13 +3,22 @@ name: Create release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Release version (for example, v1.0.0)
+      bump:
+        description: Version component to increment
         required: true
-        type: string
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -19,17 +28,45 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: main
 
-      - name: Validate version
+      - name: Calculate next version
         env:
-          VERSION: ${{ inputs.version }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+
+          latest_version="$({ git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n 1)"
+          if [[ -z "$latest_version" ]]; then
+            version="1.0.0"
+          else
+            IFS=. read -r major minor patch <<< "${latest_version#v}"
+            case "$BUMP" in
+              major)
+                version="$((major + 1)).0.0"
+                ;;
+              minor)
+                version="${major}.$((minor + 1)).0"
+                ;;
+              patch)
+                version="${major}.${minor}.$((patch + 1))"
+                ;;
+              *)
+                echo "Unsupported version bump: $BUMP" >&2
+                exit 1
+                ;;
+            esac
+          fi
+
+          echo "VERSION=v$version" >> "$GITHUB_ENV"
+          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "Creating release v$version from $(git rev-parse --short HEAD)."
+
+      - name: Validate version is available
+        env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Version must look like v1.0.0 or v1.0.0-beta.1." >&2
-            exit 1
-          fi
           if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null; then
             echo "Tag $VERSION already exists." >&2
             exit 1
@@ -46,6 +83,7 @@ jobs:
           mkdir -p stage dist
           git archive --format=tar --prefix=AutoEverything/ HEAD | tar -xf - -C stage
           cp -R Packaging/AutoEverything_AuctionDB stage/AutoEverything_AuctionDB
+          sed -i "1a ## Version: ${VERSION#v}" stage/AutoEverything/AutoEverything.toc
           (cd stage && zip -q -r ../dist/AutoEverything.zip AutoEverything AutoEverything_AuctionDB)
 
       - name: Validate bundled addon ZIP
@@ -85,6 +123,6 @@ jobs:
         run: |
           gh release create "$VERSION" dist/AutoEverything.zip \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
+            --target "$RELEASE_SHA" \
             --title "$VERSION" \
             --generate-notes
