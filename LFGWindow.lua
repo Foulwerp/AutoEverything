@@ -78,7 +78,7 @@ local selectedCategory = "all"
 local scrollOffset = 0
 local nextCleanup = 0
 local frame, searchBox, statusText, channelButton
-local joinSetup, joinMessageBox, joinRoleButton, joinPreview
+local joinSetup, joinMessageBox, joinRoleButton, joinSpecBox, joinPreview
 local joinDraftRole = "DPS"
 local joinPreviewValues
 local categoryButtons, rows = {}, {}
@@ -397,8 +397,11 @@ end
 local function PlayerSpecName()
     if AutoActionBars and AutoActionBars.GetCurrentSpec then
         local _, name = AutoActionBars.GetCurrentSpec()
-        if name and name ~= "" and not tostring(name):match("^Specialization %d+$") then
-            return tostring(name)
+        if name then
+            name = tostring(name):gsub("^%s+", ""):gsub("%s+$", "")
+            local suffix = name:match("^[Ss]peciali[sz]ation%s*:%s*(.+)$")
+            if suffix and suffix ~= "" then return suffix end
+            if name ~= "" and not name:match("^[Ss]peciali[sz]ation%s*:?%s*%d*%s*$") then return name end
         end
     end
     if GetTalentTabInfo then
@@ -413,6 +416,37 @@ local function PlayerSpecName()
         if bestName then return tostring(bestName) end
     end
     return "Unknown spec"
+end
+
+local function CharacterPanelItemLevel()
+    if C_Player and C_Player.GetAverageItemLevel then
+        local ok, value = pcall(C_Player.GetAverageItemLevel, C_Player)
+        if ok and tonumber(value) and tonumber(value) > 0 then return tonumber(value) end
+    end
+    if UnitAverageItemLevel then
+        local ok, value = pcall(UnitAverageItemLevel, "player")
+        if ok and tonumber(value) and tonumber(value) > 0 then return tonumber(value) end
+    end
+
+    -- This mirrors Ascension's character panel: fifteen base slots, with
+    -- ranged and off-hand included in the denominator only when equipped.
+    local itemCount, total = 15, 0
+    local firstSlot = INVSLOT_FIRST_EQUIPPED or 1
+    local lastSlot = INVSLOT_LAST_EQUIPPED or 19
+    for slot = firstSlot, lastSlot do
+        if slot ~= (INVSLOT_BODY or 4) and slot ~= (INVSLOT_TABARD or 19) then
+            local link = GetInventoryItemLink("player", slot)
+            local itemLevel = link and select(4, GetItemInfo(link))
+            if itemLevel then
+                if slot == (INVSLOT_RANGED or 18) or slot == (INVSLOT_OFFHAND or 17) then
+                    itemCount = itemCount + 1
+                end
+                total = total + itemLevel
+            end
+        end
+    end
+    if total > 0 then return total / itemCount end
+    return nil
 end
 
 local function ResolvedJoinRole(wanted)
@@ -432,19 +466,24 @@ local function ResolvedJoinRole(wanted)
     return "DPS"
 end
 
-local function JoinMessageValues(request, role)
-    local inspection = AutoCore.PlayerInspection and AutoCore.PlayerInspection.Get
-        and AutoCore.PlayerInspection.Get("player")
+local function JoinMessageValues(request, role, specOverride)
     local localizedClass = UnitClass("player") or "Unknown class"
+    local configuredSpec = specOverride
+    if configuredSpec == nil then
+        configuredSpec = AutoCore.GetSetting("core", "lfgJoinSpec",
+            AutoCoreConfig and AutoCoreConfig.lfgJoinSpec or "")
+    end
+    configuredSpec = tostring(configuredSpec or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local itemLevel = CharacterPanelItemLevel()
     return {
         activity = request and CategoryLabel(request.category) or "group",
         class = localizedClass,
-        ilvl = inspection and inspection.value and string.format("%.1f", inspection.value) or "?",
+        ilvl = itemLevel and string.format("%.1f", itemLevel) or "?",
         leader = request and ShortName(request.sender) or "leader",
         level = tostring(UnitLevel("player") or "?"),
         player = UnitName("player") or "player",
         role = ResolvedJoinRole(role),
-        spec = PlayerSpecName(),
+        spec = configuredSpec ~= "" and configuredSpec or PlayerSpecName(),
     }
 end
 
@@ -471,7 +510,8 @@ local function UpdateJoinPreview()
     if not joinMessageBox or not joinRoleButton or not joinPreview then return end
     joinRoleButton:SetText("Role: " .. joinDraftRole)
     joinPreviewValues = joinPreviewValues
-        or JoinMessageValues({ category = "mythic", sender = "Leader" }, joinDraftRole)
+        or JoinMessageValues({ category = "mythic", sender = "Leader" }, joinDraftRole,
+            joinSpecBox and joinSpecBox:GetText())
     joinPreview:SetText(BuildJoinMessage({ category = "mythic", sender = "Leader" },
         joinMessageBox:GetText(), joinDraftRole, joinPreviewValues))
 end
@@ -520,6 +560,32 @@ local function CreateJoinSetup()
     joinRoleButton:SetPoint("LEFT", roleLabel, "RIGHT", 10, 0)
     UI.SkinButton(joinRoleButton)
     joinRoleButton:SetScript("OnClick", function(self) OpenJoinRoleMenu(self) end)
+
+    local specLabel = joinSetup:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    specLabel:SetPoint("LEFT", joinRoleButton, "RIGHT", 14, 0)
+    specLabel:SetText("Spec")
+    specLabel:SetTextColor(UI.Unpack(UI.Colors.textMuted))
+    joinSpecBox = CreateFrame("EditBox", nil, joinSetup)
+    joinSpecBox:SetSize(156, 24)
+    joinSpecBox:SetPoint("LEFT", specLabel, "RIGHT", 8, 0)
+    joinSpecBox:SetAutoFocus(false)
+    joinSpecBox:SetMaxLetters(40)
+    joinSpecBox:SetFontObject("ChatFontNormal")
+    joinSpecBox:SetTextInsets(8, 8, 0, 0)
+    UI.Backdrop(joinSpecBox, UI.Colors.control, 1)
+    joinSpecBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    joinSpecBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    joinSpecBox:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("Specialization override")
+        GameTooltip:AddLine("Leave blank to detect it automatically. Enter a name here if your Ascension build uses a custom specialization.", 0.75, 0.78, 0.82, true)
+        GameTooltip:Show()
+    end)
+    joinSpecBox:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    joinSpecBox:SetScript("OnTextChanged", function()
+        joinPreviewValues = nil
+        UpdateJoinPreview()
+    end)
 
     local placeholders = CreateFrame("Button", nil, joinSetup, "UIPanelButtonTemplate")
     placeholders:SetSize(110, 24)
@@ -571,6 +637,7 @@ local function CreateJoinSetup()
     UI.SkinButton(save, UI.Colors.brand)
     save:SetScript("OnClick", function()
         AutoCore.SetSetting("core", "lfgJoinRole", joinDraftRole)
+        AutoCore.SetSetting("core", "lfgJoinSpec", joinSpecBox:GetText())
         AutoCore.SetSetting("core", "lfgJoinMessage", joinMessageBox:GetText())
         joinSetup:Hide()
     end)
@@ -588,6 +655,8 @@ local function ShowJoinSetup()
     joinDraftRole = AutoCore.GetSetting("core", "lfgJoinRole",
         AutoCoreConfig and AutoCoreConfig.lfgJoinRole or "DPS")
     joinPreviewValues = nil
+    joinSpecBox:SetText(AutoCore.GetSetting("core", "lfgJoinSpec",
+        AutoCoreConfig and AutoCoreConfig.lfgJoinSpec or ""))
     joinMessageBox:SetText(AutoCore.GetSetting("core", "lfgJoinMessage",
         AutoCoreConfig and AutoCoreConfig.lfgJoinMessage or ""))
     UpdateJoinPreview()

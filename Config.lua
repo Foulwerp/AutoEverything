@@ -40,6 +40,7 @@ AutoCoreConfig = {
     lfgChannelMode = "standard",         -- standard, custom, or all
     lfgEnabledChannels = {},             -- normalized channel names used in custom mode
     lfgJoinRole = "DPS",                 -- DPS, Tank, Healer, or Auto
+    lfgJoinSpec = "",                    -- empty uses Ascension's active specialization
     lfgJoinMessage = "Hi, {ilvl} ilvl {spec} {role} looking to join {activity}.",
     showPlayerItemLevel = true,
     verbose = false,
