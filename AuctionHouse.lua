@@ -566,11 +566,7 @@ end
 local function HookPriceMethod(tooltip, method, resolver)
     if not tooltip or not tooltip[method] then return end
     hooksecurefunc(tooltip, method, function(self, ...)
-        local arguments = { ... }
         self.__aeAuctionPendingLink = nil
-        self.aeAuctionRefresh = function()
-            self[method](self, unpack(arguments))
-        end
         local link, count = resolver and resolver(self, ...) or TooltipLink(self)
         AddTooltipPrice(self, link or TooltipLink(self), count)
     end)
@@ -581,7 +577,6 @@ local function HookTooltip(tooltip)
     tooltip.__aeAuctionTooltipHooked = true
     tooltip:HookScript("OnTooltipCleared", function(self)
         self.aeAuctionMarketLink = nil
-        self.aeAuctionRefresh = nil
         self.__aeAuctionPendingLink = nil
     end)
     -- Some custom frames and tooltip addons fill item tooltips without using a
@@ -717,17 +712,6 @@ local function HookAuctionTooltips()
 end
 
 HookAuctionTooltips()
-
-local modifierFrame = CreateFrame("Frame")
-modifierFrame:RegisterEvent("MODIFIER_STATE_CHANGED")
-modifierFrame:SetScript("OnEvent", function(_, _, key)
-    if not key or not key:find("SHIFT") then return end
-    for _, tooltip in pairs(AuctionTooltipFrames()) do
-        if tooltip and tooltip:IsShown() and tooltip.aeAuctionRefresh then
-            tooltip.aeAuctionRefresh()
-        end
-    end
-end)
 
 local function AbortScan(reason)
     scan = nil
