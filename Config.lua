@@ -107,7 +107,6 @@ AutoLootConfig = {
 
 -- AutoSell: sells matching items at a merchant.
 AutoSellConfig = {
-    activationMode = "automatic",  -- automatic, shift, or manual button
     enabled = false,
     learnVanity = false,
     maxQuality = 0,

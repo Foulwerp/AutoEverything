@@ -3913,26 +3913,9 @@ local function RulePage(spec)
         local section = Core.GetProfileSection(spec.moduleName, true)
         if spec.moduleName == "sell" then
             if not spec.safety then
-                local activationMode = Core.GetSetting("sell", "activationMode",
-                    ResolvedDefault(AutoSellConfig, "activationMode", "automatic"))
-                -- Keep merchant activation on the settings row below the rule
-                -- tabs. It previously shared the Never Sell tab's exact
-                -- position, leaving the two controls drawn on top of each
-                -- other. The wider two-column button also leaves room for the
-                -- selected mode and its dropdown arrow.
-                local activationButton = ChoiceButton(parent, "Activation", 20, -82, 330, {
-                    { text = "When merchant opens", value = "automatic" },
-                    { text = "Press Shift while open", value = "shift" },
-                    { text = "Merchant window button", value = "manual" },
-                }, activationMode, function(value)
-                    section.activationMode = value
-                    NotifyWithoutRefresh("sell")
-                end)
-                AddTooltip(activationButton, "Merchant activation",
-                    "Automatic runs on opening. Shift mode starts a full verified sell-and-repair run when Shift is pressed at any time while the merchant remains open. Manual adds a Sell & Repair button to the merchant window.")
-                ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 360, -86, true,
+                ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 20, -86, true,
                     "Prints a chat message when AutoSell sells matching items.")
-                ScalarCheck(parent, "sell", AutoSellConfig, "learnVanity", "Learn vanity items", 530, -86, true,
+                ScalarCheck(parent, "sell", AutoSellConfig, "learnVanity", "Learn vanity items", 190, -86, true,
                     "Learns eligible mounts, pets, and vanity items before selling.")
 
                 local repairDefaults = ResolvedDefault(AutoSellConfig, "autoRepair", AutoSellConfig.autoRepair or {})

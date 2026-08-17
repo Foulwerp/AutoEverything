@@ -687,10 +687,10 @@ end
 
 HookUpgradeTooltips()
 
--- ItemRefTooltip does not have Blizzard's comparison OnUpdate handler on this
--- client. Item links opened from chat use it, so compare them automatically;
--- requiring Shift here can accidentally trigger unrelated Shift actions such
--- as configured merchant selling.
+-- GameTooltip has Blizzard's comparison OnUpdate handler, but ItemRefTooltip
+-- does not on this client. Item links from chat and other hyperlink sources
+-- are displayed in ItemRefTooltip, so give it the same modifier/CVar-driven
+-- equipped-item comparison behavior as ordinary hovered item tooltips.
 local function HideTooltipComparisons(tooltip)
     if not tooltip or not tooltip.shoppingTooltips then return end
     for _, frame in pairs(tooltip.shoppingTooltips) do
@@ -711,7 +711,12 @@ local function EnableLinkTooltipComparison(tooltip)
         if self.GetItem then
             link = select(2, self:GetItem())
         end
-        if link then
+        local compareItems = IsModifiedClick and IsModifiedClick("COMPAREITEMS")
+        if not compareItems and GetCVarBool then
+            compareItems = GetCVarBool("alwaysCompareItems")
+        end
+
+        if link and compareItems then
             if self.__autoUpgradeLinkComparing ~= link and GameTooltip_ShowCompareItem then
                 HideTooltipComparisons(self)
                 GameTooltip_ShowCompareItem(self)
@@ -730,74 +735,6 @@ local function EnableLinkTooltipComparison(tooltip)
 end
 
 EnableLinkTooltipComparison(ItemRefTooltip)
-
--- Chat frames expose hyperlink enter/leave scripts even though the stock UI
--- does not show item tooltips from them. Show and compare item links without a
--- modifier so this never competes with Shift-based gameplay or addon actions.
-local function EnableChatItemHoverComparison()
-    if not CHAT_FRAMES then return end
-
-    local function ItemLinkKey(link)
-        if type(link) ~= "string" then return nil end
-        return string.match(link, "item:[^|]+")
-    end
-
-    for _, frameName in ipairs(CHAT_FRAMES) do
-        local chatFrame = _G[frameName]
-        if chatFrame and chatFrame.HookScript and not chatFrame.__autoUpgradeChatHoverHooked then
-            chatFrame.__autoUpgradeChatHoverHooked = true
-
-            chatFrame:HookScript("OnHyperlinkEnter", function(self, link)
-                local linkKey = ItemLinkKey(link)
-                if not linkKey then return end
-                if InCombatLockdown and InCombatLockdown() then return end
-
-                GameTooltip.__autoUpgradeChatHoverOwner = self
-                GameTooltip.__autoUpgradeChatHoverLink = linkKey
-                GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-                GameTooltip:SetHyperlink(link)
-                GameTooltip:Show()
-            end)
-            chatFrame:HookScript("OnHyperlinkLeave", function(self)
-                if GameTooltip.__autoUpgradeChatHoverOwner ~= self then return end
-                GameTooltip.__autoUpgradeChatHoverOwner = nil
-                GameTooltip.__autoUpgradeChatHoverLink = nil
-                HideTooltipComparisons(GameTooltip)
-                GameTooltip:Hide()
-            end)
-        end
-    end
-
-    if GameTooltip and GameTooltip.HookScript and not GameTooltip.__autoUpgradeChatCompareHooked then
-        GameTooltip.__autoUpgradeChatCompareHooked = true
-        GameTooltip:HookScript("OnUpdate", function(self)
-            local link = self.__autoUpgradeChatHoverLink
-            if not link or not GameTooltip_ShowCompareItem then return end
-
-            local _, displayedLink = self:GetItem()
-            if not displayedLink then return end
-            if ItemLinkKey(displayedLink) ~= link then
-                self.__autoUpgradeChatHoverOwner = nil
-                self.__autoUpgradeChatHoverLink = nil
-                return
-            end
-
-            -- Blizzard's own OnUpdate may hide these when Shift is not down.
-            -- Restore them later in the same update, before the frame renders.
-            local comparisonShown = false
-            for _, frame in pairs(self.shoppingTooltips or {}) do
-                if frame and frame:IsShown() then comparisonShown = true break end
-            end
-            if not comparisonShown then GameTooltip_ShowCompareItem(self) end
-        end)
-        GameTooltip:HookScript("OnHide", function(self)
-            self.__autoUpgradeChatHoverOwner = nil
-            self.__autoUpgradeChatHoverLink = nil
-        end)
-    end
-end
-
-EnableChatItemHoverComparison()
 
 -- ElvUI 7.27 uses GameTooltip.comparing for its Shift-to-compare handler.
 -- Blizzard uses that same field for always-compare, so ElvUI hides Blizzard's
@@ -845,7 +782,6 @@ elvUIFixFrame:SetScript("OnEvent", function(self)
     -- guaranteed to exist by login.
     HookUpgradeTooltips()
     EnableLinkTooltipComparison(ItemRefTooltip)
-    EnableChatItemHoverComparison()
     FixElvUIAlwaysCompareFlicker()
     self:UnregisterEvent("PLAYER_LOGIN")
 end)
