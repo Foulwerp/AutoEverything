@@ -37,6 +37,8 @@ AutoCoreConfig = {
     showLoginSummary = true,
     showMinimapButton = true,
     showLFGMinimapButton = true,
+    lfgChannelMode = "standard",         -- standard, custom, or all
+    lfgEnabledChannels = {},             -- normalized channel names used in custom mode
     showPlayerItemLevel = true,
     verbose = false,
 

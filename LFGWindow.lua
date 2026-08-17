@@ -73,8 +73,9 @@ local filtered = {}
 local selectedCategory = "all"
 local scrollOffset = 0
 local nextCleanup = 0
-local frame, scrollbar, searchBox, statusText
+local frame, scrollbar, searchBox, statusText, channelButton
 local categoryButtons, rows = {}, {}
+local knownChannels = {}
 
 local function LowerPlain(text)
     text = tostring(text or ""):lower()
@@ -88,6 +89,57 @@ local function ContainsAny(text, words)
         if text:find(word, 1, true) then return true end
     end
     return false
+end
+
+local function NormalizeChannelName(name)
+    local normalized = LowerPlain(name)
+    normalized = normalized:gsub("^%s*%[?%d+%.?%s*", "")
+    normalized = normalized:gsub("%]?%s*$", "")
+    normalized = normalized:gsub("^%s+", ""):gsub("%s+$", "")
+    return normalized
+end
+
+local function RememberChannel(name)
+    local key = NormalizeChannelName(name)
+    if key ~= "" then knownChannels[key] = tostring(name) end
+    return key
+end
+
+local function RefreshKnownChannels()
+    if not GetChannelList then return end
+    local values = { GetChannelList() }
+    -- Wrath returns repeating channel-number, channel-name, disabled triples.
+    for index = 1, #values, 3 do
+        local name = values[index + 1]
+        if type(name) == "string" and name ~= "" then RememberChannel(name) end
+    end
+end
+
+local function IsStandardPublicChannel(channelKey)
+    return channelKey:find("lookingforgroup", 1, true)
+        or channelKey:find("looking for group", 1, true)
+        or channelKey:find("%f[%w]lfg%f[%W]")
+        or channelKey:find("%f[%w]world%f[%W]")
+        or channelKey:find("%f[%w]global%f[%W]")
+        or channelKey:match("^general")
+        or channelKey:match("^trade")
+end
+
+local function ChannelMode()
+    return AutoCore.GetSetting("core", "lfgChannelMode",
+        AutoCoreConfig and AutoCoreConfig.lfgChannelMode or "standard")
+end
+
+local function IsChannelEnabled(channelKey)
+    if channelKey == "" then return false end
+    local mode = ChannelMode()
+    if mode == "all" then return true end
+    if mode == "custom" then
+        local enabled = AutoCore.GetSetting("core", "lfgEnabledChannels",
+            AutoCoreConfig and AutoCoreConfig.lfgEnabledChannels or {})
+        return type(enabled) == "table" and enabled[channelKey] == true
+    end
+    return IsStandardPublicChannel(channelKey) and true or false
 end
 
 local function ContainsToken(text, words)
@@ -201,9 +253,91 @@ local function Refresh()
     end
 end
 
-local function AddRequest(message, sender, channel)
+local function RefreshChannelButton()
+    if not channelButton then return end
+    local labels = { standard = "Public", custom = "Custom", all = "All" }
+    channelButton:SetText("Channels: " .. (labels[ChannelMode()] or "Public"))
+end
+
+local function PruneDisabledChannels()
+    local kept = {}
+    for _, request in ipairs(requests) do
+        if IsChannelEnabled(request.channelKey or "") then kept[#kept + 1] = request end
+    end
+    requests = kept
+end
+
+local function ApplyChannelMode(mode)
+    AutoCore.SetSetting("core", "lfgChannelMode", mode)
+    PruneDisabledChannels()
+    scrollOffset = 0
+    RefreshChannelButton()
+    Refresh()
+end
+
+local channelMenu = CreateFrame("Frame", "AutoGroupFinderChannelMenu", UIParent, "UIDropDownMenuTemplate")
+local function OpenChannelMenu(anchor)
+    RefreshKnownChannels()
+    local mode = ChannelMode()
+    local enabled = AutoCore.GetSetting("core", "lfgEnabledChannels",
+        AutoCoreConfig and AutoCoreConfig.lfgEnabledChannels or {})
+    if type(enabled) ~= "table" then enabled = {} end
+
+    local entries = {
+        { text = "Listen to channels", isTitle = true, notCheckable = true },
+        {
+            text = "Standard public channels",
+            checked = mode == "standard",
+            tooltipTitle = "Standard public channels",
+            tooltipText = "General, Trade, World, Global, LFG, and LookingForGroup channels only.",
+            func = function() ApplyChannelMode("standard") end,
+        },
+        {
+            text = "All numbered channels",
+            checked = mode == "all",
+            tooltipTitle = "All numbered channels",
+            tooltipText = "Includes private and custom channels. Protocol messages beginning with lc<number>: remain blocked.",
+            func = function() ApplyChannelMode("all") end,
+        },
+        {
+            text = "Saved custom selection",
+            checked = mode == "custom",
+            tooltipTitle = "Saved custom selection",
+            tooltipText = "Listen only to the channels checked below.",
+            func = function() ApplyChannelMode("custom") end,
+        },
+        { text = " ", disabled = true, notCheckable = true },
+        { text = "Custom selection", isTitle = true, notCheckable = true },
+    }
+
+    local keys = {}
+    for key in pairs(knownChannels) do keys[#keys + 1] = key end
+    table.sort(keys, function(a, b) return knownChannels[a]:lower() < knownChannels[b]:lower() end)
+    if #keys == 0 then
+        entries[#entries + 1] = { text = "No channels detected", disabled = true, notCheckable = true }
+    else
+        for _, rawKey in ipairs(keys) do
+            -- Per-entry locals keep callbacks correct on Lua 5.1.
+            local key, label = rawKey, knownChannels[rawKey]
+            entries[#entries + 1] = {
+                text = label,
+                checked = enabled[key] == true,
+                func = function()
+                    local nextEnabled = {}
+                    for savedKey, value in pairs(enabled) do nextEnabled[savedKey] = value end
+                    if nextEnabled[key] then nextEnabled[key] = nil else nextEnabled[key] = true end
+                    AutoCore.SetSetting("core", "lfgEnabledChannels", nextEnabled)
+                    ApplyChannelMode("custom")
+                end,
+            }
+        end
+    end
+    EasyMenu(entries, channelMenu, anchor, 0, 0, "MENU", 0.15)
+end
+
+local function AddRequest(message, sender, channelKey, channelLabel)
     local lower = LowerPlain(message)
-    if lower == "" or not HasGroupIntent(lower) then return end
+    if lower == "" or lower:match("^%s*lc%d*:") or not HasGroupIntent(lower) then return end
     local senderLower = LowerPlain(sender)
     local category = Classify(lower)
     local now = GetTime()
@@ -211,7 +345,8 @@ local function AddRequest(message, sender, channel)
         if request.senderLower == senderLower and request.category == category then
             request.message = message
             request.lower = lower
-            request.channel = channel
+            request.channelKey = channelKey
+            request.channelLabel = channelLabel
             request.updated = now
             Refresh()
             return
@@ -222,7 +357,8 @@ local function AddRequest(message, sender, channel)
         lower = lower,
         sender = sender,
         senderLower = senderLower,
-        channel = channel,
+        channelKey = channelKey,
+        channelLabel = channelLabel,
         category = category,
         updated = now,
     })
@@ -268,9 +404,23 @@ local function CreateWindow()
     UI.SkinButton(close)
     close:SetScript("OnClick", function() frame:Hide() end)
 
+    channelButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    channelButton:SetSize(112, 24)
+    channelButton:SetPoint("RIGHT", close, "LEFT", -8, 0)
+    UI.SkinButton(channelButton)
+    channelButton:SetScript("OnClick", function(self) OpenChannelMenu(self) end)
+    channelButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("LFG chat channels")
+        GameTooltip:AddLine("Choose which numbered chat channels may add requests.", 0.75, 0.78, 0.82, true)
+        GameTooltip:Show()
+    end)
+    channelButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    RefreshChannelButton()
+
     local drag = CreateFrame("Frame", nil, frame)
     drag:SetPoint("TOPLEFT", 4, -4)
-    drag:SetPoint("TOPRIGHT", -44, -4)
+    drag:SetPoint("TOPRIGHT", -174, -4)
     drag:SetHeight(42)
     drag:EnableMouse(true)
     drag:RegisterForDrag("LeftButton")
@@ -406,18 +556,25 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")
-eventFrame:RegisterEvent("CHAT_MSG_YELL")
-eventFrame:RegisterEvent("CHAT_MSG_SAY")
-eventFrame:RegisterEvent("CHAT_MSG_GUILD")
-eventFrame:RegisterEvent("CHAT_MSG_OFFICER")
+eventFrame:RegisterEvent("CHANNEL_UI_UPDATE")
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" then
         local addonName = ...
-        if addonName == "AutoEverything" and not frame then CreateWindow() end
+        if addonName == "AutoEverything" then
+            RefreshKnownChannels()
+            if not frame then CreateWindow() end
+        end
+        return
+    elseif event == "CHANNEL_UI_UPDATE" then
+        RefreshKnownChannels()
         return
     end
-    local message, sender, _, channel = ...
-    AddRequest(message, sender, channel or event)
+    local message, sender = ...
+    local channelString = select(4, ...)
+    local channelName = select(9, ...)
+    local channelLabel = type(channelName) == "string" and channelName ~= "" and channelName or channelString
+    local channelKey = RememberChannel(channelLabel)
+    if IsChannelEnabled(channelKey) then AddRequest(message, sender, channelKey, channelLabel) end
 end)
 eventFrame:SetScript("OnUpdate", function(self, elapsed)
     self.elapsed = (self.elapsed or 0) + elapsed
