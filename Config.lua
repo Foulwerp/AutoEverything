@@ -36,6 +36,7 @@ AutoCoreConfig = {
     setCameraDistance = true,
     showLoginSummary = true,
     showMinimapButton = true,
+    showLFGMinimapButton = true,
     showPlayerItemLevel = true,
     verbose = false,
 

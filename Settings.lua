@@ -1489,11 +1489,14 @@ pageBuilders.General = function(parent)
     ScalarSettingRow(parent, "core", AutoCoreConfig, "showMinimapButton", "Show minimap button",
         20, -144, true,
         "Shows the automation icon on the minimap for quick access to status and toggles.")
-    ScalarSettingRow(parent, "core", AutoCoreConfig, "showSessionInTooltip", "Show session stats on minimap",
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "showLFGMinimapButton", "Show group finder button",
         20, -172, true,
+        "Shows a separate minimap button that opens the group-request bulletin board.")
+    ScalarSettingRow(parent, "core", AutoCoreConfig, "showSessionInTooltip", "Show session stats on minimap",
+        20, -200, true,
         "Shows this session's gold, items sold, junk deleted, and repair costs on the minimap button tooltip.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "showPlayerItemLevel", "Show player item level",
-        20, -200, true,
+        390, -200, true,
         "Adds the average equipped item level to player hover tooltips. Nearby players are inspected automatically when the client allows it; recent results are cached briefly.")
     ScalarSettingRow(parent, "core", AutoCoreConfig, "setCameraDistance", "Set camera zoom",
         390, -116, true,

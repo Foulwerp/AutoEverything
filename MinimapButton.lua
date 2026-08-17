@@ -163,19 +163,109 @@ button:SetScript("OnEnter", function(self)
 end)
 button:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+----------------------------------------------------------------------
+-- Independent group-finder button. Two buttons are intentional: opening the
+-- bulletin board should remain one click and must not disturb quick controls.
+----------------------------------------------------------------------
+local lfgButton = CreateFrame("Button", "AutoGroupFinderMinimapButton", Minimap)
+lfgButton:SetWidth(32)
+lfgButton:SetHeight(32)
+lfgButton:SetFrameStrata("MEDIUM")
+lfgButton:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+lfgButton:SetMovable(true)
+lfgButton:RegisterForClicks("LeftButtonUp")
+lfgButton:RegisterForDrag("LeftButton")
+
+local lfgIcon = lfgButton:CreateTexture(nil, "BACKGROUND")
+lfgIcon:SetTexture("Interface\\Icons\\Spell_Holy_PrayerOfShadowProtection")
+lfgIcon:SetWidth(20)
+lfgIcon:SetHeight(20)
+lfgIcon:SetPoint("CENTER", 0, 1)
+
+local lfgBorder = lfgButton:CreateTexture(nil, "OVERLAY")
+lfgBorder:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+lfgBorder:SetWidth(54)
+lfgBorder:SetHeight(54)
+lfgBorder:SetPoint("TOPLEFT")
+
+local lfgCount = lfgButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+lfgCount:SetPoint("BOTTOMRIGHT", lfgButton, "BOTTOMRIGHT", 0, 1)
+lfgCount:SetTextColor(0.35, 0.75, 1)
+
+local function UpdateLFGPosition()
+    local angle = math.rad((AutoEverythingCharDB and AutoEverythingCharDB.lfgMinimapAngle) or 260)
+    lfgButton:ClearAllPoints()
+    lfgButton:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * 80, math.sin(angle) * 80)
+end
+
+local function UpdateLFGDragPosition()
+    local mx, my = Minimap:GetCenter()
+    local scale = Minimap:GetEffectiveScale()
+    local cx, cy = GetCursorPosition()
+    cx, cy = cx / scale, cy / scale
+    local dy, dx = cy - my, cx - mx
+    local angle
+    if math.atan2 then
+        angle = math.atan2(dy, dx)
+    elseif dx > 0 then
+        angle = math.atan(dy / dx)
+    elseif dx < 0 and dy >= 0 then
+        angle = math.atan(dy / dx) + math.pi
+    elseif dx < 0 then
+        angle = math.atan(dy / dx) - math.pi
+    elseif dy > 0 then
+        angle = math.pi / 2
+    elseif dy < 0 then
+        angle = -math.pi / 2
+    else
+        angle = 0
+    end
+    AutoEverythingCharDB = AutoEverythingCharDB or {}
+    AutoEverythingCharDB.lfgMinimapAngle = math.deg(angle)
+    UpdateLFGPosition()
+end
+
+lfgButton:SetScript("OnDragStart", function(self) self:SetScript("OnUpdate", UpdateLFGDragPosition) end)
+lfgButton:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+lfgButton:SetScript("OnClick", function()
+    if AutoCore.LFG and AutoCore.LFG.Toggle then AutoCore.LFG.Toggle() end
+end)
+lfgButton:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+    GameTooltip:AddLine("Group Finder")
+    local count = AutoCore.LFG and AutoCore.LFG.GetRequestCount and AutoCore.LFG.GetRequestCount() or 0
+    GameTooltip:AddLine(count .. (count == 1 and " active request" or " active requests"), 0.15, 0.75, 0.95)
+    GameTooltip:AddLine("Left-click: open bulletin board", 1, 1, 1)
+    GameTooltip:AddLine("Drag: move button", 1, 1, 1)
+    GameTooltip:Show()
+end)
+lfgButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
 local loadFrame = CreateFrame("Frame")
 AutoCore.MinimapButton = AutoCore.MinimapButton or {}
 function AutoCore.MinimapButton.Refresh()
     local visible = AutoCore.GetSetting("core", "showMinimapButton",
         AutoCoreConfig and AutoCoreConfig.showMinimapButton)
     if visible == false then button:Hide() else button:Show() end
+    local lfgVisible = AutoCore.GetSetting("core", "showLFGMinimapButton",
+        AutoCoreConfig and AutoCoreConfig.showLFGMinimapButton)
+    if lfgVisible == false then lfgButton:Hide() else lfgButton:Show() end
+end
+function AutoCore.MinimapButton.RefreshLFG()
+    local count = AutoCore.LFG and AutoCore.LFG.GetRequestCount and AutoCore.LFG.GetRequestCount() or 0
+    if count > 99 then lfgCount:SetText("99+")
+    elseif count > 0 then lfgCount:SetText(tostring(count))
+    else lfgCount:SetText("") end
 end
 loadFrame:RegisterEvent("ADDON_LOADED")
 loadFrame:SetScript("OnEvent", function(self, _, addonName)
     if addonName ~= "AutoEverything" then return end
     AutoEverythingCharDB = AutoEverythingCharDB or {}
     if AutoEverythingCharDB.minimapAngle == nil then AutoEverythingCharDB.minimapAngle = 220 end
+    if AutoEverythingCharDB.lfgMinimapAngle == nil then AutoEverythingCharDB.lfgMinimapAngle = 260 end
     UpdatePosition()
+    UpdateLFGPosition()
     AutoCore.MinimapButton.Refresh()
+    AutoCore.MinimapButton.RefreshLFG()
     self:UnregisterEvent("ADDON_LOADED")
 end)

@@ -30,5 +30,6 @@ AutoUpgrade.lua
 AutoLoot.lua
 Activity.lua
 Bindings.xml
+LFGWindow.lua
 MinimapButton.lua
 Settings.lua
