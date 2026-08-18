@@ -3337,8 +3337,19 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2)
         end
     elseif event == "AUCTION_ITEM_LIST_UPDATE" and marketQuery and marketQuery.waiting then
         marketQuery.readyAt = GetTime()
-    elseif event == "AUCTION_MULTISELL_FAILURE" and posting then
-        StopPosting("The Auction House rejected a listing.")
+    elseif event == "AUCTION_MULTISELL_FAILURE" and posting and posting.waiting then
+        local entry = posting.current
+        posting.waiting, posting.multisellExpected = false, nil
+        if entry and CurrentListingConsumed() then
+            posting.posted = posting.posted + 1
+            posting.nextAt = GetTime() + 0.1
+        elseif entry then
+            -- Ascension can reject a submit while its prior auction work is
+            -- settling. Keep retrying the same requested listing until its
+            -- bag quantity proves that the server accepted it.
+            table.insert(queue, 1, entry)
+            posting.nextAt = GetTime() + 0.25
+        end
     elseif event == "AUCTION_MULTISELL_START" and posting and posting.waiting then
         posting.multisellExpected = math.max(1, tonumber(arg1) or posting.multisellExpected or 1)
     elseif event == "AUCTION_MULTISELL_UPDATE" and posting and posting.waiting then
