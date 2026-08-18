@@ -1669,7 +1669,8 @@ local function ScanSellInventory()
                 local marketItem = FindMarketItem(EnsureDB(), link, itemType)
                 local suggested, _, confidence = ReasonablePrice(marketItem)
                 entry.suggested, entry.confidence = suggested, confidence
-                entry.numStacks = math.max(1, math.min(math.floor(count / entry.count), entry.numStacks or 1))
+                entry.numStacks = math.max(1, math.min(
+                    MatchingManualStacks(entry.link, entry.count, entry.itemType), entry.numStacks or 1))
                 if entry.selected then manual.entries[key] = entry else manual.entries[key] = nil end
                 inventory[#inventory + 1], present[key] = entry, true
             end
