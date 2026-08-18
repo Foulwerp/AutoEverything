@@ -1531,12 +1531,20 @@ local function ManualKey(bag, slot)
     return tostring(bag) .. ":" .. tostring(slot)
 end
 
-local function MatchingManualStacks(link, stackSize)
+local function ManualItemMatches(link, candidateLink, itemType)
+    if not link or not candidateLink then return false end
+    if IsEquipment(itemType or select(6, GetItemInfo(link))) then
+        return ItemVariantString(link) == ItemVariantString(candidateLink)
+    end
+    return ItemID(link) == ItemID(candidateLink)
+end
+
+local function MatchingManualStacks(link, stackSize, itemType)
     local stacks = 0
     stackSize = math.max(1, math.floor(tonumber(stackSize) or 1))
     for bag = 0, NUM_BAG_SLOTS or 4 do
         for slot = 1, GetContainerNumSlots(bag) do
-            if GetContainerItemLink(bag, slot) == link then
+            if ManualItemMatches(link, GetContainerItemLink(bag, slot), itemType) then
                 local _, count, locked = GetContainerItemInfo(bag, slot)
                 if not locked then stacks = stacks + math.floor((tonumber(count) or 0) / stackSize) end
             end
@@ -1556,7 +1564,7 @@ local function RefreshManualActive()
         return
     end
     entry.count = math.max(1, math.min(tonumber(entry.available) or entry.count or 1, tonumber(entry.count) or 1))
-    entry.numStacks = math.max(1, math.min(MatchingManualStacks(entry.link, entry.count),
+    entry.numStacks = math.max(1, math.min(MatchingManualStacks(entry.link, entry.count, entry.itemType),
         tonumber(entry.numStacks) or 1))
     manual.link, manual.bag, manual.slot, manual.count = entry.link, entry.bag, entry.slot, entry.count
     manual.itemID, manual.itemType, manual.name, manual.suggested = entry.itemID, entry.itemType, entry.name, entry.suggested
@@ -1601,7 +1609,7 @@ local function ApplyManualQuantity()
     entry.count = math.max(1, math.min(entry.available or 1, math.floor(count or 1)))
     -- Choosing a stack size means "post all complete stacks" by default. The
     -- adjacent Stacks field can still be lowered afterward for a partial run.
-    entry.numStacks = math.max(1, MatchingManualStacks(entry.link, entry.count))
+    entry.numStacks = math.max(1, MatchingManualStacks(entry.link, entry.count, entry.itemType))
     RefreshManualActive()
     if RefreshSellGrid then RefreshSellGrid() end
 end
@@ -1609,7 +1617,7 @@ end
 local function ApplyManualStacks()
     local entry = manual.activeKey and manual.entries[manual.activeKey]
     if not entry then if manual.stacksBox then manual.stacksBox:SetText("1") end; return end
-    local maximum = math.max(1, MatchingManualStacks(entry.link, entry.count))
+    local maximum = math.max(1, MatchingManualStacks(entry.link, entry.count, entry.itemType))
     entry.numStacks = math.max(1, math.min(maximum,
         math.floor(tonumber(manual.stacksBox:GetText()) or 1)))
     RefreshManualActive()
@@ -1844,7 +1852,7 @@ local function StartManualPost()
     for _, entry in pairs(manual.entries) do
         local stackSize = math.max(1, math.floor(tonumber(entry.count) or 1))
         local numStacks = math.max(1, math.min(tonumber(entry.numStacks) or 1,
-            MatchingManualStacks(entry.link, stackSize)))
+            MatchingManualStacks(entry.link, stackSize, entry.itemType)))
         local price = math.max(1, math.floor(tonumber(entry.manualPrice) or tonumber(entry.suggested) or 0))
         if numStacks > 0 and price > 0 then
             -- Ascension's native multisell can stall for a long time. Queue
@@ -1858,9 +1866,9 @@ local function StartManualPost()
                     local _, available, locked = GetContainerItemInfo(bag, slot)
                     local fromSlot = math.min(remaining,
                         math.floor((tonumber(available) or 0) / stackSize))
-                    if link == entry.link and not locked and fromSlot > 0 then
+                    if ManualItemMatches(entry.link, link, entry.itemType) and not locked and fromSlot > 0 then
                         for _ = 1, fromSlot do
-                            queue[#queue + 1] = { bag = bag, slot = slot, link = entry.link,
+                            queue[#queue + 1] = { bag = bag, slot = slot, link = link,
                                 itemID = entry.itemID, itemType = entry.itemType, name = entry.name,
                                 count = stackSize, stackSize = stackSize, numStacks = 1, unitPrice = price,
                                 manualPrice = price, duration = tonumber(manual.duration) or Setting("duration", 2) }
@@ -3004,7 +3012,7 @@ local function CreateWindow()
     stack:SetScript("OnClick", function()
         local e = manual.activeKey and manual.entries[manual.activeKey]
         if e then
-            e.numStacks = math.max(1, MatchingManualStacks(e.link, e.count))
+            e.numStacks = math.max(1, MatchingManualStacks(e.link, e.count, e.itemType))
             RefreshManualActive(); RefreshSellGrid()
         end
     end)
