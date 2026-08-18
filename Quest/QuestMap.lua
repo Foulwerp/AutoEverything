@@ -118,8 +118,8 @@ local function Setting(key, fallback)
     return value or fallback
 end
 
-local function WorldPinSize() return Setting("worldPinSize", 24) end
-local function MinimapPinSize() return Setting("minimapPinSize", 16) end
+local function WorldPinSize() return Setting("worldPinSize", 10) end
+local function MinimapPinSize() return Setting("minimapPinSize", 10) end
 local function MinimapPinRadiusPercent() return Setting("minimapPinRadiusPercent", 95) end
 local function MaxWorldPins() return Setting("maxWorldPins", 500) end
 local function MaxMinimapPins() return Setting("maxMinimapPins", 150) end

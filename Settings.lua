@@ -1950,13 +1950,13 @@ pageBuilders.Quest = function(parent)
     local leftX, rightX = 28, 388
     local firstRow, secondRow, thirdRow = -286, -334, -382
 
-    ScalarSlider(parent, "quest", AutoQuestConfig, "worldPinSize", nil, leftX, firstRow, 24, 8, 40,
+    ScalarSlider(parent, "quest", AutoQuestConfig, "worldPinSize", nil, leftX, firstRow, 10, 8, 40,
         "Pixel size of objective icons on the world map.", "World Map Icon Size", 306)
     ScalarSlider(parent, "quest", AutoQuestConfig, "maxWorldPins", nil, leftX, secondRow, 500, 50, 2000,
         "Maximum icons shown on the world map at once. World map icons are never distance-limited - only this cap applies.",
         "World Map Max Icons", 306)
 
-    ScalarSlider(parent, "quest", AutoQuestConfig, "minimapPinSize", nil, rightX, firstRow, 16, 6, 30,
+    ScalarSlider(parent, "quest", AutoQuestConfig, "minimapPinSize", nil, rightX, firstRow, 10, 6, 30,
         "Pixel size of objective icons on the minimap.", "Minimap Icon Size", 306)
     ScalarSlider(parent, "quest", AutoQuestConfig, "minimapPinRadiusPercent", nil, rightX, secondRow, 95, 25, 150,
         "How far out an icon still shows on the minimap, as a percentage of the minimap's own view radius. 100% is right at the edge; lower values only show icons that are closer.",

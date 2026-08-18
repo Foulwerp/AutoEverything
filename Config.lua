@@ -210,7 +210,7 @@ AutoQuestConfig = {
     maxMinimapPins = 150,
     maxWorldPins = 500,
     minimapPinRadiusPercent = 95,
-    minimapPinSize = 16,
+    minimapPinSize = 10,
     mapServiceIconTypes = {
         "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
         "innkeeper", "talentunlearner", "tabardvendor", "stablemaster", "trainer", "vendor",
@@ -220,7 +220,7 @@ AutoQuestConfig = {
     turnInDailyQuests = false,
     turnInPvPQuests = false,
     turnInQuests = false,
-    worldPinSize = 24,
+    worldPinSize = 10,
     highRiskQuests = { "^Bloody Expedition:", "^Ill Gotten Goods:", "^High[- ]Risk", "^War in", "High[- ]Risk%)$" },
 
     -- Group questing uses invisible PARTY/RAID addon messages and stays opt-in.
