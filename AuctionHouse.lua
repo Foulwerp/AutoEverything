@@ -1042,7 +1042,7 @@ end
 
 local function ShouldQueue(link, bag, slot)
     local config = Core.BuildActiveConfig(AutoAuctionConfig, "neverAuction",
-        { "postingMode", "undercutPercent", "bidPercent", "duration", "maxPriceDropPercent" })
+        { "postingMode", "undercutPercent", "duration", "maxPriceDropPercent" })
     if not config or config.enabled == false then return false end
     local location = { bag = bag, slot = slot, link = link }
     local data = Core.GetItemData(link, location)
@@ -1261,8 +1261,10 @@ local function PostValidated(entry, unitPrice)
     local boundStatus = Core.ScanTooltip(link, nil, { bag = entry.bag, slot = entry.slot })
     if not IsAuctionableBinding(boundStatus) then posting.skipped = posting.skipped + 1; return end
     local buyout = unitPrice * stackSize
-    local bidPercent = math.max(1, math.min(100, tonumber(Setting("bidPercent", 95)) or 95))
-    local bid = math.max(1, math.floor(buyout * bidPercent / 100))
+    -- The legacy API always requires a minimum-bid argument. Matching it to
+    -- the buyout prevents a lower bid-only purchase while retaining the
+    -- immediate-buyout listing behavior.
+    local bid = buyout
     local duration = tonumber(entry.duration or Setting("duration", 2)) or 2
     if duration < 1 or duration > 3 then duration = 2 end
     ClearCursor()

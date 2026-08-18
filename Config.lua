@@ -153,7 +153,6 @@ AutoAuctionConfig = {
     enabled = false,
     postingMode = "queue",       -- "queue" previews; "auto" posts after a scan
     undercutPercent = 1,
-    bidPercent = 95,
     duration = 2,                -- Blizzard API: 1=12h, 2=24h, 3=48h
     maxPriceDropPercent = 40,
     shoppingDefaultPercent = 10,
