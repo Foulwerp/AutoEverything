@@ -117,11 +117,6 @@ AutoSellConfig = {
         { title = "Sell Junk", quality = 0 },
     },
     disabledRules = { [1] = true }, -- example rule; explicitly enable it in Sell Rules
-    neverSell = {
-        { title = "Protect Quest Items", itemType = "Quest" },
-        { title = "Protect Hearthstone", itemID = 6948 },
-        { title = "Protect Keys", itemType = "Key" },
-    },
 }
 
 -- AutoRoll: rolls on group loot.
@@ -129,9 +124,6 @@ AutoRollConfig = {
     enabled = false,
     maxQuality = 6,
     commonRules = {},
-    neverRoll = {
-        { title = "Leave Quest Items Manual", itemType = "Quest" },
-    },
     rollPriority = {},
     weights = {},
 }
@@ -160,11 +152,6 @@ AutoAuctionConfig = {
     printMessages = true,
     showTooltipPrices = true,
     commonRules = {},
-    neverAuction = {
-        { title = "Protect Quest Items", itemType = "Quest" },
-        { title = "Protect Keys", itemType = "Key" },
-        { title = "Protect Hearthstone", itemID = 6948 },
-    },
 }
 
 -- AutoUpgrade: scores bag items and equips upgrades.

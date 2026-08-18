@@ -37,7 +37,7 @@ Sell processes matching bag items when a merchant opens and includes separate pr
 - Can protect useful weapon-bench items and enforce a maximum sell-quality ceiling.
 - Can automatically learn eligible vanity items before selling them.
 - Optional automatic repair supports personal funds or the guild bank, subject to normal game permissions.
-- Supports reusable rule import/export and a dedicated Never Sell rule list.
+- Supports reusable rule import/export and per-rule exceptions for protected items.
 
 ### Auction
 
@@ -49,7 +49,7 @@ Auction adds a themed Auction House workspace for collecting prices, shopping, r
 - Uses independent-seller support, scan history, live checks, price-drop limits, configurable undercutting, bid percentage, duration, and spend limits to reduce unsafe purchases or listings.
 - Provides fixed-price and percentage-limited shopping lists, owned-auction views, manual selling tools, and equipment-upgrade searches.
 - Can preview a posting queue for confirmation or, when explicitly selected, post automatically after a successful scan.
-- Supports Auction and Never Auction rules; quest items, keys, and the Hearthstone are protected by default.
+- Supports ordered auction rules with per-rule exceptions; built-in binding, active-quest, key, and upgrade checks still prevent unsafe listings.
 
 ### Roll
 
@@ -58,7 +58,7 @@ Roll handles group-loot prompts according to ordered rules and roll priorities.
 - Rules can choose and prioritize Need, Greed, Disenchant, or Pass behavior for matched items.
 - Can evaluate whether equipment is an upgrade using the same stat weights and equipment restrictions as the Upgrade module.
 - Enforces a maximum-quality safety ceiling.
-- Provides a separate Never Roll rule list, with quest items left for manual decisions by default.
+- Supports per-rule exceptions, with active quest items always left for manual decisions.
 - Leaves unmatched or protected rolls for the player instead of making an unconfigured choice.
 
 ### Quest

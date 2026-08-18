@@ -959,9 +959,6 @@ local function Refresh(rebuild)
     -- immediately reflects what the player clicked instead of leaving the
     -- previous highlight stuck.
     local activeNavPage = currentPage
-    if activeNavPage == "Never Sell" then activeNavPage = "Sell Rules"
-    elseif activeNavPage == "Never Roll" then activeNavPage = "Roll Rules"
-    end
     for name, button in pairs(navButtons) do
         button.selected = name == activeNavPage
         button.hovered = false
@@ -1002,9 +999,9 @@ local modulePages = {
     core = { "Overview", "General", "Convenience", "Groups & Queues" },
     junk = { "Overview", "Junk Rules" },
     loot = { "Overview", "Loot Rules" },
-    sell = { "Overview", "Sell Rules", "Never Sell" },
-    auction = { "Overview", "Auction Rules", "Never Auction" },
-    roll = { "Overview", "Roll Rules", "Never Roll" },
+    sell = { "Overview", "Sell Rules" },
+    auction = { "Overview", "Auction Rules" },
+    roll = { "Overview", "Roll Rules" },
     quest = { "Overview", "Quest" },
     buff = { "Overview", "Buff" },
     upgrade = { "Overview", "Upgrade" },
@@ -1087,9 +1084,9 @@ pageBuilders.Overview = function(parent)
     local modules = {
         { "Loot", "loot", AutoLootConfig, "Loot only items matched by your items-to-loot rules.", "Loot Rules", "rules" },
         { "Junk", "junk", AutoJunkConfig, "Keep bag space clear using your junk rules.", "Junk Rules", "rules" },
-        { "Sell", "sell", AutoSellConfig, "Sell matched items and protect important gear.", "Sell Rules", "rules", "neverSell" },
-        { "Auction", "auction", AutoAuctionConfig, "Price and post auctionable items through guarded rules.", "Auction Rules", "rules", "neverAuction" },
-        { "Roll", "roll", AutoRollConfig, "Handle group loot using your roll priorities.", "Roll Rules", "rules", "neverRoll" },
+        { "Sell", "sell", AutoSellConfig, "Sell matched items and protect important gear.", "Sell Rules", "rules" },
+        { "Auction", "auction", AutoAuctionConfig, "Price and post auctionable items through guarded rules.", "Auction Rules", "rules" },
+        { "Roll", "roll", AutoRollConfig, "Handle group loot using your roll priorities.", "Roll Rules", "rules" },
         { "Quest", "quest", AutoQuestConfig, "Automate quest interactions and objective markers.", "Quest" },
         { "Buff", "buff", AutoBuffConfig, "Track configured buffs and prepare the next secure cast.", "Buff" },
         { "Upgrade", "upgrade", AutoUpgradeConfig, "Score equipment and equip meaningful upgrades.", "Upgrade" },
@@ -3621,12 +3618,12 @@ local function OpenRuleEditor(spec, existing, onSave, exceptionMode, parentEdito
     local usable = source.unusable == nil and "any" or (not source.unusable)
     local isUpgrade = source.isUpgrade == nil and "any" or source.isUpgrade
     ChoiceButton(editor, "Usable by player", 18, y, 210, yesNo, usable, function(value) usable = value end)
-    if not spec.safety and (spec.moduleName == "sell" or spec.moduleName == "roll") then
+    if spec.moduleName == "sell" or spec.moduleName == "roll" then
         ChoiceButton(editor, "Item is an upgrade", 238, y, 210, yesNo, isUpgrade, function(value) isUpgrade = value end)
     end
     y = y - 38
     local priorityValues
-    if not exceptionMode and spec.moduleName == "roll" and not spec.safety then
+    if not exceptionMode and spec.moduleName == "roll" then
         priorityValues = Core.DeepCopy(source.rollPriority or {})
         local rollChoices = { { text = "None", value = "none" }, { text = "Need", value = "need" }, { text = "Greed", value = "greed" }, { text = "Disenchant", value = "disenchant" }, { text = "Pass", value = "pass" } }
         for slot = 1, 4 do
@@ -3637,7 +3634,7 @@ local function OpenRuleEditor(spec, existing, onSave, exceptionMode, parentEdito
     end
 
     local exceptions = Core.DeepCopy(source.exceptions or {})
-    if not exceptionMode and not spec.safety then
+    if not exceptionMode then
         y = SectionHeading(editor, "Exceptions", y)
         -- The row's buttons render at y + 6 (to center them on the label), so
         -- pull y up by 6 first. That lands the buttons' top edge at the same
@@ -3740,33 +3737,16 @@ local function OpenRuleEditor(spec, existing, onSave, exceptionMode, parentEdito
             errorText:SetText("Minimum vendor value cannot be greater than maximum vendor value."); return
         end
         if usable ~= "any" then rule.unusable = not usable end
-        if not spec.safety and isUpgrade ~= "any" then rule.isUpgrade = isUpgrade end
+        if isUpgrade ~= "any" then rule.isUpgrade = isUpgrade end
         if priorityValues then
             local compact = {}; for slot = 1, 4 do if priorityValues[slot] then table.insert(compact, priorityValues[slot]) end end
             if #compact > 0 then rule.rollPriority = compact end
         end
         if #exceptions > 0 then rule.exceptions = exceptions end
-        local valid, issues = Core.ValidateRule(rule, spec.moduleName, spec.safety == true)
+        local valid, issues = Core.ValidateRule(rule, spec.moduleName, false)
         if not valid then errorText:SetText(table.concat(issues, "\n")); return end
         onSave(rule); CloseEditor()
     end)
-end
-
-local function RuleModeButton(parent, text, pageName, selected, x, width)
-    local button = Track(CreateFrame("Button", nil, parent))
-    button:SetSize(width or 130, 25); button:SetPoint("TOPLEFT", x, -48); button:SetText(text)
-    button:SetNormalFontObject("GameFontHighlight"); button:SetHighlightFontObject("GameFontHighlight")
-    UI.Backdrop(button, COLORS.control, 1)
-    button.selected = selected
-    button.Paint = PaintNavStyleButton
-    button:SetScript("OnEnter", function(self) self:Paint(true) end)
-    button:SetScript("OnLeave", function(self) self:Paint(false) end)
-    button:SetScript("OnClick", function()
-        CancelRuleEditors()
-        currentPage = pageName
-        Refresh()
-    end)
-    button:Paint(false)
 end
 
 -- A fixed-height, scrollable container for a list of rows, so a long rule list
@@ -3906,49 +3886,40 @@ end
 local function RulePage(spec)
     return function(parent)
         Label(parent, spec.title, 20, -20, 18)
-        if spec.regularPage and spec.safetyPage then
-            RuleModeButton(parent, spec.regularTab, spec.regularPage, not spec.safety, 20, 221)
-            RuleModeButton(parent, spec.safetyTab, spec.safetyPage, spec.safety == true, 249, 221)
-        end
         local section = Core.GetProfileSection(spec.moduleName, true)
         if spec.moduleName == "sell" then
-            if not spec.safety then
-                ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 20, -86, true,
-                    "Prints a chat message when AutoSell sells matching items.")
-                ScalarCheck(parent, "sell", AutoSellConfig, "learnVanity", "Learn vanity items", 190, -86, true,
-                    "Learns eligible mounts, pets, and vanity items before selling.")
+            ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 390, -25, true,
+                "Prints a chat message when AutoSell sells matching items.")
+            ScalarCheck(parent, "sell", AutoSellConfig, "learnVanity", "Learn vanity items", 530, -25, true,
+                "Learns eligible mounts, pets, and vanity items before selling.")
 
-                local repairDefaults = ResolvedDefault(AutoSellConfig, "autoRepair", AutoSellConfig.autoRepair or {})
-                local repair = Core.DeepCopy(Core.GetSetting("sell", "autoRepair", repairDefaults)) or {}
-                local function RepairToggle(key, label, x, fallback, tooltip)
-                    local control = Check(parent, label, x, -112, repair[key] ~= nil and repair[key] or fallback, function(value)
-                        repair[key] = value
-                        SetSettingWithoutRefresh("sell", "autoRepair", repair)
-                    end)
-                    AddTooltip(control, label, tooltip)
-                    return control
-                end
-                local repairEnabled = RepairToggle("enabled", "Auto repair", 20, true, "Repairs equipped and bagged gear when a merchant opens.")
-                local guildRepair = RepairToggle("useGuildBank", "Use guild funds", 190, true, "Uses guild repair funds when available, then falls back to personal gold.")
-                local repairMessages = RepairToggle("printMessages", "Announce repairs", 360, true, "Prints repair cost and funding source in chat.")
-                ScalarCheck(parent, "sell", AutoSellConfig, "protectWeaponBench", "Protect weapon upgrades", 530, -112, true,
-                    "Keeps individually better hand-slot items from being sold automatically.")
-                BindToggleDependency(repairEnabled, guildRepair, repairMessages)
+            local repairDefaults = ResolvedDefault(AutoSellConfig, "autoRepair", AutoSellConfig.autoRepair or {})
+            local repair = Core.DeepCopy(Core.GetSetting("sell", "autoRepair", repairDefaults)) or {}
+            local function RepairToggle(key, label, x, fallback, tooltip)
+                local control = Check(parent, label, x, -86, repair[key] ~= nil and repair[key] or fallback, function(value)
+                    repair[key] = value
+                    SetSettingWithoutRefresh("sell", "autoRepair", repair)
+                end)
+                AddTooltip(control, label, tooltip)
+                return control
             end
+            local repairEnabled = RepairToggle("enabled", "Auto repair", 20, true, "Repairs equipped and bagged gear when a merchant opens.")
+            local guildRepair = RepairToggle("useGuildBank", "Use guild funds", 190, true, "Uses guild repair funds when available, then falls back to personal gold.")
+            local repairMessages = RepairToggle("printMessages", "Announce repairs", 360, true, "Prints repair cost and funding source in chat.")
+            ScalarCheck(parent, "sell", AutoSellConfig, "protectWeaponBench", "Protect weapon upgrades", 530, -86, true,
+                "Keeps individually better hand-slot items from being sold automatically.")
+            BindToggleDependency(repairEnabled, guildRepair, repairMessages)
             local maximumSellQuality = Core.GetSetting("sell", "maxQuality", ResolvedDefault(AutoSellConfig, "maxQuality", 0))
-            -- Align with the Sell Rules/Never Sell tab group above it.
-            local qualityButton = ChoiceButton(parent, "Max sell quality", 478, -48, 222, QualityChoices(), maximumSellQuality, function(value)
+            local qualityButton = ChoiceButton(parent, "Max sell quality", 20, -48, 330, QualityChoices(), maximumSellQuality, function(value)
                 section.maxQuality = value
                 NotifyWithoutRefresh("sell")
             end)
             AddTooltip(qualityButton, "Sell quality safety ceiling", "AutoSell will never sell an item above this quality, even when a rule matches it.")
         elseif spec.moduleName == "roll" then
-            if not spec.safety then
-                ScalarCheck(parent, "roll", AutoRollConfig, "notifyOnly", "Notify only", 20, -86, false,
-                    "Reports the recommended roll without submitting it automatically.")
-            end
+            ScalarCheck(parent, "roll", AutoRollConfig, "notifyOnly", "Notify only", 390, -25, false,
+                "Reports the recommended roll without submitting it automatically.")
             local maximumRollQuality = Core.GetSetting("roll", "maxQuality", ResolvedDefault(AutoRollConfig, "maxQuality", 6))
-            local qualityButton = ChoiceButton(parent, "Max roll quality", 478, -48, 222, QualityChoices(), maximumRollQuality, function(value)
+            local qualityButton = ChoiceButton(parent, "Max roll quality", 20, -48, 330, QualityChoices(), maximumRollQuality, function(value)
                 section.maxQuality = value
                 NotifyWithoutRefresh("roll")
             end)
@@ -3976,8 +3947,7 @@ local function RulePage(spec)
                 "In Maintain free slots mode, AutoJunk deletes the least valuable matching stacks until this many normal-bag slots are free. 0 disables target-based deletion.",
                 nil, 680)
         elseif spec.moduleName == "auction" then
-            if not spec.safety then
-                ScalarCheck(parent, "auction", AutoAuctionConfig, "showTooltipPrices", "Tooltip prices", 410, -25, true,
+            ScalarCheck(parent, "auction", AutoAuctionConfig, "showTooltipPrices", "Tooltip prices", 410, -25, true,
                     "Shows the scanned per-item and stack market value on item tooltips. Green is well-supported; orange is sparse, stale, or historical.")
                 local postingMode = Core.GetSetting("auction", "postingMode", ResolvedDefault(AutoAuctionConfig, "postingMode", "queue"))
                 local modeChoices = {
@@ -4017,7 +3987,6 @@ local function RulePage(spec)
                     "Skip automatic listings when the live market falls unusually far below trusted recent observations.", nil, 220, "%")
                 ScalarSlider(parent, "auction", AutoAuctionConfig, "shoppingMaxSpend", "Shopping spend cap", 480, -122, 100000, 0, 1000000,
                     "Maximum copper that assisted shopping may spend during one login session. Every purchase still requires a click.", nil, 220, "c")
-            end
         elseif spec.moduleName == "loot" then
             local function LootToggle(key, label, x, y, fallback, title, help)
                 local value = Core.GetSetting("loot", key, ResolvedDefault(AutoLootConfig, key, fallback))
@@ -4045,7 +4014,7 @@ local function RulePage(spec)
         end
         section[spec.profileKey] = type(section[spec.profileKey]) == "table" and section[spec.profileKey] or {}
         local profileRules = section[spec.profileKey]
-        local disabledProfileKey = spec.safety and "disabledProfileNever" or "disabledProfileRules"
+        local disabledProfileKey = "disabledProfileRules"
         section[disabledProfileKey] = type(section[disabledProfileKey]) == "table" and section[disabledProfileKey] or {}
         local disabledProfile = section[disabledProfileKey]
         local selectionKey = spec.moduleName .. ":" .. spec.profileKey
@@ -4086,8 +4055,8 @@ local function RulePage(spec)
         local searchTop
         if spec.moduleName == "junk" then searchTop = -134
         elseif spec.moduleName == "loot" then searchTop = -134
-        elseif spec.moduleName == "auction" and not spec.safety then searchTop = -190
-        elseif (spec.moduleName == "sell" or spec.moduleName == "roll") and not spec.safety then searchTop = spec.moduleName == "sell" and -146 or -116
+        elseif spec.moduleName == "auction" then searchTop = -190
+        elseif spec.moduleName == "sell" or spec.moduleName == "roll" then searchTop = -116
         else searchTop = -84 end
         local listTop = searchTop - 32
         local hostHeight = parent:GetHeight()
@@ -4356,32 +4325,14 @@ pageBuilders["Loot Rules"] = RulePage({
 pageBuilders["Sell Rules"] = RulePage({
     title = "AutoSell Rules",
     moduleName = "sell", profileKey = "rules",
-    regularPage = "Sell Rules", safetyPage = "Never Sell", regularTab = "Sell Rules", safetyTab = "Never Sell Rules",
-})
-pageBuilders["Never Sell"] = RulePage({
-    title = "Never Sell",
-    moduleName = "sell", profileKey = "neverSell", safety = true,
-    regularPage = "Sell Rules", safetyPage = "Never Sell", regularTab = "Sell Rules", safetyTab = "Never Sell Rules",
 })
 pageBuilders["Auction Rules"] = RulePage({
     title = "AutoAuction Rules",
     moduleName = "auction", profileKey = "rules",
-    regularPage = "Auction Rules", safetyPage = "Never Auction", regularTab = "Auction Rules", safetyTab = "Never Auction Rules",
-})
-pageBuilders["Never Auction"] = RulePage({
-    title = "Never Auction",
-    moduleName = "auction", profileKey = "neverAuction", safety = true,
-    regularPage = "Auction Rules", safetyPage = "Never Auction", regularTab = "Auction Rules", safetyTab = "Never Auction Rules",
 })
 pageBuilders["Roll Rules"] = RulePage({
     title = "AutoRoll Rules",
     moduleName = "roll", profileKey = "rules",
-    regularPage = "Roll Rules", safetyPage = "Never Roll", regularTab = "Roll Rules", safetyTab = "Never Roll Rules",
-})
-pageBuilders["Never Roll"] = RulePage({
-    title = "Never Roll",
-    moduleName = "roll", profileKey = "neverRoll", safety = true,
-    regularPage = "Roll Rules", safetyPage = "Never Roll", regularTab = "Roll Rules", safetyTab = "Never Roll Rules",
 })
 
 ----------------------------------------------------------------------
@@ -4517,7 +4468,6 @@ local function CreateMainFrame()
     end)
     UI.Backdrop(pageHost, COLORS.window, 0.99)
 
-    -- Never Sell/Never Roll live as tabs inside their owning module pane.
     -- Profiles is separated at the bottom from the normal configuration pages.
     --
     -- Nav items are plain text, not buttons: the selected page is marked by

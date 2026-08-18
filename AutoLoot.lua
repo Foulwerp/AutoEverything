@@ -88,10 +88,9 @@ end
 local activeConfig = nil
 local function GetActiveConfig()
     if not activeConfig then
-        -- AutoLootConfig has no "never" list; pass a key that is never present
-        -- so Core.BuildActiveConfig's "never" comes back empty. Runtime toggles
-        -- are read directly from AL.db; only the merged rule list is needed here.
-        activeConfig = AutoCore.BuildActiveConfig(config, "neverLoot", { "fasterLooting" })
+        -- Runtime toggles are read directly from AL.db; request fasterLooting
+        -- alongside the merged rule list for callers that inspect the config.
+        activeConfig = AutoCore.BuildActiveConfig(config, { "fasterLooting" })
     end
     return activeConfig
 end

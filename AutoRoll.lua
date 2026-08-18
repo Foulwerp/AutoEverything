@@ -110,7 +110,7 @@ local upgradeConfigCache = nil
 
 local function GetActiveConfig()
     if not activeConfig then
-        activeConfig = AutoCore.BuildActiveConfig(AutoRollConfig, "neverRoll")
+        activeConfig = AutoCore.BuildActiveConfig(AutoRollConfig)
     end
     return activeConfig
 end
@@ -326,19 +326,6 @@ local function DecideRoll(data, debug)
                 why = why,
                 unsupported = unsupported,
             })
-        end
-    end
-
-    if config.never then
-        for _, entry in ipairs(config.never) do
-            local m, why = AutoCore.EntryMatchDebug(entry, data, data.bound, data.usable, playerLevel)
-            AddDetail("neverRoll", entry, m, why)
-            if m then
-                if debug then
-                    return nil, "in neverRoll list: " .. AutoCore.FormatEntry(entry), details
-                end
-                return nil, "neverRoll"
-            end
         end
     end
 
@@ -633,18 +620,10 @@ local function ProcessRoll(rollId, dryRun, debug)
                 print("  |cffffcc00WARNING:|r " .. d.kind .. " " .. d.entryText
                     .. " has unsupported field(s): " .. table.concat(d.unsupported, ", "))
             end
-            if d.kind == "neverRoll" then
-                if d.matched then
-                    print(string.format("  neverRoll %s: MATCH", d.entryText))
-                else
-                    print(string.format("  neverRoll %s: no (%s)", d.entryText, d.why or "?"))
-                end
+            if d.matched then
+                print(string.format("  Rule %s: MATCH", d.entryText))
             else
-                if d.matched then
-                    print(string.format("  Rule %s: MATCH", d.entryText))
-                else
-                    print(string.format("  Rule %s: no (%s)", d.entryText, d.why or "?"))
-                end
+                print(string.format("  Rule %s: no (%s)", d.entryText, d.why or "?"))
             end
         end
     end

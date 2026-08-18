@@ -1376,9 +1376,9 @@ function Core.ValidateAllConfigs(printResults)
 
     ValidateRuleConfig(AutoJunkConfig, "AutoJunkConfig", nil, nil)
     ValidateRuleConfig(AutoLootConfig, "AutoLootConfig", nil, nil)
-    ValidateRuleConfig(AutoSellConfig, "AutoSellConfig", "neverSell", { isUpgrade = true })
-    ValidateRuleConfig(AutoRollConfig, "AutoRollConfig", "neverRoll", { isUpgrade = true, rollPriority = true })
-    ValidateRuleConfig(AutoAuctionConfig, "AutoAuctionConfig", "neverAuction", nil)
+    ValidateRuleConfig(AutoSellConfig, "AutoSellConfig", nil, { isUpgrade = true })
+    ValidateRuleConfig(AutoRollConfig, "AutoRollConfig", nil, { isUpgrade = true, rollPriority = true })
+    ValidateRuleConfig(AutoAuctionConfig, "AutoAuctionConfig", nil, nil)
 
     if type(AutoRollConfig) == "table" and AutoRollConfig.rollPriority ~= nil then
         if type(AutoRollConfig.rollPriority) ~= "table" then
@@ -1687,13 +1687,13 @@ local function BuildDefaultProfile()
         core    = {},
         junk    = SeedSection(AutoJunkConfig, "commonRules", nil),
         loot    = SeedSection(AutoLootConfig, "commonRules", nil),
-        sell    = SeedSection(AutoSellConfig, "commonRules", "neverSell"),
-        roll    = SeedSection(AutoRollConfig, "commonRules", "neverRoll"),
+        sell    = SeedSection(AutoSellConfig, "commonRules", nil),
+        roll    = SeedSection(AutoRollConfig, "commonRules", nil),
         award   = {},
         quest   = {},
         buff    = {},
         upgrade = { weights = {} },
-        auction = SeedSection(AutoAuctionConfig, "commonRules", "neverAuction"),
+        auction = SeedSection(AutoAuctionConfig, "commonRules", nil),
     }
 end
 
@@ -1757,10 +1757,22 @@ function Core.EnsureProfileDB()
     for _, moduleName in ipairs(MODULE_ORDER) do
         if type(profile[moduleName]) ~= "table" then
             if moduleName == "auction" then
-                profile[moduleName] = SeedSection(AutoAuctionConfig, "commonRules", "neverAuction")
+                profile[moduleName] = SeedSection(AutoAuctionConfig, "commonRules", nil)
             else
                 profile[moduleName] = {}
             end
+        end
+    end
+    -- Global exclusion lists were replaced by per-rule exceptions. Remove
+    -- retired saved fields so profile exports contain only editable settings.
+    local retiredNeverKeys = {
+        sell = "neverSell", roll = "neverRoll", auction = "neverAuction",
+    }
+    for moduleName, neverKey in pairs(retiredNeverKeys) do
+        local section = profile[moduleName]
+        if type(section) == "table" then
+            section[neverKey] = nil
+            section.disabledProfileNever = nil
         end
     end
     return db
@@ -2126,7 +2138,7 @@ function Core.GetProfile(config)
     return moduleName and Core.GetProfileSection(moduleName, false) or nil
 end
 
-function Core.BuildActiveConfig(config, neverKey, extraKeys)
+function Core.BuildActiveConfig(config, extraKeys)
     if not config then
         return nil
     end
@@ -2139,12 +2151,6 @@ function Core.BuildActiveConfig(config, neverKey, extraKeys)
     local disabledProfileRules = profile.disabledProfileRules or {}
     for index, rule in ipairs(profile.rules or {}) do
         if not disabledProfileRules[index] then table.insert(rules, rule) end
-    end
-
-    local never = {}
-    local disabledProfileNever = profile.disabledProfileNever or {}
-    for index, rule in ipairs(profile[neverKey] or {}) do
-        if not disabledProfileNever[index] then table.insert(never, rule) end
     end
 
     local weights = profile.weights
@@ -2168,7 +2174,6 @@ function Core.BuildActiveConfig(config, neverKey, extraKeys)
         upgradeThreshold = upgradeThreshold,
         autoRepair = Resolve("autoRepair"),
         rules = rules,
-        never = never,
         charKey = charKey,
     }
     -- Extra module-specific settings (e.g. AutoJunk's "deleteMode") that

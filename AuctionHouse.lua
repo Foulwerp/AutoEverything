@@ -1041,7 +1041,7 @@ local function IsAuctionableBinding(boundStatus)
 end
 
 local function ShouldQueue(link, bag, slot)
-    local config = Core.BuildActiveConfig(AutoAuctionConfig, "neverAuction",
+    local config = Core.BuildActiveConfig(AutoAuctionConfig,
         { "postingMode", "undercutPercent", "duration", "maxPriceDropPercent" })
     if not config or config.enabled == false then return false end
     local location = { bag = bag, slot = slot, link = link }
@@ -1059,9 +1059,6 @@ local function ShouldQueue(link, bag, slot)
     local boundStatus, usable = Core.ScanTooltip(link, nil, location)
     if not IsAuctionableBinding(boundStatus) then return false end
     local playerLevel = UnitLevel("player") or 0
-    for _, rule in ipairs(config.never or {}) do
-        if Core.EntryMatches(rule, data, boundStatus, usable, playerLevel) then return false end
-    end
     for _, rule in ipairs(config.rules or {}) do
         if RuleMatches(rule, data, boundStatus, usable, playerLevel) then return true, data end
     end

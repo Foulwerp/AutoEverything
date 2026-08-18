@@ -42,11 +42,9 @@ end
 local activeConfig = nil
 local function GetActiveConfig()
     if not activeConfig then
-        -- AutoJunkConfig has no neverSell-style list; pass a key that will
-        -- never be present so Core.BuildActiveConfig's "never" comes back
-        -- empty. "deleteMode" is AutoJunk-specific and not part of the
-        -- shared shape, so it's requested as an extra passthrough key.
-        activeConfig = AutoCore.BuildActiveConfig(config, "neverDelete", { "deleteMode" })
+        -- deleteMode is AutoJunk-specific and not part of the shared shape,
+        -- so request it as an extra passthrough key.
+        activeConfig = AutoCore.BuildActiveConfig(config, { "deleteMode" })
         activeConfig.deleteMode = activeConfig.deleteMode or "target"
         activeConfig.maxQuality = activeConfig.maxQuality or 0
     end

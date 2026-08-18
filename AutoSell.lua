@@ -25,7 +25,7 @@ end
 
 ----------------------------------------------------------------------
 -- Per-character config resolution (delegated to Core)
--- AutoSellConfig.lua defines commonRules (everyone) + neverSell
+-- AutoSellConfig defines the common rules used to seed new profiles.
 -- (everyone) + a "characters" table keyed by "Name-Realm" + a
 -- "default" profile for characters not listed. Core.BuildActiveConfig
 -- merges those into one flat table. Cached between actions and invalidated
@@ -36,7 +36,7 @@ local upgradeConfigCache = nil
 
 local function GetActiveConfig()
     if not activeConfig then
-        activeConfig = AutoCore.BuildActiveConfig(AutoSellConfig, "neverSell")
+        activeConfig = AutoCore.BuildActiveConfig(AutoSellConfig)
     end
     return activeConfig
 end
@@ -204,25 +204,6 @@ local function MatchesRules(data, boundStatus, usable, playerLevel, location)
 end
 
 ----------------------------------------------------------------------
--- Helper: Check if an item is in the neverSell list
--- Returns true if it should NEVER be sold
-----------------------------------------------------------------------
-local function InNeverSell(data, boundStatus, usable, playerLevel)
-    local config = GetActiveConfig()
-    if not config or not config.never then
-        return false
-    end
-
-    for _, entry in ipairs(config.never) do
-        if AutoCore.EntryMatches(entry, data, boundStatus, usable, playerLevel) then
-            return true
-        end
-    end
-
-    return false
-end
-
-----------------------------------------------------------------------
 -- Helper: Should this item be sold?
 ----------------------------------------------------------------------
 local function ShouldSell(data, boundStatus, usable, playerLevel, location)
@@ -254,11 +235,6 @@ local function ShouldSell(data, boundStatus, usable, playerLevel, location)
     if config and config.maxQuality ~= nil
         and (data.quality == nil or data.quality > config.maxQuality)
     then
-        return false
-    end
-
-    -- Never sell if in neverSell list
-    if InNeverSell(data, boundStatus, usable, playerLevel) then
         return false
     end
 
@@ -679,15 +655,14 @@ SlashCmdList["AUTOSELL"] = function(msg)
         else
             print("|cff00ff00AutoSell:|r Character key: " .. cfg.charKey)
             print("  Active rules: " .. #cfg.rules .. " (active profile order)")
-            print("  Never-sell entries: " .. #cfg.never)
             print("  Maximum sell quality: " .. tostring(cfg.maxQuality ~= nil and cfg.maxQuality or "none"))
             print("  Protect weapon upgrades: " .. tostring(cfg.protectWeaponBench ~= false))
             print("  Sale messages: " .. tostring(cfg.printMessages ~= false))
         end
     elseif msg == "debug" then
         -- Debug: scan EVERY item in bags and show the FULL decision
-        -- path: every neverSell entry and every rule, with the exact
-        -- reason each one matched or failed.
+        -- path: every rule and exception, with the exact reason each one
+        -- matched or failed.
         local playerLevel = UnitLevel("player")
         local config = GetActiveConfig()
         local itemCount = 0
@@ -756,26 +731,7 @@ SlashCmdList["AUTOSELL"] = function(msg)
                                 end
                             end
 
-                            -- 7. neverSell entries (print EVERY one)
-                            local neverHit = false
-                            if config.never then
-                                for i, entry in ipairs(config.never) do
-                                    local m, why = AutoCore.EntryMatchDebug(entry, data, boundStatus, usable, playerLevel)
-                                    PrintUnsupported("neverSell " .. i, entry)
-                                    local status
-                                    if m then
-                                        status = "MATCH"
-                                        neverHit = true
-                                    else
-                                        status = "no (" .. (why or "?") .. ")"
-                                    end
-                                    print(string.format("  neverSell %d %s: %s", i, AutoCore.FormatEntry(entry), status))
-                                end
-                            end
-                            if neverHit then
-                                verdict = "in neverSell list - protected"
-                            else
-                                -- 8. Rules (print EVERY one)
+                            -- 7. Rules (print EVERY one)
                                 local matchedRule = nil
                                 if config.rules then
                                     for i, rule in ipairs(config.rules) do
@@ -820,7 +776,6 @@ SlashCmdList["AUTOSELL"] = function(msg)
                                 else
                                     verdict = "kept - no rule matched (see rule lines above)"
                                 end
-                            end
                         end
 
                         if shouldSell then
