@@ -67,7 +67,7 @@ Quest automates selected quest interactions and adds navigation information from
 
 - Can automatically accept and turn in normal, trivial, daily, and PvP quests using separate controls.
 - Can select quest rewards when enabled and can be paused by holding Shift.
-- Adds objective, starter, turn-in, and service-NPC markers to nameplates, the minimap, and world map, including patrol paths where data is available.
+- Adds active-objective and service-NPC markers to nameplates, the minimap, and world map, including patrol paths where data is available. Quest starters and turn-ins remain handled by the game.
 - Includes configurable map-pin sizes, limits, radius, icon categories, and optional ElvUI-style quest markers.
 - Offers a reviewed Quick Abandon window with filters and a whitelist; nothing is abandoned until confirmed.
 - Optional group synchronization shares quest/objective progress through hidden party or raid addon messages and can show member progress in tooltips and map pins.
