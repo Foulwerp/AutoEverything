@@ -10,6 +10,7 @@ local Core = AutoCore
 
 local PAGE_SIZE = 50
 local QUERY_TIMEOUT = 10
+local POST_TIMEOUT = 3
 local MAX_RETRIES = 5
 local SOFT_RETRY_DELAY = 0.1
 local HARD_RETRY_AFTER = 2
@@ -3376,7 +3377,7 @@ ProcessAuctionWork = function()
             FinishMarketQuery("Live Auction House query timed out.")
         else SendMarketQuery() end
     elseif posting then
-        if posting.waiting and now - posting.sentAt > QUERY_TIMEOUT then
+        if posting.waiting and now - posting.sentAt > POST_TIMEOUT then
             local entry = posting.current
             local locked
             if entry then
