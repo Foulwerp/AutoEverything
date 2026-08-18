@@ -14,6 +14,7 @@ local decodedServices
 local decodedServiceFactions
 local observedNames = {}
 local npcIDsByName
+local npcNamesByID
 
 local serviceOrder = {
     "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
@@ -74,12 +75,9 @@ function Store.RememberName(npcID, name)
     return true
 end
 
-function Store.GetName(npcID)
-    return observedNames[tonumber(npcID)]
-end
-
 local function BuildNPCNameIndex()
     npcIDsByName = {}
+    npcNamesByID = {}
     local seen = {}
     local function Add(npcID, name)
         npcID = tonumber(npcID)
@@ -95,8 +93,15 @@ local function BuildNPCNameIndex()
             seen[key][npcID] = true
             bucket[#bucket + 1] = npcID
         end
+        if not npcNamesByID[npcID] then npcNamesByID[npcID] = name end
     end
 
+    for _, packed in ipairs(AutoQuest.NPCSpawnNamePacked or {}) do
+        for row in string.gmatch(packed, "[^\n]+") do
+            local npcText, name = string.match(row, "^(%d+)=(.*)$")
+            Add(npcText, name)
+        end
+    end
     for _, entry in pairs(AscensionQuestLocationDB or {}) do
         for _, record in ipairs(entry.records or {}) do
             if tonumber(record.type) ~= 2 and tonumber(record.type) ~= -1 then
@@ -105,6 +110,34 @@ local function BuildNPCNameIndex()
         end
     end
     for npcID, name in pairs(AutoQuest.ServiceNPCNames or {}) do Add(npcID, name) end
+end
+
+function Store.GetName(npcID)
+    npcID = tonumber(npcID)
+    if not npcID then return nil end
+    if observedNames[npcID] then return observedNames[npcID] end
+    if not npcNamesByID then BuildNPCNameIndex() end
+    return npcNamesByID[npcID]
+end
+
+-- Unified NPC spawn record used by map pins, diagnostics, and manual lookup.
+-- Locations are decoded lazily and share the canonical packed coordinate data.
+function Store.GetNPC(npcID)
+    npcID = tonumber(npcID)
+    if not npcID then return nil end
+    local locations = Store.Get(npcID)
+    if type(locations) ~= "table" then return nil end
+    return {
+        id = npcID,
+        name = Store.GetName(npcID) or ("NPC " .. npcID),
+        locations = locations,
+    }
+end
+
+function Store.FindNPCsByName(name)
+    if type(name) ~= "string" or name == "" then return nil end
+    if not npcIDsByName then BuildNPCNameIndex() end
+    return npcIDsByName[string.lower(name)]
 end
 
 -- Recover monster IDs for quests missing from the public quest catalog by
@@ -236,4 +269,5 @@ function Store.ClearCache()
     decodedServiceFactions = nil
     observedNames = {}
     npcIDsByName = nil
+    npcNamesByID = nil
 end

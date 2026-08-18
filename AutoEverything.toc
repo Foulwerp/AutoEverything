@@ -6,6 +6,7 @@
 ## SavedVariablesPerCharacter: AutoEverythingCharDB
 
 Quest\QuestDatabase.lua
+Quest\NPCSpawnNames.lua
 Quest\ServiceNPCFactions.lua
 Quest\NPCSpawnStore.lua
 Config.lua
