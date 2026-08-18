@@ -1238,7 +1238,12 @@ local function PostValidated(entry, unitPrice)
     local stackSize = math.max(1, math.floor(tonumber(entry.stackSize) or tonumber(entry.count) or 1))
     local numStacks = math.max(1, math.floor(tonumber(entry.numStacks) or 1))
     local required = stackSize * numStacks
-    if link ~= entry.link or count < required or locked then
+    if link == entry.link and count >= required and locked then
+        table.insert(queue, 1, entry)
+        posting.nextAt = GetTime() + 0.5
+        return
+    end
+    if link ~= entry.link or count < required then
         posting.skipped = posting.skipped + 1
         return
     end
@@ -1271,10 +1276,21 @@ local function PostValidated(entry, unitPrice)
     -- waiting state first so those events cannot be missed and strand the
     -- queue until its timeout.
     posting.multisellExpected = numStacks > 1 and numStacks or nil
+    posting.countBefore = count
     posting.waiting, posting.sentAt, posting.current = true, GetTime(), entry
     StartAuction(bid, buyout, duration, stackSize, numStacks)
     if not posting then return end
     RefreshWindow()
+end
+
+local function CurrentListingConsumed()
+    if not posting or not posting.current then return false end
+    local entry = posting.current
+    local link = GetContainerItemLink(entry.bag, entry.slot)
+    local _, count = GetContainerItemInfo(entry.bag, entry.slot)
+    count = tonumber(count) or 0
+    return link ~= entry.link
+        or count <= (tonumber(posting.countBefore) or 0) - (tonumber(entry.stackSize) or 1)
 end
 
 local function PostNext()
@@ -1514,6 +1530,20 @@ local function ManualKey(bag, slot)
     return tostring(bag) .. ":" .. tostring(slot)
 end
 
+local function MatchingManualStacks(link, stackSize)
+    local stacks = 0
+    stackSize = math.max(1, math.floor(tonumber(stackSize) or 1))
+    for bag = 0, NUM_BAG_SLOTS or 4 do
+        for slot = 1, GetContainerNumSlots(bag) do
+            if GetContainerItemLink(bag, slot) == link then
+                local _, count, locked = GetContainerItemInfo(bag, slot)
+                if not locked then stacks = stacks + math.floor((tonumber(count) or 0) / stackSize) end
+            end
+        end
+    end
+    return stacks
+end
+
 local function RefreshManualActive()
     local entry = manual.activeKey and manual.entries[manual.activeKey]
     if not entry then
@@ -1525,7 +1555,7 @@ local function RefreshManualActive()
         return
     end
     entry.count = math.max(1, math.min(tonumber(entry.available) or entry.count or 1, tonumber(entry.count) or 1))
-    entry.numStacks = math.max(1, math.min(math.floor((entry.available or 1) / entry.count),
+    entry.numStacks = math.max(1, math.min(MatchingManualStacks(entry.link, entry.count),
         tonumber(entry.numStacks) or 1))
     manual.link, manual.bag, manual.slot, manual.count = entry.link, entry.bag, entry.slot, entry.count
     manual.itemID, manual.itemType, manual.name, manual.suggested = entry.itemID, entry.itemType, entry.name, entry.suggested
@@ -1570,7 +1600,7 @@ local function ApplyManualQuantity()
     entry.count = math.max(1, math.min(entry.available or 1, math.floor(count or 1)))
     -- Choosing a stack size means "post all complete stacks" by default. The
     -- adjacent Stacks field can still be lowered afterward for a partial run.
-    entry.numStacks = math.max(1, math.floor((entry.available or 1) / entry.count))
+    entry.numStacks = math.max(1, MatchingManualStacks(entry.link, entry.count))
     RefreshManualActive()
     if RefreshSellGrid then RefreshSellGrid() end
 end
@@ -1578,7 +1608,7 @@ end
 local function ApplyManualStacks()
     local entry = manual.activeKey and manual.entries[manual.activeKey]
     if not entry then if manual.stacksBox then manual.stacksBox:SetText("1") end; return end
-    local maximum = math.max(1, math.floor((entry.available or 1) / math.max(1, entry.count)))
+    local maximum = math.max(1, MatchingManualStacks(entry.link, entry.count))
     entry.numStacks = math.max(1, math.min(maximum,
         math.floor(tonumber(manual.stacksBox:GetText()) or 1)))
     RefreshManualActive()
@@ -1811,22 +1841,32 @@ local function StartManualPost()
     queue = {}
     local livePrices = {}
     for _, entry in pairs(manual.entries) do
-        local link = GetContainerItemLink(entry.bag, entry.slot)
-        local _, available, locked = GetContainerItemInfo(entry.bag, entry.slot)
-        local stackSize = math.min(entry.count, tonumber(available) or 0)
+        local stackSize = math.max(1, math.floor(tonumber(entry.count) or 1))
         local numStacks = math.max(1, math.min(tonumber(entry.numStacks) or 1,
-            math.floor((tonumber(available) or 0) / math.max(1, stackSize))))
+            MatchingManualStacks(entry.link, stackSize)))
         local price = math.max(1, math.floor(tonumber(entry.manualPrice) or tonumber(entry.suggested) or 0))
-        if link == entry.link and not locked and stackSize > 0 and price > 0 then
+        if numStacks > 0 and price > 0 then
             -- Ascension's native multisell can stall for a long time. Queue
             -- each auction separately and advance on its owned-list update;
             -- the first live check is reused for the remaining identical
             -- stacks during this posting run.
-            for _ = 1, numStacks do
-                queue[#queue + 1] = { bag = entry.bag, slot = entry.slot, link = entry.link,
-                    itemID = entry.itemID, itemType = entry.itemType, name = entry.name,
-                    count = stackSize, stackSize = stackSize, numStacks = 1, unitPrice = price,
-                    manualPrice = price, duration = tonumber(manual.duration) or Setting("duration", 2) }
+            local remaining = numStacks
+            for bag = 0, NUM_BAG_SLOTS or 4 do
+                for slot = 1, GetContainerNumSlots(bag) do
+                    local link = GetContainerItemLink(bag, slot)
+                    local _, available, locked = GetContainerItemInfo(bag, slot)
+                    local fromSlot = math.min(remaining,
+                        math.floor((tonumber(available) or 0) / stackSize))
+                    if link == entry.link and not locked and fromSlot > 0 then
+                        for _ = 1, fromSlot do
+                            queue[#queue + 1] = { bag = bag, slot = slot, link = entry.link,
+                                itemID = entry.itemID, itemType = entry.itemType, name = entry.name,
+                                count = stackSize, stackSize = stackSize, numStacks = 1, unitPrice = price,
+                                manualPrice = price, duration = tonumber(manual.duration) or Setting("duration", 2) }
+                        end
+                        remaining = remaining - fromSlot
+                    end
+                end
             end
             local liveKey = MarketItemKey(entry.link, entry.itemType)
             if liveKey and manual.lastLiveCheck and GetTime() - manual.lastLiveCheck <= 60 then
@@ -2963,7 +3003,7 @@ local function CreateWindow()
     stack:SetScript("OnClick", function()
         local e = manual.activeKey and manual.entries[manual.activeKey]
         if e then
-            e.numStacks = math.max(1, math.floor((e.available or 1) / math.max(1, e.count)))
+            e.numStacks = math.max(1, MatchingManualStacks(e.link, e.count))
             RefreshManualActive(); RefreshSellGrid()
         end
     end)
@@ -3310,7 +3350,7 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2)
             posting.nextAt = GetTime() + 0.1
         end
     elseif event == "AUCTION_OWNED_LIST_UPDATE" and posting and posting.waiting
-        and not posting.multisellExpected then
+        and not posting.multisellExpected and CurrentListingConsumed() then
         posting.waiting = false
         posting.posted = posting.posted + 1
         posting.nextAt = GetTime() + 0.1
@@ -3337,7 +3377,26 @@ ProcessAuctionWork = function()
         else SendMarketQuery() end
     elseif posting then
         if posting.waiting and now - posting.sentAt > QUERY_TIMEOUT then
-            StopPosting("Timed out waiting for the Auction House to accept " .. posting.current.name .. ".")
+            local entry = posting.current
+            local locked
+            if entry then
+                local texture, count
+                texture, count, locked = GetContainerItemInfo(entry.bag, entry.slot)
+            end
+            local consumed = CurrentListingConsumed()
+            posting.waiting, posting.multisellExpected = false, nil
+            if consumed then
+                posting.posted = posting.posted + 1
+                posting.nextAt = now + 0.2
+            else
+                -- The server can omit the owner-list acknowledgement even
+                -- after accepting earlier one-item listings. Keep the current
+                -- listing in the queue and retry it until inventory confirms
+                -- that every requested stack has been consumed.
+                table.insert(queue, 1, entry)
+                posting.nextAt = now + (locked and 1 or 0.5)
+                Warn("Auction House response timed out; retrying " .. entry.name .. ".")
+            end
         elseif not posting.waiting and now >= posting.nextAt then PostNext() end
     elseif upgradeAnalysis then
         ProcessUpgradeAnalysis()
