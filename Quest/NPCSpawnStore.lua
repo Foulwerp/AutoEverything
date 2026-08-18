@@ -13,6 +13,7 @@ local decodedQuestItems = {}
 local decodedServices
 local decodedServiceFactions
 local observedNames = {}
+local npcIDsByName
 
 local serviceOrder = {
     "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
@@ -75,6 +76,54 @@ end
 
 function Store.GetName(npcID)
     return observedNames[tonumber(npcID)]
+end
+
+local function BuildNPCNameIndex()
+    npcIDsByName = {}
+    local seen = {}
+    local function Add(npcID, name)
+        npcID = tonumber(npcID)
+        if not npcID or type(name) ~= "string" or name == "" then return end
+        local key = string.lower(name)
+        local bucket = npcIDsByName[key]
+        if not bucket then
+            bucket = {}
+            npcIDsByName[key] = bucket
+            seen[key] = {}
+        end
+        if not seen[key][npcID] then
+            seen[key][npcID] = true
+            bucket[#bucket + 1] = npcID
+        end
+    end
+
+    for _, entry in pairs(AscensionQuestLocationDB or {}) do
+        for _, record in ipairs(entry.records or {}) do
+            if tonumber(record.type) ~= 2 and tonumber(record.type) ~= -1 then
+                Add(record.id, record.name)
+            end
+        end
+    end
+    for npcID, name in pairs(AutoQuest.ServiceNPCNames or {}) do Add(npcID, name) end
+end
+
+-- Recover monster IDs for quests missing from the public quest catalog by
+-- matching their live objective label against NPC names already present in
+-- the generated quest data. Prefer the longest name so a specific creature
+-- wins over a shorter name contained inside it.
+function Store.FindNPCsByObjectiveText(text)
+    if type(text) ~= "string" or text == "" then return nil end
+    if not npcIDsByName then BuildNPCNameIndex() end
+    local label = string.lower(text)
+    local best, bestLength
+    for name, npcIDs in pairs(npcIDsByName) do
+        if string.find(label, name, 1, true)
+            and (not bestLength or string.len(name) > bestLength)
+        then
+            best, bestLength = npcIDs, string.len(name)
+        end
+    end
+    return best
 end
 
 -- NPC pages expose an "Objective of" quest list. The generator stores the
@@ -186,4 +235,5 @@ function Store.ClearCache()
     decodedServices = nil
     decodedServiceFactions = nil
     observedNames = {}
+    npcIDsByName = nil
 end

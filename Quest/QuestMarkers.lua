@@ -193,6 +193,22 @@ local function IndexQuestTargets(title, questID, objectives, memberName, memberC
         end
     end
 
+    if SpawnStore then
+        for _, objective in ipairs(objectives or {}) do
+            local objectiveType = string.lower(objective.kind or "")
+            if not objective.done
+                and (objectiveType == "monster" or objectiveType == "player")
+            then
+                local done, remaining = ParseProgress(objective)
+                local kind = Resolver.RecordKind({}, objective, "marker") or "kill"
+                for _, npcID in ipairs(SpawnStore.FindNPCsByObjectiveText(objective.text) or {}) do
+                    AddMatch(activeByNPC, npcID, kind, title, nil,
+                        remaining, memberName, objective, memberClass)
+                end
+            end
+        end
+    end
+
     if not SpawnStore then return end
     local relationshipQuestIDs, seenQuestIDs = {}, {}
     local function AddRelationshipQuestID(value)

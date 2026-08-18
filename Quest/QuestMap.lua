@@ -722,6 +722,20 @@ function QuestMap.RebuildIndex()
                 AddQuestObjectiveNPCs(data.questID, title, objectives, data.npcIDs)
                 AddQuestItemNPCs(data.questID, title, objectives, data.itemSources)
             end
+            -- Public quest catalogs can omit otherwise valid Ascension quests.
+            -- Resolve their monster labels through names already present in
+            -- the generated NPC data so those quests still receive pins.
+            for _, objective in ipairs(objectives) do
+                local objectiveType = string.lower(objective.kind or "")
+                if not objective.done
+                    and (objectiveType == "monster" or objectiveType == "player")
+                then
+                    local npcIDs = SpawnStore.FindNPCsByObjectiveText(objective.text)
+                    if npcIDs then
+                        AddQuestObjectiveNPCs(questID, title, { objective }, npcIDs)
+                    end
+                end
+            end
         end
     end
 
