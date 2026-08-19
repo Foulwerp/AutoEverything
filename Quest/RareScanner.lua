@@ -253,11 +253,16 @@ function Scanner.ObserveUnit(unit, source)
     if UnitPlayerControlled and UnitPlayerControlled(unit) then return false end
     if UnitIsVisible and not UnitIsVisible(unit) then return false end
     local classification = UnitClassification and UnitClassification(unit)
-    local kind = NotableKindForClassification(classification)
-    if not kind then return false end
     local guid = UnitGUID and UnitGUID(unit)
     local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
     if not npcID then return false end
+    local kind = NotableKindForClassification(classification)
+    local metadata = SpawnStore.GetMetadata and SpawnStore.GetMetadata(npcID)
+    local metadataKind = NotableKindForMetadata(metadata)
+    -- Ascension can report dungeon bosses as rareelite unit tokens. Shipped
+    -- boss metadata is more specific and must prevent a rare-sighting alert.
+    if metadataKind == "boss" then kind = "boss" end
+    if not kind then return false end
     SpawnStore.RememberName(npcID, UnitName and UnitName(unit))
     SpawnStore.RememberClassification(npcID, classification)
     return Scanner.ObserveNPC(npcID, UnitName and UnitName(unit), guid,
