@@ -1997,7 +1997,7 @@ pageBuilders.Quest = function(parent)
     -- Keep the controls in the owning Quest page; AutoBuff has its own module.
     Label(parent, "Group Questing", 28, -458, 13)
     local syncToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "groupQuestSync", "Sync party progress", 20, -480, false,
-        "Shares quest and objective changes through hidden addon messages. Progress tooltips only read the local cache and never send traffic.")
+        "Shares quest and objective changes through hidden addon messages, including compatible Questie-X party progress. Progress tooltips only read the local cache and never send traffic.")
     local raidToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "groupQuestSyncRaid", "Include raid groups", 246, -480, false,
         "Also synchronizes quest progress in raids. Off by default to keep large-group traffic deliberate.")
     local tooltipToggle = ScalarCheck(parent, "quest", AutoQuestConfig, "showGroupQuestTooltips", "Progress in tooltips", 472, -480, true,

@@ -27,6 +27,7 @@ AuctionHouse.lua
 Quest\AutoQuest.lua
 Quest\QuestTargetResolver.lua
 Quest\GroupSync.lua
+Quest\QuestieSyncCompat.lua
 Quest\QuestMarkers.lua
 Quest\QuestMap.lua
 AutoUpgrade.lua

@@ -51,6 +51,7 @@ local pendingSnapshotTargets = {}
 local requestPending = false
 local nextAuditAt = 0
 local snapshotSerial = 0
+local compatBatchSerial = 0
 local profileSyncActive = false
 local rewardQuestTitle = nil
 local pendingTurnIns = {}
@@ -313,7 +314,9 @@ local function ClearOutgoing()
     outgoing.activeBatch = nil
 end
 
-local function QueueMessage(message, channel, target, priority, coalesceKey, batch, batchEnd)
+local function QueueMessage(
+    message, channel, target, priority, coalesceKey, batch, batchEnd, messagePrefix
+)
     if not SendAddonMessage or type(message) ~= "string"
         or string.len(message) > MAX_PAYLOAD_BYTES or QueueCount() >= MAX_QUEUE
     then
@@ -322,7 +325,9 @@ local function QueueMessage(message, channel, target, priority, coalesceKey, bat
     local queueName = priority == "bulk" and "bulk" or "urgent"
     local queue = outgoing[queueName]
     if coalesceKey and queueName == "urgent" then
-        local key = table.concat({ channel or "", target or "", coalesceKey }, SEP)
+        local key = table.concat({
+            messagePrefix or PREFIX, channel or "", target or "", coalesceKey,
+        }, SEP)
         local existing = outgoingKeys[key]
         if existing then
             for index = #queue, 1, -1 do
@@ -335,14 +340,17 @@ local function QueueMessage(message, channel, target, priority, coalesceKey, bat
             queue[#queue + 1] = existing
             return true
         end
-        local entry = { message=message, channel=channel, target=target, key=key }
+        local entry = {
+            message=message, channel=channel, target=target, key=key,
+            prefix=messagePrefix,
+        }
         queue[#queue + 1] = entry
         outgoingKeys[key] = entry
         return true
     end
     queue[#queue + 1] = {
         message=message, channel=channel, target=target,
-        batch=batch, batchEnd=batchEnd,
+        batch=batch, batchEnd=batchEnd, prefix=messagePrefix,
     }
     return true
 end
@@ -466,6 +474,9 @@ local function SendRequest()
         }, SEP), channel, nil, "urgent", "R") then
             lastRequestAt = GetTime()
             requestPending = false
+            if AQ.QuestieSyncCompat and AQ.QuestieSyncCompat.QueueRequest then
+                AQ.QuestieSyncCompat.QueueRequest(channel)
+            end
             return true
         end
         requestPending = true
@@ -618,7 +629,12 @@ local function ProcessQuestUpdate()
     AnnounceTransitions(previous, current)
     -- The first scan is a local baseline, not a broadcast snapshot. Existing
     -- members answer our targeted request; later quest-log changes are deltas.
-    if baselineReady then QueueDelta(previous, current) end
+    if baselineReady then
+        QueueDelta(previous, current)
+        if AQ.QuestieSyncCompat and AQ.QuestieSyncCompat.QueueDelta then
+            AQ.QuestieSyncCompat.QueueDelta(previous, current)
+        end
+    end
     localQuests = current
     itemQuestKeys = itemMap
     baselineReady = true
@@ -680,6 +696,7 @@ local function ReceiveMessage(prefix, message, channel, sender)
         member.completeSnapshot = false
         member.lastSequence = 0
     end
+    member.transport = "AEQ2"
     member.updated = now
 
     if kind == "R" then
@@ -1179,6 +1196,10 @@ driver:SetScript("OnEvent", function(self, event, ...)
     local arg1, arg2, arg3, arg4 = ...
     if event == "ADDON_LOADED" then
         if arg1 ~= "AutoEverything" then return end
+        if RegisterAddonMessagePrefix then
+            pcall(RegisterAddonMessagePrefix, PREFIX)
+            pcall(RegisterAddonMessagePrefix, "questie")
+        end
         HookTooltip(GameTooltip)
         HookTooltip(ItemRefTooltip)
         HookQuestReward()
@@ -1211,7 +1232,13 @@ driver:SetScript("OnEvent", function(self, event, ...)
         CleanupRoster()
         ScheduleUpdate(0.5)
     elseif event == "CHAT_MSG_ADDON" then
-        ReceiveMessage(arg1, arg2, arg3, arg4)
+        if arg1 == "questie" and AQ.QuestieSyncCompat
+            and AQ.QuestieSyncCompat.Receive
+        then
+            AQ.QuestieSyncCompat.Receive(arg2, arg3, arg4)
+        else
+            ReceiveMessage(arg1, arg2, arg3, arg4)
+        end
     end
 end)
 
@@ -1236,6 +1263,9 @@ driver:SetScript("OnUpdate", function(self, elapsed)
     end
 
     if next(pendingSnapshotTargets) then FlushPendingSnapshots() end
+    if AQ.QuestieSyncCompat and AQ.QuestieSyncCompat.OnUpdate then
+        AQ.QuestieSyncCompat.OnUpdate(now)
+    end
     AuditSync(now)
 
     sendElapsed = sendElapsed + elapsed
@@ -1244,7 +1274,8 @@ driver:SetScript("OnUpdate", function(self, elapsed)
     local entry = PopOutgoing()
     if not entry then return end
     if entry.channel == "WHISPER" or entry.channel == GroupChannel() then
-        pcall(SendAddonMessage, PREFIX, entry.message, entry.channel, entry.target)
+        pcall(SendAddonMessage, entry.prefix or PREFIX,
+            entry.message, entry.channel, entry.target)
     end
 end)
 
@@ -1273,6 +1304,119 @@ end
 
 function Sync.GetMemberQuestData()
     return memberQuests
+end
+
+function Sync.GetLocalQuestData()
+    return localQuests
+end
+
+function Sync.GetGroupChannel()
+    return GroupChannel()
+end
+
+function Sync.CanAcceptExternal(sender, channel)
+    return SyncActive() and IsRosterMember(sender)
+        and ShortName(sender) ~= ShortName(UnitFullName("player"))
+        and (channel == GroupChannel() or channel == "WHISPER")
+end
+
+function Sync.QueueCompatMessage(prefix, message, channel, target, priority, coalesceKey)
+    if prefix ~= "questie" or not SyncActive()
+        or (channel ~= GroupChannel() and channel ~= "WHISPER")
+    then
+        return false
+    end
+    return QueueMessage(message, channel, target, priority or "bulk",
+        coalesceKey, nil, nil, prefix)
+end
+
+function Sync.QueueCompatBatch(prefix, messages, channel, target)
+    if prefix ~= "questie" or not SyncActive() or type(messages) ~= "table"
+        or (channel ~= GroupChannel() and channel ~= "WHISPER")
+        or #messages == 0 or #messages > MAX_QUEUE - QueueCount()
+    then
+        return false
+    end
+    for _, message in ipairs(messages) do
+        if type(message) ~= "string" or string.len(message) > MAX_PAYLOAD_BYTES then
+            return false
+        end
+    end
+    compatBatchSerial = compatBatchSerial + 1
+    local batch = "compat:" .. compatBatchSerial
+    for index, message in ipairs(messages) do
+        if not QueueMessage(message, channel, target, "bulk", nil,
+            batch, index == #messages, prefix)
+        then
+            return false
+        end
+    end
+    return true
+end
+
+local function ExternalMember(sender)
+    if not sender or not IsRosterMember(sender) or not SyncActive() then return nil end
+    if ShortName(sender) == ShortName(UnitFullName("player")) then return nil end
+    local senderKey = RosterKey(sender)
+    if not senderKey then return nil end
+    local member = memberQuests[senderKey]
+    if member and member.transport == "AEQ2" then return nil end
+    if not member then
+        member = { name=sender, quests={}, completeSnapshot=false, updated=GetTime() }
+        memberQuests[senderKey] = member
+    end
+    member.name = sender
+    member.updated = GetTime()
+    member.transport = "questie"
+    member.capabilities = "questie-v5"
+    member.stale = false
+    return member
+end
+
+local function RefreshExternalData()
+    if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
+    if AQ.Map and AQ.Map.RequestRefresh then AQ.Map.RequestRefresh() end
+end
+
+function Sync.ApplyExternalSnapshot(sender, quests, memberClass)
+    local member = ExternalMember(sender)
+    if not member or type(quests) ~= "table" then return false end
+    local questCount, objectiveCount = 0, 0
+    for _, quest in pairs(quests) do
+        questCount = questCount + 1
+        objectiveCount = objectiveCount + #(quest.objectives or {})
+        if questCount > MAX_REMOTE_QUESTS or objectiveCount > MAX_REMOTE_OBJECTIVES then
+            return false
+        end
+    end
+    member.quests = quests
+    member.class = CleanField(memberClass or member.class or "", 16)
+    member.completeSnapshot = true
+    member.validSnapshotAt = GetTime()
+    RefreshExternalData()
+    return true
+end
+
+function Sync.ApplyExternalQuest(sender, quest)
+    local member = ExternalMember(sender)
+    if not member or type(quest) ~= "table" or type(quest.key) ~= "string" then
+        return false
+    end
+    member.quests[quest.key] = quest
+    -- A delta is complete only when it extends a previously complete snapshot.
+    if member.completeSnapshot then RefreshExternalData() end
+    return true
+end
+
+function Sync.RemoveExternalQuest(sender, questID)
+    questID = tonumber(questID)
+    if not questID or questID < 1 or questID ~= math.floor(questID) then return false end
+    local member = ExternalMember(sender)
+    local key = QuestState.QuestKey(questID, "")
+    if not member or not key then return false end
+    member.quests[key] = nil
+    if member.completeSnapshot then RefreshExternalData() end
+    return true
 end
 
 function Sync.Debug()
