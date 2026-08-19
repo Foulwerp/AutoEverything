@@ -183,7 +183,10 @@ end
 local function MergeMatch(index, key, source)
     local target = index[key]
     if not target then
-        target = { kill=false, loot=false, quests={}, items={}, members={}, memberSteps={} }
+        target = {
+            kill=false, loot=false, quests={}, items={}, localProgress={},
+            members={}, memberSteps={},
+        }
         index[key] = target
     end
     target.kill = target.kill or source.kill
@@ -193,6 +196,14 @@ local function MergeMatch(index, key, source)
     target.lootRemaining = math.max(target.lootRemaining or 0, source.lootRemaining or 0)
     for title in pairs(source.quests or {}) do target.quests[title] = true end
     for item in pairs(source.items or {}) do target.items[item] = true end
+    for _, kind in ipairs({ "kill", "loot", "talk" }) do
+        local value = source.localProgress and source.localProgress[kind]
+        if value == true then target.localProgress[kind] = target.localProgress[kind] or true
+        elseif value then
+            target.localProgress[kind] = math.max(
+                tonumber(target.localProgress[kind]) or 0, value)
+        end
+    end
     for name, progress in pairs(source.members or {}) do
         local merged = target.members[name] or {}
         target.members[name] = merged
@@ -201,6 +212,8 @@ local function MergeMatch(index, key, source)
         elseif progress.kill then merged.kill = math.max(tonumber(merged.kill) or 0, progress.kill) end
         if progress.loot == true then merged.loot = merged.loot or true
         elseif progress.loot then merged.loot = math.max(tonumber(merged.loot) or 0, progress.loot) end
+        if progress.talk == true then merged.talk = merged.talk or true
+        elseif progress.talk then merged.talk = math.max(tonumber(merged.talk) or 0, progress.talk) end
     end
     for name, steps in pairs(source.memberSteps or {}) do
         local merged = target.memberSteps[name]
@@ -223,7 +236,8 @@ local function AddMatch(index, key, kind, questTitle, itemName, remaining,
     local match = index[key]
     if not match then
         match = {
-            kill=false, loot=false, quests={}, items={}, members={}, memberSteps={},
+            kill=false, loot=false, quests={}, items={}, localProgress={},
+            members={}, memberSteps={},
         }
         index[key] = match
     end
@@ -264,6 +278,13 @@ local function AddMatch(index, key, kind, questTitle, itemName, remaining,
                     remaining = remaining,
                 }
             end
+        end
+    else
+        local progress = match.localProgress
+        if remaining and remaining > 0 then
+            progress[kind] = math.max(tonumber(progress[kind]) or 0, remaining)
+        elseif progress[kind] == nil then
+            progress[kind] = true
         end
     end
 end
@@ -487,7 +508,8 @@ local function MatchUnit(unit)
             killRemaining = match.killRemaining,
             lootRemaining = match.lootRemaining
                 or (tooltipMatch and tooltipMatch.lootRemaining),
-            quests = match.quests, items = match.items, members = match.members,
+            quests = match.quests, items = match.items,
+            localProgress = match.localProgress, members = match.members,
             memberSteps = match.memberSteps,
         }
         if not match.kill and not match.loot and not match.talk then match = nil end
@@ -558,12 +580,6 @@ local function GetMarker(plate)
     -- "Speak with" objectives, using Blizzard's own chat bubble artwork.
     -- Comes only from live tooltip evidence, never an inferred database kind.
     marker.talk = NewBadge(marker, "Interface\\WorldMap\\ChatBubble_64.PNG", 30)
-    marker.groupText = marker:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    if AutoCore.UI and AutoCore.UI.ApplyFont then AutoCore.UI.ApplyFont(marker.groupText, 10) end
-    marker.groupText:SetWidth(190)
-    marker.groupText:SetJustifyH("LEFT")
-    marker.groupText:SetTextColor(1, 0.82, 0.2, 1)
-    marker.groupText:Hide()
     marker:Hide()
 
     plate.AutoEverythingQuestMarker = marker
@@ -574,59 +590,35 @@ local function ResetMarker(marker)
     marker.kill:Hide(); marker.kill.count:Hide()
     marker.loot:Hide(); marker.loot.count:Hide()
     marker.talk:Hide(); marker.talk.count:Hide()
-    marker.groupText:Hide(); marker.groupText:SetText("")
 end
 
-local function ShowCount(icon, value)
-    if value and value > 0 then
-        icon.count:SetText(value)
+local function ShowProgressCounts(icon, match, kind)
+    local values = {}
+    local localValue = match.localProgress and match.localProgress[kind]
+    if type(localValue) == "number" and localValue > 0 then
+        values[#values + 1] = "|cffffffff" .. localValue .. "|r"
+    end
+
+    local names = {}
+    for name in pairs(match.members or {}) do names[#names + 1] = name end
+    table.sort(names, function(a, b) return string.lower(a) < string.lower(b) end)
+    for _, name in ipairs(names) do
+        local value = match.members[name] and match.members[name][kind]
+        if type(value) == "number" and value > 0 then
+            values[#values + 1] = "|cff40ff40" .. value .. "|r"
+        end
+    end
+
+    -- Live tooltip evidence has no source ownership, so retain the ordinary
+    -- white count when no indexed local or synchronized progress is available.
+    local fallback = match[kind .. "Remaining"]
+    if #values == 0 and fallback and fallback > 0 then
+        values[1] = "|cffffffff" .. fallback .. "|r"
+    end
+    if #values > 0 then
+        icon.count:SetText(table.concat(values, " "))
         icon.count:Show()
     end
-end
-
-local function GroupProgressLines(match)
-    local rows = {}
-    for name, progress in pairs(match.members or {}) do
-        local parts = {}
-        for _, kind in ipairs({ "kill", "loot", "talk" }) do
-            local value = progress[kind]
-            if value and (kind ~= "talk" or match.talk) then
-                if type(value) == "number" then
-                    parts[#parts + 1] = kind .. " " .. value
-                else
-                    parts[#parts + 1] = kind
-                end
-            end
-        end
-        if #parts == 1 then
-            local amount = string.match(parts[1], "(%d+)$")
-            rows[#rows + 1] = {
-                name = name,
-                class = progress.class,
-                text = amount and (amount .. " left") or parts[1],
-            }
-        elseif #parts > 1 then
-            rows[#rows + 1] = { name = name, class=progress.class, text = table.concat(parts, ", ") }
-        end
-    end
-    table.sort(rows, function(a, b) return string.lower(a.name) < string.lower(b.name) end)
-
-    local lines = {}
-    local visible = math.min(#rows, 5)
-    for index = 1, visible do
-        local row = rows[index]
-        local display = string.match(row.name, "^[^-]+") or row.name
-        local color = type(RAID_CLASS_COLORS) == "table" and RAID_CLASS_COLORS[row.class or ""] or nil
-        if color then
-            display = string.format("|cff%02x%02x%02x%s|r",
-                math.floor((color.r or 0.8) * 255 + 0.5),
-                math.floor((color.g or 0.8) * 255 + 0.5),
-                math.floor((color.b or 0.8) * 255 + 0.5), display)
-        end
-        lines[#lines + 1] = display .. ": " .. row.text
-    end
-    if #rows > visible then lines[#lines + 1] = "+" .. (#rows - visible) .. " more" end
-    return lines
 end
 
 local function UpdateUnit(unit, plate)
@@ -664,15 +656,9 @@ local function UpdateUnit(unit, plate)
         icon:SetPoint("LEFT", marker, "LEFT", (index - 1) * 34, 0)
         icon:Show()
     end
-    if match.kill then ShowCount(marker.kill, match.killRemaining) end
-    if match.loot then ShowCount(marker.loot, match.lootRemaining) end
-    local groupLines = GroupProgressLines(match)
-    if #groupLines > 0 then
-        marker.groupText:ClearAllPoints()
-        marker.groupText:SetPoint("LEFT", marker, "LEFT", (#icons * 34) + 2, 0)
-        marker.groupText:SetText(table.concat(groupLines, "\n"))
-        marker.groupText:Show()
-    end
+    if match.kill then ShowProgressCounts(marker.kill, match, "kill") end
+    if match.loot then ShowProgressCounts(marker.loot, match, "loot") end
+    if match.talk then ShowProgressCounts(marker.talk, match, "talk") end
     marker:Show()
 end
 
