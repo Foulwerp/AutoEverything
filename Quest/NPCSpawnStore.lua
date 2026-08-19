@@ -97,13 +97,15 @@ end
 -- buckets without maintaining a manual instance list.
 local function SpawnAreaName(areaID)
     local generated = DataStore.GetNPCSpawnAreaName(areaID)
-    if generated then return generated end
     if areaMapNames[areaID] ~= nil then return areaMapNames[areaID] or nil end
     local name
     if C_WorldMap and type(C_WorldMap.GetMapFileByAreaID) == "function" then
         local ok, value = pcall(C_WorldMap.GetMapFileByAreaID, areaID)
         if ok and type(value) == "string" and value ~= "" then name = value end
     end
+    -- Prefer the client's exact map-file key when available. Generated names
+    -- keep every known shipped dungeon usable on clients lacking this API.
+    if not name then name = generated end
     areaMapNames[areaID] = name or false
     return name
 end
