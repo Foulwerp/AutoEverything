@@ -3901,9 +3901,12 @@ local function RulePage(spec)
         Label(parent, spec.title, 20, -20, 18)
         local section = Core.GetProfileSection(spec.moduleName, true)
         if spec.moduleName == "sell" then
-            ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 390, -25, true,
+            -- The old regular/safety tabs occupied the first settings row.
+            -- Keep every replacement control below the title and align toggles
+            -- to the vertical center of the adjacent 25px dropdown.
+            ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 390, -54, true,
                 "Prints a chat message when AutoSell sells matching items.")
-            ScalarCheck(parent, "sell", AutoSellConfig, "learnVanity", "Learn vanity items", 530, -25, true,
+            ScalarCheck(parent, "sell", AutoSellConfig, "learnVanity", "Learn vanity items", 530, -54, true,
                 "Learns eligible mounts, pets, and vanity items before selling.")
 
             local repairDefaults = ResolvedDefault(AutoSellConfig, "autoRepair", AutoSellConfig.autoRepair or {})
@@ -3929,7 +3932,7 @@ local function RulePage(spec)
             end)
             AddTooltip(qualityButton, "Sell quality safety ceiling", "AutoSell will never sell an item above this quality, even when a rule matches it.")
         elseif spec.moduleName == "roll" then
-            ScalarCheck(parent, "roll", AutoRollConfig, "notifyOnly", "Notify only", 390, -25, false,
+            ScalarCheck(parent, "roll", AutoRollConfig, "notifyOnly", "Notify only", 390, -54, false,
                 "Reports the recommended roll without submitting it automatically.")
             local maximumRollQuality = Core.GetSetting("roll", "maxQuality", ResolvedDefault(AutoRollConfig, "maxQuality", 6))
             local qualityButton = ChoiceButton(parent, "Max roll quality", 20, -48, 330, QualityChoices(), maximumRollQuality, function(value)
@@ -3960,7 +3963,7 @@ local function RulePage(spec)
                 "In Maintain free slots mode, AutoJunk deletes the least valuable matching stacks until this many normal-bag slots are free. 0 disables target-based deletion.",
                 nil, 680)
         elseif spec.moduleName == "auction" then
-            ScalarCheck(parent, "auction", AutoAuctionConfig, "showTooltipPrices", "Tooltip prices", 410, -25, true,
+            ScalarCheck(parent, "auction", AutoAuctionConfig, "showTooltipPrices", "Tooltip prices", 20, -54, true,
                     "Shows the scanned per-item and stack market value on item tooltips. Green is well-supported; orange is sparse, stale, or historical.")
                 local postingMode = Core.GetSetting("auction", "postingMode", ResolvedDefault(AutoAuctionConfig, "postingMode", "queue"))
                 local modeChoices = {
@@ -4062,14 +4065,15 @@ local function RulePage(spec)
         local ROW_STEP = 44
         -- One uniform vertical margin between the dropdown row, the list box,
         -- the detail box, and the button row, so all the gaps read the same.
-        -- List top clears the controls above it by BOX_GAP: the non-junk
-        -- dropdown row bottoms at -72, the junk slider at ~-122.
+        -- List top clears the controls above it by BOX_GAP. Pages with one
+        -- settings row stay compact; Sell and Auction reserve their extra rows.
         local BOX_GAP = 12
         local searchTop
         if spec.moduleName == "junk" then searchTop = -134
         elseif spec.moduleName == "loot" then searchTop = -134
         elseif spec.moduleName == "auction" then searchTop = -190
-        elseif spec.moduleName == "sell" or spec.moduleName == "roll" then searchTop = -116
+        elseif spec.moduleName == "sell" then searchTop = -116
+        elseif spec.moduleName == "roll" then searchTop = -86
         else searchTop = -84 end
         local listTop = searchTop - 32
         local hostHeight = parent:GetHeight()
