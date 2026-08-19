@@ -137,17 +137,22 @@ end
 
 function Resolver.ObjectiveForQuestItem(objectives, itemName)
     local needle = Resolver.Normalize(itemName)
-    local itemObjectives = {}
+    local itemObjectives, incompleteObjectives = {}, {}
     for _, objective in ipairs(objectives or {}) do
-        if not objective.done and string.lower(objective.kind or "") == "item" then
+        if string.lower(objective.kind or "") == "item" then
             itemObjectives[#itemObjectives + 1] = objective
             local normalized = Resolver.Normalize(objective.text)
             if needle ~= "" and string.find(normalized, needle, 1, true) then
-                return objective
+                -- A completed matching objective is authoritative: do not
+                -- reassign its drop sources to the only objective remaining.
+                return not objective.done and objective or nil
+            end
+            if not objective.done then
+                incompleteObjectives[#incompleteObjectives + 1] = objective
             end
         end
     end
-    if #itemObjectives == 1 then return itemObjectives[1] end
+    if #itemObjectives == 1 then return incompleteObjectives[1] end
 end
 
 -- Database event/object records are rendered differently by each surface:
