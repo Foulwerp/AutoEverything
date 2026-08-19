@@ -490,7 +490,7 @@ local function MatchUnit(unit)
         match = tooltipMatch
     end
     if match and learnedName and AutoQuest.Map and AutoQuest.Map.RequestRefresh then
-        AutoQuest.Map.RequestRefresh()
+        AutoQuest.Map.RequestRefresh(true)
     end
     return match, npcID
 end
@@ -803,7 +803,7 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
             if SpawnStore.RememberName(npcID, UnitName(observedUnit))
                 and AutoQuest.Map and AutoQuest.Map.RequestRefresh
             then
-                AutoQuest.Map.RequestRefresh()
+                AutoQuest.Map.RequestRefresh(true)
             end
         end
     else

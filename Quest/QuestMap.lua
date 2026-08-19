@@ -22,6 +22,9 @@ local playerMap = { name = nil, key = nil, x = nil, y = nil }
 local buildStats = { activeQuests=0, matchedQuests=0, points=0, servicePoints=0 }
 local minimapStatus = "not updated"
 local locationDebug = {}
+local mapContributions = {}
+local mapContributionStats = { rebuilt=0, reused=0 }
+local invalidateContributionCache = false
 
 local defaultServiceKinds = {
     "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
@@ -605,6 +608,163 @@ local function IndexRemoteQuest(quest, member)
     if buildStats.points > pointsBefore then buildStats.partyQuests = buildStats.partyQuests + 1 end
 end
 
+local function MapQuestFingerprint(quest, member)
+    local fields = {
+        tostring(quest.id or ""), tostring(quest.title or ""),
+        quest.complete and "1" or "0",
+        member and tostring(member.name or "") or "",
+        member and tostring(member.class or "") or "",
+        member and member.completeSnapshot and "1" or "0",
+        member and member.stale and "1" or "0",
+        member and member.connected == false and "0" or "1",
+    }
+    for index, objective in ipairs(quest.objectives or {}) do
+        fields[#fields + 1] = table.concat({
+            tostring(index), tostring(objective.text or ""),
+            tostring(objective.type or objective.kind or ""),
+            (objective.finished or objective.done) and "1" or "0",
+            tostring(objective.current or ""), tostring(objective.required or ""),
+            tostring(objective.targetType or ""), tostring(objective.targetID or ""),
+        }, "\30")
+    end
+    return table.concat(fields, "\31")
+end
+
+local function IndexLocalQuest(quest)
+    local title, questID = quest.title, quest.id
+    local resolved = AutoQuest.ResolveQuestEntries(questID, title) or {}
+    buildStats.activeQuests = buildStats.activeQuests + 1
+    if quest.complete then return end
+    local objectives = {}
+    for _, objective in ipairs(quest.objectives or {}) do
+        objectives[#objectives + 1] = {
+            text=objective.text, kind=objective.type, done=objective.finished,
+        }
+    end
+
+    local relationshipData, relationshipIDs = {}, {}
+    local function AddRelationshipID(value)
+        value = tonumber(value)
+        if not value or relationshipIDs[value] then return end
+        relationshipIDs[value] = true
+        relationshipData[#relationshipData + 1] = {
+            questID = value,
+            npcIDs = SpawnStore.GetObjectiveNPCs(value),
+            itemSources = SpawnStore.GetQuestItemSources(value),
+        }
+    end
+    AddRelationshipID(questID)
+    for _, match in ipairs(resolved) do AddRelationshipID(match.id) end
+
+    local hasRelationshipData = false
+    for _, data in ipairs(relationshipData) do
+        if type(data.npcIDs) == "table" or type(data.itemSources) == "table" then
+            hasRelationshipData = true
+            break
+        end
+    end
+    if #resolved > 0 or hasRelationshipData then
+        buildStats.matchedQuests = buildStats.matchedQuests + 1
+    end
+
+    for _, match in ipairs(resolved) do
+        local matchQuestID = match.id
+        local matchPointsBefore = buildStats.points
+        for _, record in ipairs(match.entry.records or {}) do
+            local recordType = tonumber(record.type) or 1
+            local objective = Resolver.ObjectiveForRecord(objectives, record)
+            local kind = Resolver.RecordKind(record, objective, "map")
+            if objective and kind and not objective.done then
+                local progress = ExtractProgress(objective.text)
+                if recordType == 2 or recordType == -1 then
+                    for _, coord in ipairs(record.coords or {}) do
+                        if AddLocation(record.zoneID, record.zone, record.floor,
+                            record, coord, matchQuestID, title, kind, progress)
+                        then
+                            buildStats.points = buildStats.points + 1
+                        end
+                    end
+                else
+                    local id = tonumber(record.id)
+                    for _, location in ipairs(id and SpawnStore.Get(id) or {}) do
+                        for _, coord in ipairs(location.coords or {}) do
+                            if AddLocation(location.zoneID, location.zone, location.floor,
+                                record, coord, matchQuestID, title, kind, progress)
+                            then
+                                buildStats.points = buildStats.points + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        buildStats.matches[#buildStats.matches + 1] = {
+            id = matchQuestID, title = title,
+            points = buildStats.points - matchPointsBefore,
+        }
+    end
+    for _, data in ipairs(relationshipData) do
+        AddQuestObjectiveNPCs(data.questID, title, objectives, data.npcIDs)
+        AddQuestItemNPCs(data.questID, title, objectives, data.itemSources)
+    end
+    for _, objective in ipairs(objectives) do
+        local objectiveType = string.lower(objective.kind or "")
+        if not objective.done and (objectiveType == "monster" or objectiveType == "player") then
+            local npcIDs = SpawnStore.FindNPCsByObjectiveText(objective.text)
+            if npcIDs then AddQuestObjectiveNPCs(questID, title, { objective }, npcIDs) end
+        end
+    end
+end
+
+local function BuildMapContribution(quest, member, fingerprint)
+    local aggregateZones, aggregateKeys, aggregateStats = activeByZone, activePointKeys, buildStats
+    activeByZone, activePointKeys = {}, {}
+    buildStats = {
+        activeQuests=0, matchedQuests=0, confirmedObjectives=0,
+        points=0, servicePoints=0, partyPoints=0, partyQuests=0, matches={},
+    }
+    if member then
+        if not quest.complete then IndexRemoteQuest(quest, member) end
+    else
+        IndexLocalQuest(quest)
+    end
+    local contribution = {
+        fingerprint=fingerprint, zones=activeByZone, stats=buildStats,
+        remote=member ~= nil,
+    }
+    activeByZone, activePointKeys, buildStats = aggregateZones, aggregateKeys, aggregateStats
+    return contribution
+end
+
+local function MergeContribution(contribution)
+    local stats = contribution.stats or {}
+    buildStats.activeQuests = buildStats.activeQuests + (stats.activeQuests or 0)
+    buildStats.matchedQuests = buildStats.matchedQuests + (stats.matchedQuests or 0)
+    buildStats.partyQuests = buildStats.partyQuests + (stats.partyQuests or 0)
+    for _, match in ipairs(stats.matches or {}) do buildStats.matches[#buildStats.matches + 1] = match end
+    for _, zone in pairs(contribution.zones or {}) do
+        for _, point in ipairs(zone.points or {}) do
+            local record = { id=point.entityID, name=point.name, item=point.item }
+            local members, addedMember = point.partyMembers or {}, false
+            for memberName, progress in pairs(members) do
+                AddLocation(nil, zone.name, point.floor, record, {point.x, point.y},
+                    point.questID, point.questTitle, point.kind,
+                    progress.progress or point.progress, memberName, progress.class)
+                addedMember = true
+            end
+            if not addedMember then
+                AddLocation(nil, zone.name, point.floor, record, {point.x, point.y},
+                    point.questID, point.questTitle, point.kind, point.progress)
+            end
+        end
+        local mergedZone = activeByZone[NormalizeZone(zone.name)]
+        if mergedZone then
+            for zoneID in pairs(zone.zoneIDs or {}) do mergedZone.zoneIDs[zoneID] = true end
+            for questID in pairs(zone.questIDs or {}) do mergedZone.questIDs[questID] = true end
+        end
+    end
+end
+
 function QuestMap.RebuildIndex()
     activeByZone = {}
     activePointKeys = {}
@@ -619,120 +779,23 @@ function QuestMap.RebuildIndex()
         buildStats.servicePoints = buildStats.servicePoints + #(zone.points or {})
     end
     local resolverObjectives = Resolver.BuildActive()
-
-    for _, quest in ipairs(AutoQuest.QuestState.GetQuests()) do
-        local title, questID = quest.title, quest.id
-        -- Resolve by questID, falling back to title (the client may not return
-        -- a questID at all on 3.3.5). See AutoQuest.ResolveQuestEntries.
-        local resolved = AutoQuest.ResolveQuestEntries(questID, title) or {}
-        buildStats.activeQuests = buildStats.activeQuests + 1
-        if not quest.complete then
-            local objectives = {}
-            for _, objective in ipairs(quest.objectives) do
-                objectives[#objectives + 1] = {
-                    text=objective.text, kind=objective.type, done=objective.finished,
-                }
-            end
-
-            -- Relationship tables are keyed by database quest ID. The client
-            -- may omit that ID, so query the exact ID first and then any IDs
-            -- resolved from the database title index.
-            local relationshipData, relationshipIDs = {}, {}
-            local function AddRelationshipID(value)
-                value = tonumber(value)
-                if not value or relationshipIDs[value] then return end
-                relationshipIDs[value] = true
-                relationshipData[#relationshipData + 1] = {
-                    questID = value,
-                    npcIDs = SpawnStore.GetObjectiveNPCs(value),
-                    itemSources = SpawnStore.GetQuestItemSources(value),
-                }
-            end
-            AddRelationshipID(questID)
-            for _, match in ipairs(resolved) do AddRelationshipID(match.id) end
-
-            local hasRelationshipData = false
-            for _, data in ipairs(relationshipData) do
-                if type(data.npcIDs) == "table" or type(data.itemSources) == "table" then
-                    hasRelationshipData = true
-                    break
-                end
-            end
-            if #resolved > 0 or hasRelationshipData then
-                buildStats.matchedQuests = buildStats.matchedQuests + 1
-            end
-
-            for _, match in ipairs(resolved) do
-                -- Use the resolved id (not the raw questID, which may be nil)
-                -- so pin dedupe and per-zone bookkeeping stay correct.
-                local matchQuestID = match.id
-                local matchPointsBefore = buildStats.points
-                for _, record in ipairs(match.entry.records or {}) do
-                    local recordType = tonumber(record.type) or 1
-                    local objective = Resolver.ObjectiveForRecord(objectives, record)
-                    local kind = Resolver.RecordKind(record, objective, "map")
-                    -- The quest database is keyed by the same quest ID exposed
-                    -- by the client. Its source requirements therefore become
-                    -- useful immediately while that exact quest and objective
-                    -- are active; live tooltip evidence is processed only
-                    -- after all database relationships have been considered.
-                    if objective and kind and not objective.done then
-                        local progress = ExtractProgress(objective.text)
-                        if recordType == 2 or recordType == -1 then
-                            -- Game objects and mapped events aren't
-                            -- cross-referenced like NPCs - their coords are
-                            -- inline on the record itself. Every coordinate is
-                            -- a real distinct spot - one pin each.
-                            for _, coord in ipairs(record.coords or {}) do
-                                if AddLocation(record.zoneID, record.zone, record.floor,
-                                    record, coord, matchQuestID, title, kind, progress)
-                                then
-                                    buildStats.points = buildStats.points + 1
-                                end
-                            end
-                        else
-                            local id = tonumber(record.id)
-                            local locations = id and SpawnStore.Get(id)
-                            for _, location in ipairs(locations or {}) do
-                                -- Every coordinate here is a real distinct spawn
-                                -- point - one pin each, not just the first few.
-                                for _, coord in ipairs(location.coords or {}) do
-                                    if AddLocation(location.zoneID, location.zone, location.floor,
-                                        record, coord, matchQuestID, title, kind, progress)
-                                    then
-                                        buildStats.points = buildStats.points + 1
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-                buildStats.matches[#buildStats.matches + 1] = {
-                    id = matchQuestID, title = title,
-                    points = buildStats.points - matchPointsBefore,
-                }
-            end
-            for _, data in ipairs(relationshipData) do
-                AddQuestObjectiveNPCs(data.questID, title, objectives, data.npcIDs)
-                AddQuestItemNPCs(data.questID, title, objectives, data.itemSources)
-            end
-            -- Public quest catalogs can omit otherwise valid Ascension quests.
-            -- Resolve their monster labels through names already present in
-            -- the generated NPC data so those quests still receive pins.
-            for _, objective in ipairs(objectives) do
-                local objectiveType = string.lower(objective.kind or "")
-                if not objective.done
-                    and (objectiveType == "monster" or objectiveType == "player")
-                then
-                    local npcIDs = SpawnStore.FindNPCsByObjectiveText(objective.text)
-                    if npcIDs then
-                        AddQuestObjectiveNPCs(questID, title, { objective }, npcIDs)
-                    end
-                end
-            end
+    local previous = invalidateContributionCache and {} or mapContributions
+    local nextContributions, rebuilt, reused = {}, 0, 0
+    invalidateContributionCache = false
+    local function Include(sourceKey, quest, member)
+        local fingerprint = MapQuestFingerprint(quest, member)
+        local contribution = previous[sourceKey]
+        if not contribution or contribution.fingerprint ~= fingerprint then
+            contribution = BuildMapContribution(quest, member, fingerprint)
+            rebuilt = rebuilt + 1
+        else
+            reused = reused + 1
         end
+        nextContributions[sourceKey] = contribution
     end
-
+    for _, quest in ipairs(AutoQuest.QuestState.GetQuests()) do
+        Include("local:" .. tostring(quest.key or quest.id or quest.title), quest)
+    end
     if AutoCore.GetSetting("quest", "groupQuestSync",
         AutoQuestConfig and AutoQuestConfig.groupQuestSync) == true
         and AutoCore.GetSetting("quest", "showGroupQuestMapPins",
@@ -740,12 +803,29 @@ function QuestMap.RebuildIndex()
     then
         local sync = AutoQuest.GroupSync
         local members = sync and sync.GetMemberQuestData and sync.GetMemberQuestData() or {}
-        for _, member in pairs(members) do
+        for memberKey, member in pairs(members) do
             if member.completeSnapshot and not member.stale and member.connected ~= false then
                 for key, quest in pairs(member.quests or {}) do
-                    if not quest.complete then IndexRemoteQuest(quest, member) end
+                    Include("remote:" .. tostring(memberKey) .. ":" .. tostring(key), quest, member)
                 end
             end
+        end
+    end
+    mapContributions = nextContributions
+    mapContributionStats = { rebuilt=rebuilt, reused=reused }
+    -- Preserve the old local-first merge behavior so a point shared with a
+    -- party member keeps the local player's progress as its primary label.
+    for _, contribution in pairs(mapContributions) do
+        if not contribution.remote then MergeContribution(contribution) end
+    end
+    for _, contribution in pairs(mapContributions) do
+        if contribution.remote then MergeContribution(contribution) end
+    end
+    buildStats.points, buildStats.partyPoints = 0, 0
+    for _, zone in pairs(activeByZone) do
+        buildStats.points = buildStats.points + #(zone.points or {})
+        for _, point in ipairs(zone.points or {}) do
+            if point.isParty then buildStats.partyPoints = buildStats.partyPoints + 1 end
         end
     end
     AddConfirmedLocations(resolverObjectives)
@@ -1422,6 +1502,7 @@ end
 
 function QuestMap.SetEnabled(enabled)
     AutoCore.SetSetting("quest", "mapPins", enabled and true or false)
+    invalidateContributionCache = true
     QuestMap.RebuildIndex()
     QuestMap.UpdateWorldMap()
     UpdatePlayerLocation()
@@ -1433,13 +1514,15 @@ function QuestMap.ApplyProfile()
     -- Service locations are otherwise static and intentionally cached. A
     -- profile switch or selector change must rebuild that cache immediately.
     serviceByZone = nil
+    invalidateContributionCache = true
     QuestMap.RebuildIndex()
     QuestMap.UpdateWorldMap()
     UpdatePlayerLocation()
     QuestMap.UpdateMinimap()
 end
 
-function QuestMap.RequestRefresh()
+function QuestMap.RequestRefresh(invalidate)
+    if invalidate == true then invalidateContributionCache = true end
     refreshPending, refreshAt = true, 0
 end
 
@@ -1460,6 +1543,8 @@ function QuestMap.Debug()
         .. " partyQuests=" .. buildStats.partyQuests
         .. " partyPoints=" .. buildStats.partyPoints
         .. " servicePoints=" .. buildStats.servicePoints)
+    print("  quest indexes rebuilt=" .. mapContributionStats.rebuilt
+        .. " reused=" .. mapContributionStats.reused)
     for _, match in ipairs(buildStats.matches or {}) do
         print("    matched: " .. tostring(match.title) .. " (id " .. tostring(match.id) .. ") -> "
             .. tostring(match.points) .. " point(s)")
