@@ -11,6 +11,7 @@ local QuestState = AutoQuest.QuestState
 local activeObjectives = {}
 local activeByKey = {}
 local activeByLabel = {}
+local activeRevision = -1
 local refreshPending, refreshAt = false, 0
 local observedQuestState
 local auditElapsed = 0
@@ -219,6 +220,10 @@ function Resolver.Prune(active)
 end
 
 function Resolver.BuildActive()
+    local revision = QuestState.GetRevision()
+    if activeRevision == revision then
+        return activeObjectives, activeByKey, activeByLabel
+    end
     local objectives, byKey, byLabel = {}, {}, {}
     for _, quest in ipairs(QuestState.GetQuests()) do
         if not quest.complete then
@@ -249,6 +254,7 @@ function Resolver.BuildActive()
         end
     end
     activeObjectives, activeByKey, activeByLabel = objectives, byKey, byLabel
+    activeRevision = revision
     observedQuestState = QuestState.GetSignature()
     Resolver.Prune(byKey)
     return objectives, byKey, byLabel
