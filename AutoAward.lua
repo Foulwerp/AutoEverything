@@ -660,7 +660,7 @@ local function ResolveRound()
     current.winner = winner
     current.deadline = nil
     SetState(STATE_READY)
-    Announce(winner.player .. " wins " .. winner.bracket .. " with " .. winner.value .. ".")
+    Announce(winner.player .. " has won " .. current.itemLink .. " with a roll of " .. winner.value .. ".")
     RefreshUI()
     if Setting("autoAward") then AA.Award(true) end
 end
