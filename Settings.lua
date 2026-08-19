@@ -2085,7 +2085,7 @@ pageBuilders.Buff = function(parent)
     local windowToggle = ScalarCheck(parent, "buff", AutoBuffConfig, "showWindow", "Show buff window", 20, -112, true,
         "Shows the movable AutoBuff status window and secure Buff Next button.")
     local hideToggle = ScalarCheck(parent, "buff", AutoBuffConfig, "hideWhenComplete", "Hide when complete", 246, -112, false,
-        "Hides the status window when every configured buff is present above the rebuff threshold.")
+        "Hides the status window whenever no buff can be cast now, including in combat, out of range, on cooldown, or fully buffed.")
     BindToggleDependency(windowToggle, hideToggle)
     ScalarCheck(parent, "buff", AutoBuffConfig, "includeSelf", "Include yourself", 20, -140, true,
         "Includes your character when buffs are assigned to Self.")

@@ -22,6 +22,7 @@ local rejectedPowerfulBuffs = {}
 local lastBuffAttempt = nil
 local castReadyAt = nil
 local window, castButton, statusText
+local windowHidesInCombat = false
 
 local BASE_WINDOW_HEIGHT = 88
 local WINDOW_WIDTH = 298
@@ -505,13 +506,6 @@ local function FirstCastable(missing)
     return nil
 end
 
-local function HasTargetInRange(missing)
-    for _, entry in ipairs(missing) do
-        if entry.inRange then return true end
-    end
-    return false
-end
-
 ----------------------------------------------------------------------
 -- Compact status/cast window
 ----------------------------------------------------------------------
@@ -595,12 +589,28 @@ local function CreateWindow()
     end
 end
 
+local function UpdateCombatVisibility(hideInCombat)
+    if InCombat() then return end
+    if hideInCombat and not windowHidesInCombat and RegisterStateDriver then
+        local ok = pcall(RegisterStateDriver, window, "visibility", "[combat] hide; show")
+        if ok then windowHidesInCombat = true end
+    elseif not hideInCombat and windowHidesInCombat and UnregisterStateDriver then
+        local ok = pcall(UnregisterStateDriver, window, "visibility")
+        if ok then windowHidesInCombat = false end
+    end
+end
+
 local function PaintWindow()
     CreateWindow()
     local enabled = AB.db and AB.db.enabled == true
+    local hideWhenUnavailable = Setting("hideWhenComplete", false) == true
+    UpdateCombatVisibility(hideWhenUnavailable)
     local shouldShow = enabled and Setting("showWindow", true) ~= false
-    if shouldShow and Setting("hideWhenComplete", false) and #currentMissing == 0 then shouldShow = false end
-    if shouldShow and #currentMissing > 0 and not HasTargetInRange(currentMissing) then shouldShow = false end
+    if shouldShow and hideWhenUnavailable
+        and (InCombat() or not currentCandidate or (castReadyAt and GetTime() < castReadyAt))
+    then
+        shouldShow = false
+    end
 
     if not InCombat() then
         if shouldShow then window:Show() else window:Hide() end
