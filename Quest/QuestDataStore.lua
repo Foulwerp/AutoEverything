@@ -111,6 +111,10 @@ function Store.GetNPCNamePacks()
     return Table("npcNamePacked", AutoQuest.NPCSpawnNamePacked) or {}
 end
 
+function Store.GetNPCMetadataPacks()
+    return Table("npcMetadataPacked", AutoQuest.NPCMetadataPacked) or {}
+end
+
 function Store.GetQuestObjectiveNPCPacked(questID)
     local index = Table("questObjectiveNPCs", AutoQuest.QuestObjectiveNPCs)
     return index and index[tonumber(questID)] or nil

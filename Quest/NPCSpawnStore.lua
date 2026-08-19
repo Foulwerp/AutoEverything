@@ -16,11 +16,55 @@ local decodedServiceFactions
 local observedNames = {}
 local npcIDsByName
 local npcNamesByID
+local metadataByID = {}
+local notableNPCs
+local observedClassifications = {}
 
 local serviceOrder = {
     "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
     "innkeeper", "talentunlearner", "tabardvendor", "stablemaster", "trainer", "vendor",
 }
+
+local function SplitTabs(row)
+    local values = {}
+    for value in string.gmatch((row or "") .. "\t", "([^\t]*)\t") do
+        values[#values + 1] = value
+    end
+    return values
+end
+
+local function MetadataRow(row)
+    local values = SplitTabs(row)
+    local npcID = tonumber(values[1])
+    if not npcID then return nil end
+    return {
+        id=npcID, name=values[2] ~= "" and values[2] or nil,
+        minLevel=tonumber(values[3]), maxLevel=tonumber(values[4]),
+        creatureType=tonumber(values[5]), family=tonumber(values[6]),
+        classification=tonumber(values[7]) or 0, boss=values[8] == "1",
+        hasQuests=values[9] == "1", allianceReaction=tonumber(values[10]),
+        hordeReaction=tonumber(values[11]),
+    }
+end
+
+local function ForEachMetadata(callback)
+    for _, packed in ipairs(DataStore.GetNPCMetadataPacks()) do
+        for row in string.gmatch(packed, "[^\n]+") do
+            local metadata = MetadataRow(row)
+            if metadata then callback(metadata) end
+        end
+    end
+end
+
+local function NotableKind(metadata)
+    if not metadata then return nil end
+    local observed = observedClassifications[metadata.id]
+    if observed == "worldboss" then return "boss" end
+    if observed == "rare" or observed == "rareelite" then return "rare" end
+    local classification = tonumber(metadata.classification)
+    if metadata.boss or classification == 3 then return "boss" end
+    if classification == 2 or classification == 4 then return "rare" end
+end
 
 local function Decode(packed)
     local locations = {}
@@ -74,6 +118,60 @@ function Store.RememberName(npcID, name)
     return true
 end
 
+function Store.RememberClassification(npcID, classification)
+    npcID = tonumber(npcID)
+    if not npcID or type(classification) ~= "string" or classification == "" then return false end
+    if observedClassifications[npcID] == classification then return false end
+    observedClassifications[npcID] = classification
+    notableNPCs = nil
+    return classification == "worldboss" or classification == "rare"
+        or classification == "rareelite"
+end
+
+function Store.GetMetadata(npcID)
+    npcID = tonumber(npcID)
+    if not npcID then return nil end
+    if metadataByID[npcID] ~= nil then return metadataByID[npcID] or nil end
+    local generated = DataStore.GetNPCRecord(npcID)
+    if generated then
+        local metadata = {
+            id=npcID, name=generated.name, minLevel=generated.minLevel,
+            maxLevel=generated.maxLevel, creatureType=generated.creatureType,
+            family=generated.family, classification=generated.classification,
+            boss=generated.boss == true or generated.boss == 1,
+            hasQuests=generated.hasQuests == true or generated.hasQuests == 1,
+        }
+        metadataByID[npcID] = metadata
+        return metadata
+    end
+    local found
+    ForEachMetadata(function(metadata)
+        if not found and metadata.id == npcID then found = metadata end
+    end)
+    metadataByID[npcID] = found or false
+    return found
+end
+
+function Store.GetNotableNPCs()
+    if notableNPCs then return notableNPCs end
+    notableNPCs = {}
+    local seen = {}
+    local function Add(metadata)
+        local kind = NotableKind(metadata)
+        if kind and not seen[metadata.id] then
+            seen[metadata.id] = true
+            metadata.kind = kind
+            notableNPCs[#notableNPCs + 1] = metadata
+            metadataByID[metadata.id] = metadata
+        end
+    end
+    ForEachMetadata(Add)
+    for npcID in pairs(observedClassifications) do
+        Add(Store.GetMetadata(npcID) or { id=npcID, name=Store.GetName(npcID) })
+    end
+    return notableNPCs
+end
+
 local function BuildNPCNameIndex()
     npcIDsByName = {}
     npcNamesByID = {}
@@ -121,7 +219,9 @@ function Store.GetName(npcID)
     if not npcID then return nil end
     if observedNames[npcID] then return observedNames[npcID] end
     if not npcNamesByID then BuildNPCNameIndex() end
-    return npcNamesByID[npcID]
+    if npcNamesByID[npcID] then return npcNamesByID[npcID] end
+    local metadata = Store.GetMetadata(npcID)
+    return metadata and metadata.name or nil
 end
 
 -- Unified NPC spawn record used by map pins, diagnostics, and manual lookup.
@@ -131,11 +231,60 @@ function Store.GetNPC(npcID)
     if not npcID then return nil end
     local locations = Store.Get(npcID)
     if type(locations) ~= "table" then return nil end
+    local metadata = Store.GetMetadata(npcID) or {}
     return {
         id = npcID,
-        name = Store.GetName(npcID) or ("NPC " .. npcID),
+        name = metadata.name or Store.GetName(npcID) or ("NPC " .. npcID),
         locations = locations,
+        kind = NotableKind(metadata), metadata = metadata,
     }
+end
+
+function Store.SearchNPCs(query, maximum)
+    query = strtrim and strtrim(tostring(query or "")) or tostring(query or "")
+    maximum = math.max(1, math.min(tonumber(maximum) or 20, 50))
+    if query == "" then return {} end
+    local numericID = tonumber(query)
+    if numericID then
+        local metadata = Store.GetMetadata(numericID)
+        local npc = Store.GetNPC(numericID)
+        if metadata or npc then
+            return { npc or {
+                id=numericID, name=metadata and metadata.name or ("NPC " .. numericID),
+                locations={}, kind=NotableKind(metadata), metadata=metadata,
+            } }
+        end
+        return {}
+    end
+
+    local needle, exact, partial = string.lower(query), {}, {}
+    ForEachMetadata(function(metadata)
+        local name = string.lower(metadata.name or "")
+        if name == needle then
+            exact[#exact + 1] = metadata
+        elseif #partial < maximum and string.find(name, needle, 1, true) then
+            partial[#partial + 1] = metadata
+        end
+    end)
+    local results, seen = {}, {}
+    local function Add(metadata)
+        if #results >= maximum or seen[metadata.id] then return end
+        seen[metadata.id] = true
+        metadataByID[metadata.id] = metadata
+        local npc = Store.GetNPC(metadata.id)
+        results[#results + 1] = npc or {
+            id=metadata.id, name=metadata.name or ("NPC " .. metadata.id),
+            locations={}, kind=NotableKind(metadata), metadata=metadata,
+        }
+    end
+    table.sort(exact, function(a, b) return a.id < b.id end)
+    table.sort(partial, function(a, b)
+        if a.name == b.name then return a.id < b.id end
+        return string.lower(a.name or "") < string.lower(b.name or "")
+    end)
+    for _, metadata in ipairs(exact) do Add(metadata) end
+    for _, metadata in ipairs(partial) do Add(metadata) end
+    return results
 end
 
 function Store.FindNPCsByName(name)
