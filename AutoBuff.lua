@@ -506,6 +506,15 @@ local function FirstCastable(missing)
     return nil
 end
 
+local function HasGlobalCooldownWait(missing)
+    for _, entry in ipairs(missing) do
+        if entry.inRange and (entry.cooldown or 0) > 0 and (entry.cooldownDuration or 0) <= 2 then
+            return true
+        end
+    end
+    return false
+end
+
 ----------------------------------------------------------------------
 -- Compact status/cast window
 ----------------------------------------------------------------------
@@ -606,10 +615,10 @@ local function PaintWindow()
     local hideWhenUnavailable = Setting("hideWhenComplete", false) == true
     UpdateCombatVisibility(hideWhenUnavailable)
     local shouldShow = enabled and Setting("showWindow", true) ~= false
-    if shouldShow and hideWhenUnavailable
-        and (InCombat() or not currentCandidate or (castReadyAt and GetTime() < castReadyAt))
-    then
-        shouldShow = false
+    if shouldShow and hideWhenUnavailable then
+        local postCastDelay = castReadyAt and GetTime() < castReadyAt
+        local keepVisible = currentCandidate or postCastDelay or HasGlobalCooldownWait(currentMissing)
+        if InCombat() or not keepVisible then shouldShow = false end
     end
 
     if not InCombat() then
