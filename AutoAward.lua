@@ -34,6 +34,8 @@ local roundSerial = 0
 local lootSessionID = 0
 local lootOpen = false
 local selectedSlot
+local selectedBag
+local selectedBagSlot
 local frame
 local ui = {}
 local Theme = AutoCore and AutoCore.UI
@@ -45,6 +47,12 @@ local current = {
     rejectedRolls = {},
 }
 AA.current = current
+
+local function RoundActive()
+    return current.state == STATE_ROLLING or current.state == STATE_TIE
+        or current.state == STATE_GRACE or current.state == STATE_READY
+        or current.state == STATE_PENDING
+end
 
 local function Log(message, level)
     if AutoCore and AutoCore.Log then
@@ -397,9 +405,11 @@ end
 
 local function RefreshUI()
     if not frame then return end
-    local shown = LootSlotData(selectedSlot)
-    local activeData = current.itemLink and { link = current.itemLink, texture = current.itemTexture } or shown
-    ui.item:SetText(activeData and activeData.link or "Alt-click loot or a bag item to start")
+    local shown = selectedBag ~= nil and BagSlotData(selectedBag, selectedBagSlot)
+        or LootSlotData(selectedSlot)
+    local activeData = RoundActive() and current.itemLink
+        and { link = current.itemLink, texture = current.itemTexture } or shown
+    ui.item:SetText(activeData and activeData.link or "Alt-click loot or a bag item to select")
     ui.icon:SetTexture(activeData and activeData.texture or "Interface\\Icons\\INV_Misc_QuestionMark")
     ui.state:SetText("State: " .. tostring(current.state))
     ui.rolls:SetText("MS: " .. CountRolls("MS") .. "    OS: " .. CountRolls("OS") .. "    Rejected: " .. #(current.rejectedRolls or {}))
@@ -421,7 +431,11 @@ local function RefreshUI()
     ui.timer:SetText((current.state == STATE_ROLLING or current.state == STATE_TIE or current.state == STATE_GRACE)
         and string.format("%.1fs", remaining) or "")
     ui.start:Enable()
-    if current.state == STATE_ROLLING or current.state == STATE_TIE or current.state == STATE_GRACE or current.state == STATE_PENDING then ui.start:Disable() end
+    if RoundActive() then ui.start:Disable() end
+    if ui.previous and ui.nextButton then
+        if RoundActive() then ui.previous:Disable(); ui.nextButton:Disable()
+        else ui.previous:Enable(); ui.nextButton:Enable() end
+    end
     if current.state == STATE_READY then ui.award:Enable() else ui.award:Disable() end
 end
 
@@ -609,7 +623,7 @@ end
 
 function AA.Start(slot)
     slot = tonumber(slot or selectedSlot)
-    if current.state == STATE_ROLLING or current.state == STATE_TIE or current.state == STATE_GRACE or current.state == STATE_PENDING then
+    if RoundActive() then
         Log("Finish or cancel the current round first.", "warn")
         return false
     end
@@ -647,7 +661,7 @@ end
 
 function AA.StartInventory(bag, slot)
     bag, slot = tonumber(bag), tonumber(slot)
-    if current.state == STATE_ROLLING or current.state == STATE_TIE or current.state == STATE_GRACE or current.state == STATE_PENDING then
+    if RoundActive() then
         Log("Finish or cancel the current round first.", "warn")
         return false
     end
@@ -683,6 +697,13 @@ function AA.StartInventory(bag, slot)
     if frame then frame:Show() end
     RefreshUI()
     return true
+end
+
+function AA.StartSelected()
+    if selectedBag ~= nil and selectedBagSlot then
+        return AA.StartInventory(selectedBag, selectedBagSlot)
+    end
+    return AA.Start()
 end
 
 function AA.Stop()
@@ -865,11 +886,34 @@ end
 
 local function StartFromItemLink(itemLink)
     if not itemLink then return end
+    if RoundActive() then
+        Log("Finish or cancel the current round before selecting another item.", "warn")
+        return
+    end
+    local isMaster, reason = PlayerIsMasterLooter()
+    if not isMaster then
+        Log("Master Loot Awards is only available to the current master looter: " .. reason .. ".", "warn")
+        return
+    end
+
+    local function ShowSelection()
+        if frame then frame:Show() end
+        RefreshUI()
+    end
+
     local bag, bagSlot = BagPositionFromMouseFocus(itemLink)
-    if bag ~= nil and bagSlot then AA.StartInventory(bag, bagSlot); return end
+    if bag ~= nil and bagSlot then
+        selectedSlot, selectedBag, selectedBagSlot = nil, bag, bagSlot
+        ShowSelection()
+        return
+    end
 
     local lootSlot = LootSlotFromMouseFocus(itemLink)
-    if lootSlot then selectedSlot = lootSlot; AA.Start(lootSlot); return end
+    if lootSlot then
+        selectedSlot, selectedBag, selectedBagSlot = lootSlot, nil, nil
+        ShowSelection()
+        return
+    end
 
     local lootMatches = {}
     if lootOpen then
@@ -880,24 +924,30 @@ local function StartFromItemLink(itemLink)
     end
     local bagMatches = FindBagMatches(itemLink)
     if #lootMatches == 1 and #bagMatches == 0 then
-        selectedSlot = lootMatches[1]
-        AA.Start(selectedSlot)
+        selectedSlot, selectedBag, selectedBagSlot = lootMatches[1], nil, nil
+        ShowSelection()
     elseif #bagMatches == 1 and #lootMatches == 0 then
-        AA.StartInventory(bagMatches[1].bag, bagMatches[1].slot)
+        selectedSlot, selectedBag, selectedBagSlot = nil, bagMatches[1].bag, bagMatches[1].slot
+        ShowSelection()
     elseif #lootMatches + #bagMatches > 1 then
         Log("That item exists in multiple locations; Alt-click its exact loot or bag slot.", "warn")
     else
-        Log("Alt-click an item in the open loot window or your bags to start its roll.", "warn")
+        Log("Alt-click an item in the open loot window or your bags to select it.", "warn")
     end
 end
 
 local function SelectAdjacent(direction)
+    if RoundActive() then return end
     local count = GetNumLootItems and GetNumLootItems() or 0
     if count <= 0 then return end
     local start = selectedSlot or (direction > 0 and 0 or count + 1)
     for offset = 1, count do
         local slot = ((start - 1 + direction * offset) % count) + 1
-        if LootSlotData(slot) then selectedSlot = slot; RefreshUI(); return end
+        if LootSlotData(slot) then
+            selectedSlot, selectedBag, selectedBagSlot = slot, nil, nil
+            RefreshUI()
+            return
+        end
     end
 end
 
@@ -977,12 +1027,14 @@ local function CreateWindow()
 
     local controlWidth = 71
     local previous = MakeArrowButton(frame, -1, function() SelectAdjacent(-1) end)
+    ui.previous = previous
     previous:SetPoint("BOTTOMLEFT", 16, 16)
     AddTooltip(previous, "Previous loot slot", "Selects the previous item in the current loot window.")
     local nextButton = MakeArrowButton(frame, 1, function() SelectAdjacent(1) end)
+    ui.nextButton = nextButton
     nextButton:SetPoint("LEFT", previous, "RIGHT", 2, 0)
     AddTooltip(nextButton, "Next loot slot", "Selects the next item in the current loot window.")
-    ui.start = MakeButton(frame, "Start", controlWidth, function() AA.Start() end, Theme and Theme.Colors.brand)
+    ui.start = MakeButton(frame, "Start", controlWidth, function() AA.StartSelected() end, Theme and Theme.Colors.brand)
     ui.start:SetPoint("LEFT", nextButton, "RIGHT", 8, 0)
     AddTooltip(ui.start, "Start roll", "Snapshots the current group and starts MS /roll 100 and OS /roll 99 tracking for the selected item.")
     local stop = MakeButton(frame, "Stop", controlWidth, function() AA.Stop() end)
@@ -1209,6 +1261,6 @@ SlashCmdList["AUTOEVERYTHINGAWARD"] = function(message)
             .. ", auto award " .. (Setting("autoAward") and "ON" or "OFF") .. ".")
         if current.statusReason then Log(current.statusReason, "warn") end
     else
-        Log("Alt-click loot or a bag item to start. Commands: /aa, /aa start <slot>, /aa stop, /aa cancel, /aa award, /aa clear <name>, /aa status")
+        Log("Alt-click loot or a bag item to select it, then press Start. Commands: /aa, /aa start <slot>, /aa stop, /aa cancel, /aa award, /aa clear <name>, /aa status")
     end
 end
