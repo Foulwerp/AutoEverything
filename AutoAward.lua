@@ -1054,7 +1054,7 @@ end
 local function CreateWindow()
     frame = CreateFrame("Frame", "AutoEverythingAwardFrame", UIParent)
     frame:SetWidth(370)
-    frame:SetHeight(136)
+    frame:SetHeight(124)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -1062,33 +1062,33 @@ local function CreateWindow()
     frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     if Theme and Theme.ModalSurface then Theme.ModalSurface(frame) end
-    if frame.themeHeader then frame.themeHeader:SetHeight(34) end
+    if frame.themeHeader then frame.themeHeader:SetHeight(28) end
     frame:Hide()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-    title:SetPoint("TOP", 0, -7)
+    title:SetPoint("TOP", 0, -4)
     title:SetText("Master Loot Awards")
     if Theme then Theme.ApplyFont(title, 16); title:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
     ui.state = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ui.state:SetPoint("TOPLEFT", 18, -40)
+    ui.state:SetPoint("TOPLEFT", 18, -33)
     if Theme then Theme.ApplyFont(ui.state, 11); ui.state:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
     ui.timer = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    ui.timer:SetPoint("TOP", 0, -40)
+    ui.timer:SetPoint("TOP", 0, -33)
     if Theme then Theme.ApplyFont(ui.timer, 12); ui.timer:SetTextColor(Theme.Unpack(Theme.Colors.brand)) end
 
     local iconFrame = CreateFrame("Frame", nil, frame)
-    iconFrame:SetSize(36, 36); iconFrame:SetPoint("TOPLEFT", 18, -56)
+    iconFrame:SetSize(36, 36); iconFrame:SetPoint("TOPLEFT", 18, -47)
     if Theme then Theme.Backdrop(iconFrame, Theme.Colors.surface, 1) end
     ui.icon = iconFrame:CreateTexture(nil, "ARTWORK")
     ui.icon:SetPoint("TOPLEFT", 2, -2); ui.icon:SetPoint("BOTTOMRIGHT", -2, 2)
     ui.item = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    ui.item:SetPoint("TOPLEFT", 18, -96); ui.item:SetWidth(334); ui.item:SetHeight(14); ui.item:SetJustifyH("LEFT")
+    ui.item:SetPoint("TOPLEFT", 18, -87); ui.item:SetWidth(334); ui.item:SetHeight(14); ui.item:SetJustifyH("LEFT")
     if Theme then Theme.ApplyFont(ui.item, 12) end
     ui.rolls = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ui.rolls:SetPoint("TOPRIGHT", -18, -115); ui.rolls:SetWidth(150); ui.rolls:SetJustifyH("RIGHT")
+    ui.rolls:SetPoint("TOPRIGHT", -18, -104); ui.rolls:SetWidth(150); ui.rolls:SetJustifyH("RIGHT")
     if Theme then Theme.ApplyFont(ui.rolls, 11); ui.rolls:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
     ui.winner = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ui.winner:SetPoint("TOPLEFT", 18, -115); ui.winner:SetWidth(180); ui.winner:SetJustifyH("LEFT")
+    ui.winner:SetPoint("TOPLEFT", 18, -104); ui.winner:SetWidth(180); ui.winner:SetJustifyH("LEFT")
     if Theme then Theme.ApplyFont(ui.winner, 11); ui.winner:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
 
     local actionWidth = 69
@@ -1114,13 +1114,8 @@ local function CreateWindow()
         end
         RefreshUI()
     end)
-    ui.auto:SetPoint("TOPLEFT", 254, -37)
+    ui.auto:SetPoint("TOPLEFT", 254, -30)
     AddTooltip(ui.auto, "Automatic assignment", "Off by default. When armed, a unique validated winner is assigned after the timer and grace period. Ambiguity always stops safely.")
-
-    local close = MakeButton(frame, "x", 22, function() frame:Hide() end)
-    close:SetHeight(20)
-    close:SetPoint("TOPRIGHT", -8, -6)
-    AddTooltip(close, "Close", "Hides this window. Use /aa to show it again.")
     RefreshUI()
 end
 
