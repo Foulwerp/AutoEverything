@@ -416,11 +416,26 @@ local function RefreshUI()
     local remaining = current.deadline and math.max(0, current.deadline - now) or 0
     ui.timer:SetText((current.state == STATE_ROLLING or current.state == STATE_TIE or current.state == STATE_GRACE)
         and string.format("%.1fs", remaining) or "")
-    ui.start:Enable()
-    if RoundActive() then ui.start:Disable() end
+    local canStart = shown ~= nil and not RoundActive()
+    if canStart then ui.start:Enable() else ui.start:Disable() end
+
+    local canStop = current.state == STATE_ROLLING or current.state == STATE_TIE
+        or current.state == STATE_GRACE
+    if canStop then ui.stop:Enable() else ui.stop:Disable() end
+    if Theme and Theme.RefreshButtonTheme then
+        ui.start.themeAccentColor = canStart and Theme.Colors.brand or nil
+        ui.stop.themeAccentColor = canStop and Theme.Colors.warning or nil
+        ui.award.themeAccentColor = current.state == STATE_READY and Theme.Colors.success or nil
+        ui.cancel.themeAccentColor = (current.state ~= STATE_PENDING and RoundActive())
+            and Theme.Colors.danger or nil
+        Theme.RefreshButtonTheme(ui.start)
+        Theme.RefreshButtonTheme(ui.stop)
+        Theme.RefreshButtonTheme(ui.award)
+        Theme.RefreshButtonTheme(ui.cancel)
+    end
     if current.state == STATE_READY then ui.award:Enable() else ui.award:Disable() end
     if ui.cancel then
-        if current.state == STATE_PENDING then ui.cancel:Disable() else ui.cancel:Enable() end
+        if current.state ~= STATE_PENDING and RoundActive() then ui.cancel:Enable() else ui.cancel:Disable() end
     end
 end
 
@@ -1096,11 +1111,11 @@ local function CreateWindow()
     ui.start = MakeButton(frame, "Start", actionWidth, function() AA.StartSelected() end, Theme and Theme.Colors.brand)
     ui.start:SetPoint("LEFT", iconFrame, "RIGHT", 10, 0)
     AddTooltip(ui.start, "Start roll", "Snapshots the current group and starts MS /roll 100 and OS /roll 99 tracking for the selected item.")
-    local stop = MakeButton(frame, "Stop", actionWidth, function() AA.Stop() end)
-    stop:SetPoint("LEFT", ui.start, "RIGHT", actionGap, 0)
-    AddTooltip(stop, "Stop roll", "Ends the timer now and resolves the accepted rolls.")
+    ui.stop = MakeButton(frame, "Stop", actionWidth, function() AA.Stop() end)
+    ui.stop:SetPoint("LEFT", ui.start, "RIGHT", actionGap, 0)
+    AddTooltip(ui.stop, "Stop roll", "Ends the timer now and resolves the accepted rolls.")
     ui.award = MakeButton(frame, "Award", actionWidth, function() AA.Award() end, Theme and Theme.Colors.success)
-    ui.award:SetPoint("LEFT", stop, "RIGHT", actionGap, 0)
+    ui.award:SetPoint("LEFT", ui.stop, "RIGHT", actionGap, 0)
     AddTooltip(ui.award, "Validated handoff", "Loot slots are assigned through Master Loot. Bag items open a trade to the winner and place the exact item for your manual confirmation.")
     ui.cancel = MakeButton(frame, "Cancel", actionWidth, function() AA.Cancel() end, Theme and Theme.Colors.danger)
     ui.cancel:SetPoint("LEFT", ui.award, "RIGHT", actionGap, 0)

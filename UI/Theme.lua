@@ -16,6 +16,7 @@ UI.Colors = {
     toggleOn =     { 0.184, 0.506, 0.969 }, -- #2f81f7
     toggleOff =    { 0.267, 0.302, 0.345 }, -- #444d58
     danger =       { 0.973, 0.318, 0.286 }, -- #f85149
+    warning =      { 0.953, 0.612, 0.071 }, -- #f39c12
     border =       { 0.188, 0.212, 0.239 }, -- #30363d
     control =      { 0.129, 0.149, 0.176 }, -- #21262d
     selected =     { 0.090, 0.153, 0.243 }, -- blue-black selection wash
@@ -102,8 +103,9 @@ end
 
 function UI.RefreshButtonTheme(button)
     if not button or not button.SetBackdropColor then return end
-    local accent = button.themeAccentColor
-    local hovered = button.themeHovered == true
+    local enabled = not button.IsEnabled or button:IsEnabled()
+    local accent = enabled and button.themeAccentColor or nil
+    local hovered = enabled and button.themeHovered == true
     if accent then
         local strength = hovered and 0.24 or 0.14
         button:SetBackdropColor(accent[1] * strength, accent[2] * strength, accent[3] * strength, 1)
@@ -141,6 +143,8 @@ function UI.SkinButton(button, accentColor)
             self.themeHovered = false
             UI.RefreshButtonTheme(self)
         end)
+        button:HookScript("OnEnable", function(self) UI.RefreshButtonTheme(self) end)
+        button:HookScript("OnDisable", function(self) UI.RefreshButtonTheme(self) end)
     end
     UI.RefreshButtonTheme(button)
 end
