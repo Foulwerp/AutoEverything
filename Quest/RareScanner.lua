@@ -26,6 +26,8 @@ local cacheBaseline = true
 local cacheZoneKey
 local cacheTooltip
 local toast
+local activeInstanceKey
+local defeatedBosses = {}
 
 local function Now()
     return GetTime and GetTime() or 0
@@ -80,6 +82,42 @@ local function RequestMapRefresh()
     if AutoQuest.Map and AutoQuest.Map.RequestRefresh then
         AutoQuest.Map.RequestRefresh()
     end
+end
+
+-- Defeated bosses are run-local. The legacy client does not expose a stable
+-- unique ID for every five-player instance, so retain the state while the
+-- player remains in the same loaded instance and reset it on leaving/changing.
+local function CurrentInstanceKey()
+    if not IsInInstance then return nil end
+    local inInstance, instanceType = IsInInstance()
+    if not inInstance or (instanceType ~= "party" and instanceType ~= "raid") then
+        return nil
+    end
+    local name, _, difficulty, _, _, _, _, mapID
+    if GetInstanceInfo then
+        name, _, difficulty, _, _, _, _, mapID = GetInstanceInfo()
+    end
+    return table.concat({
+        tostring(instanceType or ""), tostring(name or ""),
+        tostring(difficulty or ""), tostring(mapID or ""),
+    }, ":")
+end
+
+local function SyncInstanceState()
+    local key = CurrentInstanceKey()
+    if key ~= activeInstanceKey then
+        activeInstanceKey = key
+        defeatedBosses = {}
+        RequestMapRefresh()
+    end
+    return key
+end
+
+local function IsBossNPC(npcID)
+    local sighting = sightings[npcID]
+    if sighting and sighting.kind == "boss" then return true end
+    local metadata = SpawnStore.GetMetadata and SpawnStore.GetMetadata(npcID)
+    return NotableKindForMetadata(metadata) == "boss"
 end
 
 local function CreateToast()
@@ -246,10 +284,25 @@ end
 function Scanner.MarkDead(guid, npcID)
     npcID = tonumber(npcID) or (Resolver and Resolver.NPCIDFromGUID
         and Resolver.NPCIDFromGUID(guid))
-    if not npcID or not sightings[npcID] then return false end
-    sightings[npcID] = nil
-    RequestMapRefresh()
-    return true
+    if not npcID then return false end
+    local isBoss = IsBossNPC(npcID)
+    local changed = false
+    if sightings[npcID] then
+        sightings[npcID] = nil
+        changed = true
+    end
+    if isBoss and SyncInstanceState() and not defeatedBosses[npcID] then
+        defeatedBosses[npcID] = true
+        changed = true
+    end
+    if changed then RequestMapRefresh() end
+    return changed
+end
+
+function Scanner.IsBossDefeated(npcID)
+    npcID = tonumber(npcID)
+    if not npcID or not SyncInstanceState() then return false end
+    return defeatedBosses[npcID] == true
 end
 
 function Scanner.HandleCombatLog(...)
@@ -435,6 +488,7 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         Scanner.HandleCombatLog(unit, ...)
     elseif event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+        SyncInstanceState()
         cacheZoneKey = nil
         RebuildCacheCandidates()
     end

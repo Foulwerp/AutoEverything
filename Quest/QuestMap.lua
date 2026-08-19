@@ -473,7 +473,8 @@ local function ZoneForKey(key)
     if notableZone then sources[#sources + 1] = notableZone end
     if serviceZone then sources[#sources + 1] = serviceZone end
     if #sources == 0 then return nil end
-    if #sources == 1 then return sources[1] end
+    if #sources == 1 and sources[1] ~= notableZone then return sources[1] end
+    local scanner = AutoQuest.RareScanner
     local zone = {
         name=(questZone and questZone.name) or sources[1].name,
         zoneIDs={}, questIDs=questZone and questZone.questIDs or {}, points={}, routes={},
@@ -484,8 +485,12 @@ local function ZoneForKey(key)
             local enabled = source ~= notableZone
                 or (point.kind == "rare" and RareNPCsEnabled())
                 or (point.kind ~= "rare" and BossNPCsEnabled())
+            local defeated = source == notableZone and point.kind == "boss"
+                and scanner and scanner.IsBossDefeated
+                and scanner.IsBossDefeated(point.entityID)
             if enabled and (source ~= notableZone
                 or not trackedNPCIDs[tonumber(point.entityID) or point.entityID])
+                and not defeated
             then
                 zone.points[#zone.points + 1] = point
             end
