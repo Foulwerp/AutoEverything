@@ -3904,7 +3904,7 @@ local function RulePage(spec)
             -- The old regular/safety tabs occupied the first settings row.
             -- Keep every replacement control below the title and align toggles
             -- to the vertical center of the adjacent 25px dropdown.
-            ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 390, -54, true,
+            ScalarCheck(parent, "sell", AutoSellConfig, "printMessages", "Announce sales", 360, -54, true,
                 "Prints a chat message when AutoSell sells matching items.")
             ScalarCheck(parent, "sell", AutoSellConfig, "learnVanity", "Learn vanity items", 530, -54, true,
                 "Learns eligible mounts, pets, and vanity items before selling.")
@@ -3932,7 +3932,7 @@ local function RulePage(spec)
             end)
             AddTooltip(qualityButton, "Sell quality safety ceiling", "AutoSell will never sell an item above this quality, even when a rule matches it.")
         elseif spec.moduleName == "roll" then
-            ScalarCheck(parent, "roll", AutoRollConfig, "notifyOnly", "Notify only", 390, -54, false,
+            ScalarCheck(parent, "roll", AutoRollConfig, "notifyOnly", "Notify only", 360, -54, false,
                 "Reports the recommended roll without submitting it automatically.")
             local maximumRollQuality = Core.GetSetting("roll", "maxQuality", ResolvedDefault(AutoRollConfig, "maxQuality", 6))
             local qualityButton = ChoiceButton(parent, "Max roll quality", 20, -48, 330, QualityChoices(), maximumRollQuality, function(value)
