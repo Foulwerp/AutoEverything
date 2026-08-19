@@ -2011,6 +2011,14 @@ frame:SetScript("OnUpdate", function(_, elapsed)
             local sliceStarted = debugprofilestop and debugprofilestop() or 0
             local checkpoints = 0
             buildCooperate = function()
+                -- This callback remains reachable while the frame-budgeted
+                -- build is suspended. Synchronous rebuilds (for example the
+                -- chat debug command) must not yield through WoW's C event
+                -- handler, and unrelated coroutines must not yield on behalf
+                -- of this build.
+                if not coroutine.running or coroutine.running() ~= initialBuildThread then
+                    return
+                end
                 checkpoints = checkpoints + 1
                 if debugprofilestop then
                     local now = debugprofilestop()
