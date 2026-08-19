@@ -443,6 +443,29 @@ local function CandidateForName(slot, canonical)
     return found
 end
 
+local function ActivateMasterLootSlot(slot)
+    local data = LootSlotData(slot)
+    if not data then return false, "the selected loot slot is no longer available" end
+    if not LootSlot then return false, "loot-slot API unavailable" end
+
+    -- ElvUI keeps the slot used by OPEN_MASTER_LOOT_LIST in a private local.
+    -- Clicking its visible slot without a modifier updates that context before
+    -- calling LootSlot. Stock FrameXML uses the public LootFrame fields below.
+    local elvButton = _G["ElvLootSlot" .. slot]
+    if elvButton and elvButton.IsShown and elvButton:IsShown() and elvButton.Click then
+        elvButton:Click()
+        return true
+    end
+
+    if LootFrame then
+        LootFrame.selectedSlot = slot
+        LootFrame.selectedQuality = data.quality
+        LootFrame.selectedItemName = data.name
+    end
+    LootSlot(slot)
+    return true
+end
+
 local function GroupUnitForName(name)
     if SamePlayer(UnitName("player"), name) then return "player" end
     for i = 1, (GetNumRaidMembers and GetNumRaidMembers() or 0) do
@@ -598,6 +621,7 @@ function AA.Start(slot)
     AA.current = current
     selectedSlot = slot
     Announce("Roll for " .. data.link .. ": MS /roll 100, OS /roll 99.")
+    if frame then frame:Show() end
     RefreshUI()
     return true
 end
@@ -694,6 +718,7 @@ function AA.Award()
             current.awardAttempted = true
             SetState(STATE_AWARDED)
             Log("You won; the item remains in your inventory.")
+            if frame then frame:Hide() end
             RefreshUI()
             return true
         end
@@ -721,23 +746,32 @@ function AA.Award()
     local slot
     slot, reason = FindVerifiedSlot()
     if not slot then FailSafe(reason); return false end
-    local candidate
-    candidate, reason = CandidateForName(slot, winner.player)
-    if not candidate then FailSafe(reason); return false end
+    local slotData = LootSlotData(slot)
+    local threshold = GetLootThreshold and tonumber(GetLootThreshold()) or nil
+    local quality = slotData and tonumber(slotData.quality) or nil
+    if not threshold or not quality then
+        FailSafe("the Master Loot threshold could not be verified")
+        return false
+    end
+    if quality < threshold then
+        FailSafe("the item is below the Master Loot threshold")
+        return false
+    end
     if not GiveMasterLoot then FailSafe("assignment API unavailable"); return false end
 
     current.awardAttempted = true
     current.pendingAward = {
+        kind = "loot-context",
         sessionID = lootSessionID,
         slot = slot,
         itemLink = current.itemLink,
         winner = winner.player,
-        candidate = candidate,
         startedAt = GetTime(),
     }
     SetState(STATE_PENDING)
     RefreshUI()
-    GiveMasterLoot(slot, candidate)
+    local activated, activationReason = ActivateMasterLootSlot(slot)
+    if not activated then FailSafe(activationReason); return false end
     return true
 end
 
@@ -773,13 +807,6 @@ local function AcceptRoll(message)
     }
     Log(canonical .. ": " .. bracket .. " " .. value .. ".")
     RefreshUI()
-end
-
-local function SelectFirstLootItem()
-    selectedSlot = nil
-    for slot = 1, (GetNumLootItems and GetNumLootItems() or 0) do
-        if LootSlotData(slot) then selectedSlot = slot break end
-    end
 end
 
 local function BagPositionFromMouseFocus(itemLink)
@@ -981,6 +1008,7 @@ eventFrame:RegisterEvent("LOOT_OPENED")
 eventFrame:RegisterEvent("LOOT_CLOSED")
 eventFrame:RegisterEvent("LOOT_SLOT_CLEARED")
 eventFrame:RegisterEvent("LOOT_SLOT_CHANGED")
+eventFrame:RegisterEvent("OPEN_MASTER_LOOT_LIST")
 eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")
 eventFrame:RegisterEvent("UI_ERROR_MESSAGE")
 eventFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
@@ -1011,8 +1039,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif event == "LOOT_OPENED" then
         lootSessionID = lootSessionID + 1
         lootOpen = true
-        SelectFirstLootItem()
-        ShowWindowIfMaster(false)
+        selectedSlot = nil
     elseif event == "LOOT_CLOSED" then
         lootOpen = false
         selectedSlot = nil
@@ -1021,16 +1048,39 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
             elseif current.state == STATE_ROLLING or current.state == STATE_TIE or current.state == STATE_GRACE or current.state == STATE_READY then
                 AA.Cancel("loot window closed")
             end
+            if frame then frame:Hide() end
         end
+    elseif event == "OPEN_MASTER_LOOT_LIST" and current.state == STATE_PENDING and current.pendingAward
+        and current.pendingAward.kind == "loot-context"
+    then
+        local pending = current.pendingAward
+        local slot, reason = FindVerifiedSlot()
+        if not slot or slot ~= pending.slot or pending.sessionID ~= lootSessionID then
+            FailSafe(reason or "the prepared loot slot changed")
+            return
+        end
+        local candidate
+        candidate, reason = CandidateForName(slot, pending.winner)
+        if not candidate then FailSafe(reason); return end
+        pending.kind = "loot-ready"
+        pending.candidate = candidate
+        pending.startedAt = GetTime()
     elseif event == "CHAT_MSG_SYSTEM" then
         AcceptRoll(arg1)
-    elseif event == "LOOT_SLOT_CLEARED" and current.state == STATE_PENDING and current.pendingAward then
+    elseif event == "LOOT_SLOT_CLEARED" and current.state == STATE_PENDING and current.pendingAward
+        and current.pendingAward.kind == "loot"
+    then
         if tonumber(arg1) == current.pendingAward.slot then
             SetState(STATE_AWARDED)
             current.pendingAward = nil
             Log("Item assignment confirmed.")
+            if frame then frame:Hide() end
             RefreshUI()
         end
+    elseif event == "LOOT_SLOT_CLEARED" and current.state == STATE_PENDING and current.pendingAward
+        and current.pendingAward.kind == "loot-context" and tonumber(arg1) == current.pendingAward.slot
+    then
+        FailSafe("the loot slot cleared while preparing the assignment")
     elseif event == "UI_ERROR_MESSAGE" and current.state == STATE_PENDING then
         FailSafe("the server rejected or could not confirm the assignment: " .. tostring(arg1 or "unknown error"))
     elseif event == "LOOT_SLOT_CHANGED" then
@@ -1044,8 +1094,6 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
             end
         elseif current.state == STATE_PENDING then
             FailSafe("the group or loot method changed while assignment was pending")
-        elseif event == "PARTY_LOOT_METHOD_CHANGED" and lootOpen then
-            ShowWindowIfMaster(false)
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
         if current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED then AA.Cancel("world changed") end
@@ -1075,6 +1123,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         SetState(STATE_AWARDED)
         current.pendingAward = nil
         Announce("Gave " .. completedTrade.itemLink .. " to " .. completedTrade.winner .. ".")
+        if frame then frame:Hide() end
         RefreshUI()
     end
 end)
@@ -1085,6 +1134,11 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
         BeginGrace()
     elseif current.state == STATE_GRACE and current.deadline and GetTime() >= current.deadline then
         ResolveRound()
+    elseif current.state == STATE_PENDING and current.pendingAward and current.pendingAward.kind == "loot-ready" then
+        current.pendingAward.kind = "loot"
+        current.pendingAward.startedAt = GetTime()
+        GiveMasterLoot(current.pendingAward.slot, current.pendingAward.candidate)
+        if CloseDropDownMenus then CloseDropDownMenus() end
     elseif current.state == STATE_PENDING and current.pendingAward and current.pendingAward.kind == "trade" then
         if not current.pendingAward.tradeShown and GetTime() - current.pendingAward.startedAt >= 2 then
             FailSafe("the trade window did not open for the winner")
