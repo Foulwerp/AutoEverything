@@ -882,6 +882,13 @@ local function ReceiveMessage(prefix, message, channel, sender)
     local snapshotPacket = sequence == 0
     if (kind == "B" or kind == "E" or snapshotPacket) and channel ~= "WHISPER" then return end
     if not snapshotPacket and kind ~= "B" and kind ~= "E" and channel ~= GroupChannel() then return end
+    if snapshotPacket and (kind == "Q" or kind == "O") and not member.snapshot then
+        -- The begin packet was dropped or this row belongs to an already
+        -- rejected snapshot. Never fall back to mutating the live quest table.
+        member.resyncPending = true
+        RequestSnapshotFrom(sender)
+        return
+    end
 
     if sequence > 0 then
         local previous = member.lastSequence or 0
@@ -900,7 +907,14 @@ local function ReceiveMessage(prefix, message, channel, sender)
         local expectedQuests = SafeInteger(fields[6], 0, MAX_REMOTE_QUESTS)
         local expectedObjectives = SafeInteger(fields[7], 0, MAX_REMOTE_OBJECTIVES)
         local snapshotSequence = SafeInteger(fields[5], 0, 2147483647)
-        if not expectedQuests or not expectedObjectives or not snapshotSequence then return end
+        if not expectedQuests or not expectedObjectives or not snapshotSequence
+            or not fields[4] or fields[4] == ""
+        then
+            member.snapshot = nil
+            member.resyncPending = true
+            RequestSnapshotFrom(sender)
+            return
+        end
         member.snapshot = {
             id = fields[4],
             sequence = snapshotSequence,
@@ -916,6 +930,7 @@ local function ReceiveMessage(prefix, message, channel, sender)
         member.capabilities = CleanField(fields[9], 80)
     elseif kind == "E" then
         local snapshot = member.snapshot
+        local hadComplete = member.completeSnapshot
         local valid = snapshot ~= nil
         if valid and snapshot.expectedQuests ~= nil then
             valid = snapshot.id == fields[4]
@@ -955,14 +970,11 @@ local function ReceiveMessage(prefix, message, channel, sender)
             member.stale = false
             member.resyncPending = false
         else
-            member.completeSnapshot = snapshot and snapshot.hadComplete or false
-            member.resyncPending = member.completeSnapshot
+            member.completeSnapshot = snapshot and snapshot.hadComplete or hadComplete
+            member.resyncPending = true
+            RequestSnapshotFrom(sender)
         end
         member.snapshot = nil
-        if not valid then
-            requestPending = true
-            nextAuditAt = 0
-        end
     elseif kind == "X" and fields[5] and not snapshotPacket then
         local key = CleanField(fields[5], 40)
         if key ~= "" then member.quests[key] = nil end
@@ -970,7 +982,8 @@ local function ReceiveMessage(prefix, message, channel, sender)
         local key = CleanField(fields[5], 40)
         local count = SafeInteger(fields[9], 0, 20)
         if key == "" or not count then return end
-        local quests = snapshotPacket and member.snapshot and member.snapshot.quests or member.quests
+        local snapshot = snapshotPacket and member.snapshot or nil
+        local quests = snapshot and snapshot.quests or member.quests
         if not quests then return end
         local quest = quests[key] or { objectives = {} }
         quest.key = key
@@ -980,14 +993,15 @@ local function ReceiveMessage(prefix, message, channel, sender)
         quest.objectiveCount = count
         TrimMemberObjectives(quest, count)
         quests[key] = quest
-        if snapshotPacket then
-            member.snapshot.receivedQuests = member.snapshot.receivedQuests + 1
+        if snapshot then
+            snapshot.receivedQuests = snapshot.receivedQuests + 1
         end
     elseif kind == "O" and fields[5] then
         local key = CleanField(fields[5], 40)
         local index = SafeInteger(fields[6], 1, 20)
         if key == "" or not index then return end
-        local quests = snapshotPacket and member.snapshot and member.snapshot.quests or member.quests
+        local snapshot = snapshotPacket and member.snapshot or nil
+        local quests = snapshot and snapshot.quests or member.quests
         if not quests then return end
         local quest = quests[key] or { key = key, title = "Unknown quest", objectives = {} }
         quest.objectives[index] = {
@@ -1000,8 +1014,8 @@ local function ReceiveMessage(prefix, message, channel, sender)
             text = CleanField(fields[13] or ("Objective " .. index), 100),
         }
         quests[key] = quest
-        if snapshotPacket then
-            member.snapshot.receivedObjectives = member.snapshot.receivedObjectives + 1
+        if snapshot then
+            snapshot.receivedObjectives = snapshot.receivedObjectives + 1
         end
     end
 
