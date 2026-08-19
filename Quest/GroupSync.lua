@@ -748,10 +748,15 @@ local function ReceiveMessage(prefix, message, channel, sender)
 
     if member.session ~= remoteSession then
         member.session = remoteSession
-        member.quests = {}
         member.snapshot = nil
-        member.completeSnapshot = false
         member.lastSequence = 0
+        if member.completeSnapshot and next(member.quests or {}) then
+            member.resyncPending = true
+        else
+            member.quests = {}
+            member.completeSnapshot = false
+        end
+        RequestSnapshotFrom(sender)
     end
     member.transport = "AEQ2"
     member.updated = now
@@ -768,11 +773,10 @@ local function ReceiveMessage(prefix, message, channel, sender)
         local advertised = SafeInteger(fields[4], 0, 2147483647)
         if not advertised then return end
         if advertised > (member.lastSequence or 0) or not member.completeSnapshot then
-            member.stale = true
-            member.completeSnapshot = false
+            -- Keep the last complete snapshot visible while its replacement is
+            -- transferred. The E packet commits the new snapshot atomically.
+            member.resyncPending = true
             RequestSnapshotFrom(sender)
-            if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
-            if AQ.Map and AQ.Map.RequestRefresh then AQ.Map.RequestRefresh() end
         end
         return
     end
@@ -793,10 +797,9 @@ local function ReceiveMessage(prefix, message, channel, sender)
         if sequence <= previous then return end
         if previous > 0 and sequence > previous + 1 and HasCapability(member, "contig") then
             -- A later delta cannot prove that an earlier one was irrelevant.
-            -- Hide the partial state and request a complete snapshot instead of
-            -- continuing to show an old remaining count as if it were current.
-            member.stale = true
-            member.completeSnapshot = false
+            -- Preserve the last complete view until its atomic replacement is
+            -- ready, preventing all of this member's pins from flickering out.
+            member.resyncPending = true
             RequestSnapshotFrom(sender)
         end
         member.lastSequence = sequence
@@ -853,8 +856,10 @@ local function ReceiveMessage(prefix, message, channel, sender)
             member.lastSequence = snapshot.sequence
             member.validSnapshotAt = now
             member.stale = false
+            member.resyncPending = false
         else
             member.completeSnapshot = snapshot and snapshot.hadComplete or false
+            member.resyncPending = member.completeSnapshot
         end
         member.snapshot = nil
         if not valid then
