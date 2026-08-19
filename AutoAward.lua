@@ -810,11 +810,9 @@ function AA.Cancel(reason)
     current.rejectedRolls = {}
     current.allowedTiePlayers = nil
     current.requiredTieBracket = nil
-    if reason then
-        Log(reason, "warn")
-    else
-        Announce(cancelledItem and ("Roll canceled for " .. cancelledItem .. ".") or "Roll canceled.")
-    end
+    local message = cancelledItem and ("Roll canceled for " .. cancelledItem) or "Roll canceled"
+    if reason then message = message .. ": " .. reason end
+    Announce(message .. ".")
     if frame then frame:Hide() end
     RefreshUI()
 end
@@ -1236,10 +1234,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
             or current.state == STATE_GRACE or current.state == STATE_READY)
         and tonumber(arg1) == current.lootSlot
     then
-        local cancelledItem = current.itemLink
         AA.Cancel("the selected loot slot cleared before assignment")
-        Broadcast(cancelledItem and ("Roll canceled for " .. cancelledItem .. ": item no longer available.")
-            or "Roll canceled: item no longer available.")
     elseif event == "UI_ERROR_MESSAGE" and current.state == STATE_PENDING and current.pendingAward then
         -- Combat and unrelated raid actions can emit UI errors during the
         -- assignment window. Preserve the message for timeout diagnostics,
