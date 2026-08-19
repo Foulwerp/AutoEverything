@@ -17,6 +17,9 @@ local activeByNPC, activeByName = {}, {}
 local liveMatchCache = {}
 local visibleUnits = {}
 local refreshPending, refreshAt = false, 0
+local questContributions = {}
+local contributionStats = { rebuilt=0, reused=0 }
+local IndexQuestTargets
 
 local function MarkersRequested()
     local moduleEnabled = AutoCore.GetSetting("quest", "enabled",
@@ -80,6 +83,7 @@ end
 
 function Markers.ApplyProfile()
     ApplyElvUIProvider()
+    questContributions = {}
     Markers.RebuildIndex()
     refreshPending, refreshAt = true, 0
 end
@@ -109,6 +113,108 @@ local function ObjectiveStatus(objectives, record)
     local objective = Resolver.ObjectiveForRecord(objectives, record)
     local done, remaining = ParseProgress(objective)
     return done, remaining, objective
+end
+
+local function QuestFingerprint(quest, member)
+    local fields = {
+        tostring(quest.id or ""), tostring(quest.title or ""),
+        quest.complete and "1" or "0",
+        member and tostring(member.name or "") or "",
+        member and tostring(member.class or "") or "",
+        member and member.completeSnapshot and "1" or "0",
+        member and member.stale and "1" or "0",
+        member and member.connected == false and "0" or "1",
+    }
+    for index, objective in ipairs(quest.objectives or {}) do
+        fields[#fields + 1] = table.concat({
+            tostring(index), tostring(objective.text or ""),
+            tostring(objective.type or objective.kind or ""),
+            (objective.finished or objective.done) and "1" or "0",
+            tostring(objective.current or ""), tostring(objective.required or ""),
+            tostring(objective.targetType or ""), tostring(objective.targetID or ""),
+        }, "\30")
+    end
+    return table.concat(fields, "\31")
+end
+
+local function LocalObjectives(quest)
+    local objectives = {}
+    for objectiveIndex, objective in ipairs(quest.objectives or {}) do
+        objectives[objectiveIndex] = {
+            text=objective.text, kind=objective.type, done=objective.finished,
+            current=objective.current, required=objective.required,
+        }
+    end
+    return objectives
+end
+
+local function RemoteObjectives(quest)
+    local objectives = {}
+    for index, objective in ipairs(quest.objectives or {}) do
+        objectives[index] = {
+            text = objective.text or "", kind = objective.type or "",
+            done = Resolver.ObjectiveIsComplete(objective.text, objective.finished)
+                or (objective.current and objective.required
+                    and objective.required > 0 and objective.current >= objective.required),
+            current = objective.current, required = objective.required,
+            targetType = objective.targetType, targetID = objective.targetID,
+        }
+    end
+    return objectives
+end
+
+local function BuildQuestContribution(quest, member, sourceKey, fingerprint)
+    local aggregateNPC, aggregateName = activeByNPC, activeByName
+    activeByNPC, activeByName = {}, {}
+    if not quest.complete then
+        local objectives = member and RemoteObjectives(quest) or LocalObjectives(quest)
+        local questID = tonumber(quest.id)
+            or tonumber(string.match(quest.key or sourceKey or "", "I(%d+)$"))
+        IndexQuestTargets(quest.title, questID, objectives,
+            member and member.name, member and member.class)
+    end
+    local contribution = {
+        fingerprint=fingerprint, byNPC=activeByNPC, byName=activeByName,
+    }
+    activeByNPC, activeByName = aggregateNPC, aggregateName
+    return contribution
+end
+
+local function MergeMatch(index, key, source)
+    local target = index[key]
+    if not target then
+        target = { kill=false, loot=false, quests={}, items={}, members={}, memberSteps={} }
+        index[key] = target
+    end
+    target.kill = target.kill or source.kill
+    target.loot = target.loot or source.loot
+    target.talk = target.talk or source.talk
+    target.killRemaining = math.max(target.killRemaining or 0, source.killRemaining or 0)
+    target.lootRemaining = math.max(target.lootRemaining or 0, source.lootRemaining or 0)
+    for title in pairs(source.quests or {}) do target.quests[title] = true end
+    for item in pairs(source.items or {}) do target.items[item] = true end
+    for name, progress in pairs(source.members or {}) do
+        local merged = target.members[name] or {}
+        target.members[name] = merged
+        merged.class = progress.class or merged.class
+        if progress.kill == true then merged.kill = merged.kill or true
+        elseif progress.kill then merged.kill = math.max(tonumber(merged.kill) or 0, progress.kill) end
+        if progress.loot == true then merged.loot = merged.loot or true
+        elseif progress.loot then merged.loot = math.max(tonumber(merged.loot) or 0, progress.loot) end
+    end
+    for name, steps in pairs(source.memberSteps or {}) do
+        local merged = target.memberSteps[name]
+        if not merged then merged = { seen={} }; target.memberSteps[name] = merged end
+        for _, step in ipairs(steps) do
+            local stepKey = table.concat({
+                step.questTitle or "", step.kind or "", step.text or "",
+            }, "\31")
+            if not merged.seen[stepKey] then
+                merged.seen[stepKey] = true
+                merged[#merged + 1] = step
+            end
+        end
+    end
 end
 
 local function AddMatch(index, key, kind, questTitle, itemName, remaining,
@@ -162,7 +268,7 @@ local function AddMatch(index, key, kind, questTitle, itemName, remaining,
     end
 end
 
-local function IndexQuestTargets(title, questID, objectives, memberName, memberClass)
+IndexQuestTargets = function(title, questID, objectives, memberName, memberClass)
     local resolved = AutoQuest.ResolveQuestEntries(questID, title)
     for _, match in ipairs(resolved) do
         for _, record in ipairs(match.entry.records or {}) do
@@ -247,57 +353,54 @@ local function IndexQuestTargets(title, questID, objectives, memberName, memberC
     end
 end
 
+local function SameContributionKeys(left, right)
+    for key in pairs(left) do if not right[key] then return false end end
+    for key in pairs(right) do if not left[key] then return false end end
+    return true
+end
+
 function Markers.RebuildIndex()
     activeByNPC, activeByName = {}, {}
-    liveMatchCache = {}
     if not Enabled() and not GroupTooltipsRequested() then return end
     Resolver.BuildActive()
-
-    for _, quest in ipairs(AutoQuest.QuestState.GetQuests()) do
-        if not quest.complete then
-            local objectives = {}
-            for objectiveIndex, objective in ipairs(quest.objectives) do
-                objectives[objectiveIndex] = {
-                    text=objective.text, kind=objective.type, done=objective.finished,
-                }
-            end
-            IndexQuestTargets(quest.title, quest.id, objectives)
+    local previous, nextContributions = questContributions, {}
+    local rebuilt, reused = 0, 0
+    local function Include(sourceKey, quest, member)
+        local fingerprint = QuestFingerprint(quest, member)
+        local contribution = previous[sourceKey]
+        if not contribution or contribution.fingerprint ~= fingerprint then
+            contribution = BuildQuestContribution(quest, member, sourceKey, fingerprint)
+            rebuilt = rebuilt + 1
+        else
+            reused = reused + 1
         end
+        nextContributions[sourceKey] = contribution
+    end
+    for _, quest in ipairs(AutoQuest.QuestState.GetQuests()) do
+        Include("local:" .. tostring(quest.key or quest.id or quest.title), quest)
     end
 
-    -- A synchronized member's objectives must participate even when the
-    -- local player does not have that quest. Only consume complete snapshots
-    -- so a multi-message refresh never flashes partial or misleading badges.
+    -- Complete synchronized snapshots participate even when the local player
+    -- does not have the quest. Each member/quest pair owns one contribution,
+    -- so departure or completion removes only that pair from the aggregate.
     local sync = AutoQuest.GroupSync
     local members = sync and sync.GetMemberQuestData and sync.GetMemberQuestData() or {}
-    for _, member in pairs(members) do
+    for memberKey, member in pairs(members) do
         if member.completeSnapshot and not member.stale and member.connected ~= false then
             for key, quest in pairs(member.quests or {}) do
-                if not quest.complete then
-                    local objectives = {}
-                    for index, objective in ipairs(quest.objectives or {}) do
-                        objectives[index] = {
-                            text = objective.text or "",
-                            kind = objective.type or "",
-                            done = Resolver.ObjectiveIsComplete(objective.text, objective.finished)
-                                or (objective.current and objective.required
-                                    and objective.required > 0
-                                    and objective.current >= objective.required),
-                            current = objective.current,
-                            required = objective.required,
-                            targetType = objective.targetType,
-                            targetID = objective.targetID,
-                        }
-                    end
-                    local remoteQuestID = tonumber(quest.id)
-                        or tonumber(string.match(key or "", "^I(%d+)$"))
-                    IndexQuestTargets(quest.title, remoteQuestID, objectives,
-                        member.name, member.class)
-                end
+                Include("remote:" .. tostring(memberKey) .. ":" .. tostring(key), quest, member)
             end
         end
     end
-
+    questContributions = nextContributions
+    contributionStats = { rebuilt=rebuilt, reused=reused }
+    if rebuilt > 0 or not SameContributionKeys(previous, nextContributions) then
+        liveMatchCache = {}
+    end
+    for _, contribution in pairs(questContributions) do
+        for key, match in pairs(contribution.byNPC) do MergeMatch(activeByNPC, key, match) end
+        for key, match in pairs(contribution.byName) do MergeMatch(activeByName, key, match) end
+    end
 end
 
 ----------------------------------------------------------------------
@@ -626,6 +729,7 @@ end
 function Markers.SetEnabled(enabled)
     AutoCore.SetSetting("quest", "nameplateMarkers", enabled and true or false)
     ApplyElvUIProvider()
+    questContributions = {}
     Markers.RebuildIndex()
     RefreshVisible()
     AutoCore.Info("Quest", "Quest nameplate markers " .. (enabled and "enabled." or "disabled."))
@@ -641,6 +745,8 @@ function Markers.Debug()
     Markers.RebuildIndex()
     local unit = UnitExists("target") and "target" or (UnitExists("mouseover") and "mouseover")
     print("|cff33ccffQuest Nameplate|r")
+    print("  quest indexes rebuilt=" .. contributionStats.rebuilt
+        .. " reused=" .. contributionStats.reused)
     if not unit then print("  Target or mouse over an objective NPC first."); return end
 
     local plate = FindPlate(unit)
