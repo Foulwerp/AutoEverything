@@ -988,6 +988,18 @@ SlashCmdList["AUTOQUEST"] = function(msg)
         else
             AutoCore.Warn("Quest", "Quest map pins are unavailable.")
         end
+    elseif msg == "sync debug" then
+        if AQ.GroupSync and AQ.GroupSync.Debug then
+            AQ.GroupSync.Debug()
+        else
+            AutoCore.Warn("Quest", "Group quest synchronization is unavailable.")
+        end
+    elseif msg == "sync request" then
+        if AQ.GroupSync and AQ.GroupSync.RequestUpdate then
+            AQ.GroupSync.RequestUpdate()
+        else
+            AutoCore.Warn("Quest", "Group quest synchronization is unavailable.")
+        end
     elseif msg == "whoami" then
         local cfg = GetActiveConfig()
         if not cfg then
@@ -1016,6 +1028,8 @@ SlashCmdList["AUTOQUEST"] = function(msg)
         print("  /autoquest markers debug - Diagnose the targeted objective NPC nameplate")
         print("  /autoquest pins on|off - Toggle active quest locations on the map and minimap")
         print("  /autoquest pins debug - Diagnose active quest map/minimap matching")
+        print("  /autoquest sync debug - Show synchronized party-member state and protocol")
+        print("  /autoquest sync request - Request fresh party quest progress")
         print("  /autoquest whoami - Show which config profile this character is using")
     end
 end

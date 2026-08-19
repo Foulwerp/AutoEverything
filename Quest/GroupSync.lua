@@ -1436,6 +1436,7 @@ function Sync.Debug()
             print("  " .. tostring(displayName) .. ": snapshot="
                 .. tostring(member and member.completeSnapshot or false)
                 .. " stale=" .. tostring(member and member.stale or false)
+                .. " transport=" .. tostring(member and member.transport or "unknown")
                 .. " class=" .. tostring(member and member.class or "unknown")
                 .. " protocol=" .. tostring(member and member.capabilities or "unknown")
                 .. " sequence=" .. tostring(member and member.lastSequence or "none")
