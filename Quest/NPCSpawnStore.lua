@@ -175,6 +175,40 @@ function Store.GetMetadata(npcID)
     return found
 end
 
+local function GeneratedNotableMetadata(npcID)
+    npcID = tonumber(npcID)
+    if not npcID then return nil end
+    local packed = DataStore.GetRareNPCPacked(npcID)
+    if type(packed) ~= "string" then return nil end
+    local kind, name = string.match(packed, "^([^\t]+)\t(.*)$")
+    if kind ~= "r" and kind ~= "b" then return nil end
+    local metadata = metadataByID[npcID] or {
+        id=npcID,
+        name=name ~= "" and name or nil,
+        classification=kind == "r" and 2 or 3,
+        boss=kind == "b",
+    }
+    metadata.kind = kind == "r" and "rare" or "boss"
+    metadataByID[npcID] = metadata
+    return metadata
+end
+
+function Store.GetRareMetadata(npcID)
+    local metadata = GeneratedNotableMetadata(npcID)
+    return metadata and metadata.kind == "rare" and metadata or nil
+end
+
+function Store.GetRareNPCsForZone(zoneID)
+    local packed = DataStore.GetRareNPCsByZonePacked(zoneID)
+    if type(packed) ~= "string" then return {} end
+    local result = {}
+    for value in string.gmatch(packed, "[^,]+") do
+        local metadata = GeneratedNotableMetadata(tonumber(value))
+        if metadata and metadata.kind == "rare" then result[#result + 1] = metadata end
+    end
+    return result
+end
+
 function Store.GetNotableNPCs(cooperate)
     if notableNPCs then return notableNPCs end
     if notableNPCsBuilding then return nil end
@@ -190,13 +224,30 @@ function Store.GetNotableNPCs(cooperate)
             metadataByID[metadata.id] = metadata
         end
     end
-    ForEachMetadata(Add, cooperate)
+    local generatedRecords = DataStore.GetRareNPCRecords()
+    if next(generatedRecords) ~= nil then
+        for npcID in pairs(generatedRecords) do
+            Add(GeneratedNotableMetadata(npcID))
+            if cooperate then cooperate() end
+        end
+    else
+        -- Legacy/test databases may predate the compact catalog. Installed
+        -- builds always take the branch above and never scan all metadata.
+        ForEachMetadata(Add, cooperate)
+    end
     for npcID in pairs(observedClassifications) do
         Add(Store.GetMetadata(npcID) or { id=npcID, name=Store.GetName(npcID) })
     end
-    notableNPCs = result
+    table.sort(result, function(left, right) return left.id < right.id end)
+    -- Do not cache an empty legacy result: old embedded test/data shims may
+    -- populate their metadata table after this file has loaded.
+    if #result > 0 or next(generatedRecords) ~= nil then
+        notableNPCs = result
+    else
+        notableNPCs = nil
+    end
     notableNPCsBuilding = false
-    return notableNPCs
+    return result
 end
 
 function Store.AreNotableNPCsReady()
@@ -224,12 +275,19 @@ local function BuildNPCNameIndex(cooperate)
         if not npcNamesByID[npcID] then npcNamesByID[npcID] = name end
     end
 
+    local packedNameCount = 0
     for _, packed in ipairs(DataStore.GetNPCNamePacks()) do
         for row in string.gmatch(packed, "[^\n]+") do
             local npcText, name = string.match(row, "^(%d+)=(.*)$")
             Add(npcText, name)
+            packedNameCount = packedNameCount + 1
             if cooperate then cooperate() end
         end
+    end
+    if packedNameCount == 0 then
+        -- Compatibility for older databases that carry names only in their
+        -- metadata packs. Installed builds use the dedicated name index.
+        ForEachMetadata(function(metadata) Add(metadata.id, metadata.name) end, cooperate)
     end
     DataStore.ForEachQuest(function(_, entry)
         for _, record in ipairs(entry.records or {}) do

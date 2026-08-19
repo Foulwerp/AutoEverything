@@ -115,6 +115,20 @@ function Store.GetNPCMetadataPacks()
     return Table("npcMetadataPacked", AutoQuest.NPCMetadataPacked) or {}
 end
 
+function Store.GetRareNPCPacked(npcID)
+    local records = Table("rareNPCs", AutoQuest.RareNPCPacked)
+    return records and records[tonumber(npcID)] or nil
+end
+
+function Store.GetRareNPCRecords()
+    return Table("rareNPCs", AutoQuest.RareNPCPacked) or {}
+end
+
+function Store.GetRareNPCsByZonePacked(zoneID)
+    local zones = Table("rareNPCsByZone", AutoQuest.RareNPCsByZone)
+    return zones and zones[tonumber(zoneID)] or nil
+end
+
 function Store.GetQuestObjectiveNPCPacked(questID)
     local index = Table("questObjectiveNPCs", AutoQuest.QuestObjectiveNPCs)
     return index and index[tonumber(questID)] or nil

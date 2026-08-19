@@ -205,12 +205,12 @@ local function PathsEnabled()
         AutoQuestConfig and AutoQuestConfig.showPatrolPaths) ~= false
 end
 
--- Service pages may expose many sampled positions for an NPC that patrols.
+-- NPC pages may expose many sampled positions for an NPC that patrols.
 -- Split disconnected samples first so separate static spawns are not joined
 -- across a zone, then derive one smooth centerline per connected group with
--- service pins only at its two endpoints.
-local SERVICE_GROUP_LINK_SQ = 25
-local SERVICE_ROUTE_MIN_SPAN_SQ = 2.25
+-- pins only at its endpoint(s).
+local PATROL_GROUP_LINK_SQ = 25
+local PATROL_ROUTE_MIN_SPAN_SQ = 2.25
 
 local function ServiceCoordinateGroups(coords)
     local points = {}
@@ -234,7 +234,7 @@ local function ServiceCoordinateGroups(coords)
                     if not assigned[candidateIndex] then
                         local candidate = points[candidateIndex]
                         local dx, dy = point.x - candidate.x, point.y - candidate.y
-                        if dx * dx + dy * dy <= SERVICE_GROUP_LINK_SQ then
+                        if dx * dx + dy * dy <= PATROL_GROUP_LINK_SQ then
                             assigned[candidateIndex] = true
                             queue[#queue + 1] = candidateIndex
                         end
@@ -319,7 +319,7 @@ local function ServiceRoutePath(group)
                 bestTo, bestDistanceSq = index, nearestSq[index]
             end
         end
-        if not bestTo or bestDistanceSq > SERVICE_GROUP_LINK_SQ then break end
+        if not bestTo or bestDistanceSq > PATROL_GROUP_LINK_SQ then break end
         local bestFrom, distance = nearest[bestTo], math.sqrt(bestDistanceSq)
         connected[bestTo] = true
         adjacency[bestFrom][#adjacency[bestFrom] + 1] = { index=bestTo, distance=distance }
@@ -371,7 +371,7 @@ end
 local function AddServiceLocation(zone, service, location)
     for _, group in ipairs(ServiceCoordinateGroups(location.coords)) do
         local _, _, spanSq = FarthestServicePoints(group)
-        if #group >= 3 and spanSq >= SERVICE_ROUTE_MIN_SPAN_SQ then
+        if #group >= 3 and spanSq >= PATROL_ROUTE_MIN_SPAN_SQ then
             local path = ServiceRoutePath(group)
             zone.routes[#zone.routes + 1] = {
                 points=path,
@@ -382,6 +382,42 @@ local function AddServiceLocation(zone, service, location)
             AddServicePoint(zone, service, location, path[#path], true)
         elseif #group > 0 then
             AddServicePoint(zone, service, location, RepresentativeServicePoint(group), false)
+        end
+    end
+end
+
+local function AddRarePatrolPoint(zone, npc, location, point, routeEndpoint)
+    zone.points[#zone.points + 1] = {
+        x=point.x, y=point.y, floor=tonumber(location.floor) or 0,
+        kind="rare", entityID=npc.id, name=npc.name,
+        routeEndpoint=routeEndpoint and true or nil,
+    }
+end
+
+local function AddRarePatrolLocation(zone, npc, location)
+    for _, group in ipairs(ServiceCoordinateGroups(location.coords)) do
+        local _, _, spanSq = FarthestServicePoints(group)
+        if #group >= 3 and spanSq >= PATROL_ROUTE_MIN_SPAN_SQ then
+            local path = ServiceRoutePath(group)
+            local closed = false
+            if #path >= 5 then
+                local dx = path[1].x - path[#path].x
+                local dy = path[1].y - path[#path].y
+                closed = dx * dx + dy * dy <= spanSq * 0.16
+            end
+            if closed then path[#path + 1] = path[1] end
+            zone.routes[#zone.routes + 1] = {
+                points=path, closed=closed,
+                floor=tonumber(location.floor) or 0,
+                kind="rare", entityID=npc.id, name=npc.name,
+            }
+            AddRarePatrolPoint(zone, npc, location, path[1], true)
+            if not closed then
+                AddRarePatrolPoint(zone, npc, location, path[#path], true)
+            end
+        elseif #group > 0 then
+            AddRarePatrolPoint(zone, npc, location,
+                RepresentativeServicePoint(group), false)
         end
     end
 end
@@ -817,8 +853,25 @@ local function BuildNotableIndex()
     notableByZone = {}
     local pointKeys = {}
     for _, metadata in ipairs(SpawnStore.GetNotableNPCs(buildCooperate) or {}) do
-        AddDiscoveryNPC(SpawnStore.GetNPC(metadata.id),
-            metadata.kind or "rare", notableByZone, pointKeys)
+        local npc = SpawnStore.GetNPC(metadata.id)
+        if metadata.kind == "rare" and npc and type(npc.locations) == "table" then
+            for _, location in ipairs(npc.locations) do
+                local key = NormalizeZone(location.zone)
+                if key ~= "" then
+                    local zone = notableByZone[key]
+                    if not zone then
+                        zone = { name=location.zone, zoneIDs={}, questIDs={}, points={}, routes={} }
+                        notableByZone[key] = zone
+                    end
+                    local numericZoneID = tonumber(location.zoneID)
+                    if numericZoneID then zone.zoneIDs[numericZoneID] = true end
+                    AddRarePatrolLocation(zone, npc, location)
+                end
+                if buildCooperate then buildCooperate() end
+            end
+        else
+            AddDiscoveryNPC(npc, metadata.kind or "rare", notableByZone, pointKeys)
+        end
         if buildCooperate then buildCooperate() end
     end
 end
@@ -853,6 +906,9 @@ function QuestMap.RebuildIndex()
     activeByZone = {}
     activePointKeys = {}
     combinedByZone = {}
+    if SpawnStore.AreNotableNPCsReady and not SpawnStore.AreNotableNPCsReady() then
+        notableByZone = nil
+    end
     buildStats = {
         activeQuests=0, matchedQuests=0, confirmedObjectives=0,
         points=0, servicePoints=0, partyPoints=0, partyQuests=0, matches={}
@@ -1144,7 +1200,7 @@ end
 local function RouteEntityForPin(pin)
     local cluster = pin and pin.cluster
     for _, point in ipairs(cluster and cluster.members or {}) do
-        if point.isService and point.routeEndpoint and point.entityID then
+        if point.routeEndpoint and point.entityID then
             return tonumber(point.entityID) or point.entityID
         end
     end

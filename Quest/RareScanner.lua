@@ -13,8 +13,8 @@ local SpawnStore = AutoQuest.NPCSpawnStore
 
 local SIGHTING_SECONDS = 300
 local ALERT_COOLDOWN = 90
-local CACHE_BATCH = 4
-local CACHE_INTERVAL = 0.10
+local CACHE_BATCH = 2
+local CACHE_INTERVAL = 0.25
 local UNIT_SCAN_INTERVAL = 0.50
 
 local sightings = {}
@@ -26,7 +26,6 @@ local cacheBaseline = true
 local cacheZoneKey
 local cacheTooltip
 local toast
-local rareMetadataByID
 
 local function Now()
     return GetTime and GetTime() or 0
@@ -58,16 +57,14 @@ local function IsRareClassification(classification)
     return classification == "rare" or classification == "rareelite"
 end
 
-local function RareMetadataIndex()
-    if rareMetadataByID then return rareMetadataByID end
-    local notable = SpawnStore.GetNotableNPCs()
-    if not notable then return nil end
-    local result = {}
-    for _, metadata in ipairs(notable) do
-        if metadata.kind == "rare" then result[metadata.id] = metadata end
+local function RareMetadataForID(npcID)
+    if SpawnStore.GetRareMetadata then return SpawnStore.GetRareMetadata(npcID) end
+    -- Compatibility for older embedded data-store shims.
+    for _, metadata in ipairs(SpawnStore.GetNotableNPCs() or {}) do
+        if tonumber(metadata.id) == tonumber(npcID) and metadata.kind == "rare" then
+            return metadata
+        end
     end
-    rareMetadataByID = result
-    return rareMetadataByID
 end
 
 local function RequestMapRefresh()
@@ -246,8 +243,7 @@ function Scanner.HandleCombatLog(...)
     end
     local function ObserveGUID(guid, name)
         local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
-        local metadataIndex = npcID and RareMetadataIndex()
-        local metadata = metadataIndex and metadataIndex[npcID]
+        local metadata = npcID and RareMetadataForID(npcID)
         if npcID and metadata and IsRareMetadata(metadata) then
             Scanner.ObserveNPC(npcID, name or metadata.name, guid, nil, "combat log", false)
         end
@@ -310,17 +306,20 @@ local function RebuildCacheCandidates()
     if zoneKey == cacheZoneKey then return end
     cacheZoneKey = zoneKey
     cacheCandidates, cacheCandidateIndex, cacheBaseline = {}, 1, true
-    local seen = {}
-    for _, metadata in pairs(RareMetadataIndex() or {}) do
-        for _, location in ipairs(SpawnStore.Get(metadata.id) or {}) do
-            if tonumber(location.zoneID) == tonumber(zoneID)
-                or NormalizeZone(location.zone) == NormalizeZone(zone)
-            then
-                if not seen[metadata.id] then
-                    seen[metadata.id] = true
-                    cacheCandidates[#cacheCandidates + 1] = metadata
+    if tonumber(zoneID) and tonumber(zoneID) > 0 and SpawnStore.GetRareNPCsForZone then
+        cacheCandidates = SpawnStore.GetRareNPCsForZone(zoneID)
+    else
+        -- Legacy clients normally expose an area ID. If one does not, keep a
+        -- bounded fallback over the compact rare catalog rather than walking
+        -- the universal NPC metadata database.
+        for _, metadata in ipairs(SpawnStore.GetNotableNPCs() or {}) do
+            if metadata.kind == "rare" then
+                for _, location in ipairs(SpawnStore.Get(metadata.id) or {}) do
+                    if NormalizeZone(location.zone) == NormalizeZone(zone) then
+                        cacheCandidates[#cacheCandidates + 1] = metadata
+                        break
+                    end
                 end
-                break
             end
         end
     end
