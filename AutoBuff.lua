@@ -21,7 +21,7 @@ local rejectedTrivialTargets = {}
 local rejectedPowerfulBuffs = {}
 local lastBuffAttempt = nil
 local castReadyAt = nil
-local window, castButton, statusText
+local combatHider, window, castButton, statusText
 local windowHidesInCombat = false
 
 local BASE_WINDOW_HEIGHT = 88
@@ -527,7 +527,11 @@ end
 
 local function CreateWindow()
     if window then return end
-    window = CreateFrame("Frame", "AutoEverythingBuffWindow", UIParent)
+    -- Keep secure combat visibility separate from availability visibility.
+    -- A "[combat] hide; show" driver attached directly to the window would
+    -- force it shown out of combat and fight PaintWindow's manual Hide calls.
+    combatHider = CreateFrame("Frame", nil, UIParent)
+    window = CreateFrame("Frame", "AutoEverythingBuffWindow", combatHider)
     window:SetSize(WINDOW_WIDTH, BASE_WINDOW_HEIGHT)
     window:SetFrameStrata("MEDIUM")
     window:SetMovable(true)
@@ -601,11 +605,14 @@ end
 local function UpdateCombatVisibility(hideInCombat)
     if InCombat() then return end
     if hideInCombat and not windowHidesInCombat and RegisterStateDriver then
-        local ok = pcall(RegisterStateDriver, window, "visibility", "[combat] hide; show")
+        local ok = pcall(RegisterStateDriver, combatHider, "visibility", "[combat] hide; show")
         if ok then windowHidesInCombat = true end
     elseif not hideInCombat and windowHidesInCombat and UnregisterStateDriver then
-        local ok = pcall(UnregisterStateDriver, window, "visibility")
-        if ok then windowHidesInCombat = false end
+        local ok = pcall(UnregisterStateDriver, combatHider, "visibility")
+        if ok then
+            windowHidesInCombat = false
+            combatHider:Show()
+        end
     end
 end
 
