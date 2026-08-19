@@ -730,11 +730,28 @@ function AA.Stop()
 end
 
 function AA.Cancel(reason)
-    if current.state == STATE_IDLE or current.state == STATE_AWARDED then return end
+    if current.state == STATE_IDLE or current.state == STATE_AWARDED
+        or current.state == STATE_CANCELLED or current.state == STATE_FAILED
+    then
+        if frame then frame:Hide() end
+        return
+    end
+    local cancelledItem = current.itemLink
     SetState(STATE_CANCELLED, reason or "cancelled by user")
     current.deadline = nil
     current.pendingAward = nil
-    Log(reason or "Round cancelled.", "warn")
+    current.awardDeferred = nil
+    current.winner = nil
+    current.rollsByPlayer = {}
+    current.rejectedRolls = {}
+    current.allowedTiePlayers = nil
+    current.requiredTieBracket = nil
+    if reason then
+        Log(reason, "warn")
+    else
+        Announce(cancelledItem and ("Roll canceled for " .. cancelledItem .. ".") or "Roll canceled.")
+    end
+    if frame then frame:Hide() end
     RefreshUI()
 end
 
