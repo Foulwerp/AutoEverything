@@ -988,6 +988,20 @@ SlashCmdList["AUTOQUEST"] = function(msg)
         else
             AutoCore.Warn("Quest", "Quest map pins are unavailable.")
         end
+    elseif msg == "npc clear" then
+        if AQ.Map and AQ.Map.ClearTrackedNPCs then AQ.Map.ClearTrackedNPCs() end
+    elseif msg == "npc list" then
+        if AQ.Map and AQ.Map.ListTrackedNPCs then AQ.Map.ListTrackedNPCs() end
+    elseif msg == "npc bosses on" then
+        if AQ.Map and AQ.Map.SetNotableNPCsEnabled then AQ.Map.SetNotableNPCsEnabled(true) end
+    elseif msg == "npc bosses off" then
+        if AQ.Map and AQ.Map.SetNotableNPCsEnabled then AQ.Map.SetNotableNPCsEnabled(false) end
+    elseif string.match(msg, "^npc%s+.+") then
+        if AQ.Map and AQ.Map.TrackNPC then
+            AQ.Map.TrackNPC(string.match(msg, "^npc%s+(.+)$"))
+        else
+            AutoCore.Warn("Quest", "NPC map search is unavailable.")
+        end
     elseif msg == "sync debug" then
         if AQ.GroupSync and AQ.GroupSync.Debug then
             AQ.GroupSync.Debug()
@@ -1028,6 +1042,9 @@ SlashCmdList["AUTOQUEST"] = function(msg)
         print("  /autoquest markers debug - Diagnose the targeted objective NPC nameplate")
         print("  /autoquest pins on|off - Toggle active quest locations on the map and minimap")
         print("  /autoquest pins debug - Diagnose active quest map/minimap matching")
+        print("  /autoquest npc <name or ID> - Show an NPC on the minimap and instance/world map")
+        print("  /autoquest npc clear|list - Clear or list NPC search icons")
+        print("  /autoquest npc bosses on|off - Toggle automatic boss and rare icons")
         print("  /autoquest sync debug - Show synchronized party-member state and protocol")
         print("  /autoquest sync request - Request fresh party quest progress")
         print("  /autoquest whoami - Show which config profile this character is using")

@@ -457,6 +457,11 @@ local function MatchUnit(unit)
     local npcID = NPCIDFromGUID(UnitGUID(unit))
     local name = UnitName(unit)
     local learnedName = npcID and SpawnStore.RememberName(npcID, name)
+    local learnedNotable = npcID and UnitClassification
+        and SpawnStore.RememberClassification(npcID, UnitClassification(unit))
+    if learnedNotable and AutoQuest.Map and AutoQuest.Map.RequestRefresh then
+        AutoQuest.Map.RequestRefresh()
+    end
     local match = npcID and activeByNPC[npcID]
     if not match then
         match = name and activeByName[string.lower(name)]
@@ -800,9 +805,10 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         local observedUnit = event == "PLAYER_TARGET_CHANGED" and "target" or "mouseover"
         if UnitExists(observedUnit) and not UnitIsPlayer(observedUnit) then
             local npcID = NPCIDFromGUID(UnitGUID(observedUnit))
-            if SpawnStore.RememberName(npcID, UnitName(observedUnit))
-                and AutoQuest.Map and AutoQuest.Map.RequestRefresh
-            then
+            local learnedName = SpawnStore.RememberName(npcID, UnitName(observedUnit))
+            local learnedNotable = UnitClassification
+                and SpawnStore.RememberClassification(npcID, UnitClassification(observedUnit))
+            if (learnedName or learnedNotable) and AutoQuest.Map and AutoQuest.Map.RequestRefresh then
                 AutoQuest.Map.RequestRefresh(true)
             end
         end

@@ -183,6 +183,7 @@ AutoQuestConfig = {
     disableOnShift = true,
     enabled = true,
     mapPins = true,
+    showNotableNPCPins = true,
     showPatrolPaths = true,
     acceptTrivialQuests = true,
     quickAbandonKeepComplete = true,

@@ -25,6 +25,7 @@ local locationDebug = {}
 local mapContributions = {}
 local mapContributionStats = { rebuilt=0, reused=0 }
 local invalidateContributionCache = false
+local trackedNPCIDs = {}
 
 local defaultServiceKinds = {
     "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
@@ -133,6 +134,11 @@ local function MaxMinimapPins() return Setting("maxMinimapPins", 150) end
 local function ExtractProgress(text)
     local current, required = Resolver.Progress(text)
     if current and required then return current .. "/" .. required end
+end
+
+local function NotableNPCsEnabled()
+    return AutoCore.GetSetting("quest", "showNotableNPCPins",
+        AutoQuestConfig and AutoQuestConfig.showNotableNPCPins) ~= false
 end
 
 local function AddLocation(zoneID, zoneName, floor, record, coord, questID, questTitle,
@@ -765,6 +771,38 @@ local function MergeContribution(contribution)
     end
 end
 
+local function AddDiscoveryNPC(npc, kind)
+    if not npc or type(npc.locations) ~= "table" then return 0 end
+    local added = 0
+    local record = { id=npc.id, name=npc.name }
+    for _, location in ipairs(npc.locations) do
+        for _, coord in ipairs(location.coords or {}) do
+            if AddLocation(location.zoneID, location.zone, location.floor,
+                record, coord, nil, nil, kind)
+            then
+                added = added + 1
+            end
+        end
+    end
+    return added
+end
+
+local function AddNPCDiscoveryLocations()
+    buildStats.notablePoints, buildStats.trackedNPCPoints = 0, 0
+    if NotableNPCsEnabled() then
+        for _, metadata in ipairs(SpawnStore.GetNotableNPCs() or {}) do
+            if not trackedNPCIDs[metadata.id] then
+                buildStats.notablePoints = buildStats.notablePoints
+                    + AddDiscoveryNPC(SpawnStore.GetNPC(metadata.id), metadata.kind or "rare")
+            end
+        end
+    end
+    for npcID in pairs(trackedNPCIDs) do
+        buildStats.trackedNPCPoints = buildStats.trackedNPCPoints
+            + AddDiscoveryNPC(SpawnStore.GetNPC(npcID), "search")
+    end
+end
+
 function QuestMap.RebuildIndex()
     activeByZone = {}
     activePointKeys = {}
@@ -821,6 +859,7 @@ function QuestMap.RebuildIndex()
     for _, contribution in pairs(mapContributions) do
         if contribution.remote then MergeContribution(contribution) end
     end
+    AddNPCDiscoveryLocations()
     buildStats.points, buildStats.partyPoints = 0, 0
     for _, zone in pairs(activeByZone) do
         buildStats.points = buildStats.points + #(zone.points or {})
@@ -874,6 +913,9 @@ local iconTextures = {
     loot = "Interface\\AddOns\\AutoEverything\\Images\\QuestLootBag.tga",
     object = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
     scout = "Interface\\AddOns\\AutoEverything\\Images\\QuestScout.tga",
+    boss = "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga",
+    rare = "Interface\\AddOns\\AutoEverything\\Images\\QuestScout.tga",
+    search = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
     auctioneer = "Interface\\AddOns\\AutoEverything\\Images\\ServiceAuctioneer.tga",
     banker = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBanker.tga",
     battlemaster = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBattlemaster.tga",
@@ -889,6 +931,7 @@ local iconTextures = {
 
 local iconColors = {
     kill={1,0.3,0.3}, loot={0.35,1,0.45}, object={0.45,0.8,1}, scout={1,0.75,0.25},
+    boss={1,0.18,0.18}, rare={0.75,0.35,1}, search={0.2,0.85,1},
     auctioneer={1,0.65,0.2}, banker={1,0.82,0.2}, battlemaster={0.85,0.9,1},
     flightmaster={0.75,0.9,1}, guildmaster={0.35,0.55,1}, innkeeper={0.35,0.7,1},
     talentunlearner={0.75,0.45,1}, tabardvendor={1,0.3,0.25},
@@ -901,6 +944,9 @@ local ROUTE_DOT_TEXTURE = AutoCore.UI and AutoCore.UI.Textures
 
 local headingText = {
     kill = "Kill",
+    boss = "Boss",
+    rare = "Rare",
+    search = "NPC Search",
     loot = "Item",
     object = "Interact",
     scout = "Scout",
@@ -924,6 +970,12 @@ local function DescribeObjective(cluster, point)
     local name = point.name or point.questTitle or "Unknown"
     if point.isService then
         return name
+    elseif cluster.kind == "boss" then
+        return "Boss: " .. name
+    elseif cluster.kind == "rare" then
+        return "Rare: " .. name
+    elseif cluster.kind == "search" then
+        return "Find " .. name .. " (NPC " .. tostring(point.entityID or "?") .. ")"
     elseif cluster.kind == "loot" then
         return point.item and ("Loot " .. point.item .. " from " .. name) or ("Loot from " .. name)
     elseif cluster.kind == "object" then
@@ -968,7 +1020,7 @@ local function ShowPinTooltip(pin)
                 local description = DescribeObjective(cluster, point)
                 if point.progress then description = description .. "  |cffffd200(" .. point.progress .. ")|r" end
                 GameTooltip:AddLine(description, 1, 1, 1)
-                if not point.isService then
+                if not point.isService and point.questTitle then
                     GameTooltip:AddLine("  " .. point.questTitle, 0.6, 0.65, 0.75)
                 end
                 local partyNames = {}
@@ -1456,17 +1508,20 @@ function QuestMap.UpdateMinimap()
     local mapRadius = math.min(Minimap:GetWidth(), Minimap:GetHeight()) / 2 - 10
     DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, facing, rotate)
     local candidates = {}
+    local currentFloor = GetCurrentMapDungeonLevel and GetCurrentMapDungeonLevel() or 0
     if not zone.exactPoints then zone.exactPoints = GroupExactPoints(zone.points) end
     for _, cluster in ipairs(zone.exactPoints) do
-        local dx = (cluster.x / 100 - playerMap.x) * size[1]
-        local dy = (cluster.y / 100 - playerMap.y) * size[2]
-        local distance = math.sqrt(dx * dx + dy * dy)
+        if cluster.floor == 0 or currentFloor == 0 or cluster.floor == currentFloor then
+            local dx = (cluster.x / 100 - playerMap.x) * size[1]
+            local dy = (cluster.y / 100 - playerMap.y) * size[2]
+            local distance = math.sqrt(dx * dx + dy * dy)
         -- Only display locations within minimapPinRadiusPercent of the
         -- minimap's own view radius (Map Pins settings). Distant locations
         -- belong on the world map/route arrow; clamping every spawn to the
         -- rim creates an unreadable pile of icons.
-        if distance <= radiusLimit then
-            candidates[#candidates + 1] = { cluster=cluster, dx=dx, dy=dy, distance=distance }
+            if distance <= radiusLimit then
+                candidates[#candidates + 1] = { cluster=cluster, dx=dx, dy=dy, distance=distance }
+            end
         end
     end
     table.sort(candidates, function(a,b)
@@ -1510,6 +1565,83 @@ function QuestMap.SetEnabled(enabled)
     AutoCore.Info("Quest", "Quest map pins " .. (enabled and "enabled." or "disabled."))
 end
 
+function QuestMap.SetNotableNPCsEnabled(enabled)
+    AutoCore.SetSetting("quest", "showNotableNPCPins", enabled and true or false)
+    QuestMap.RequestRefresh()
+    AutoCore.Info("Quest", "Boss and rare icons " .. (enabled and "enabled." or "disabled."))
+end
+
+local function TrackResults(results, exactName)
+    local tracked, missing = 0, 0
+    for _, npc in ipairs(results) do
+        if not exactName or string.lower(npc.name or "") == exactName then
+            if npc.locations and #npc.locations > 0 then
+                trackedNPCIDs[npc.id] = true
+                tracked = tracked + 1
+            else
+                missing = missing + 1
+            end
+        end
+    end
+    if tracked > 0 then QuestMap.RequestRefresh() end
+    return tracked, missing
+end
+
+function QuestMap.TrackNPC(query)
+    query = strtrim and strtrim(tostring(query or "")) or tostring(query or "")
+    if query == "" then
+        AutoCore.Info("Quest", "Usage: /aq npc <name or ID>, /aq npc clear, /aq npc list")
+        return false
+    end
+    local results = SpawnStore.SearchNPCs(query, 12)
+    if #results == 0 then
+        AutoCore.Warn("Quest", "No NPC matched '" .. query .. "'.")
+        return false
+    end
+    local exactName = not tonumber(query) and string.lower(query) or nil
+    local exactCount = 0
+    if exactName then
+        for _, npc in ipairs(results) do
+            if string.lower(npc.name or "") == exactName then exactCount = exactCount + 1 end
+        end
+    end
+    if not tonumber(query) and exactCount == 0 and #results > 1 then
+        AutoCore.Info("Quest", "Multiple NPCs matched; use an ID to choose one:")
+        for _, npc in ipairs(results) do
+            print("  " .. tostring(npc.id) .. " - " .. tostring(npc.name)
+                .. ((npc.locations and #npc.locations > 0) and "" or " (no coordinates)"))
+        end
+        return false
+    end
+    local tracked, missing = TrackResults(results, exactCount > 0 and exactName or nil)
+    if tracked > 0 then
+        AutoCore.Info("Quest", "Showing " .. tracked .. " NPC record"
+            .. (tracked == 1 and "." or "s."))
+    end
+    if missing > 0 then
+        AutoCore.Warn("Quest", missing .. " matching NPC record"
+            .. (missing == 1 and " has" or "s have") .. " no known coordinates.")
+    end
+    return tracked > 0
+end
+
+function QuestMap.ClearTrackedNPCs()
+    trackedNPCIDs = {}
+    QuestMap.RequestRefresh()
+    AutoCore.Info("Quest", "NPC search icons cleared.")
+end
+
+function QuestMap.ListTrackedNPCs()
+    local ids = {}
+    for npcID in pairs(trackedNPCIDs) do ids[#ids + 1] = npcID end
+    table.sort(ids)
+    if #ids == 0 then AutoCore.Info("Quest", "No NPC searches are active."); return end
+    AutoCore.Info("Quest", "Active NPC searches:")
+    for _, npcID in ipairs(ids) do
+        print("  " .. npcID .. " - " .. tostring(SpawnStore.GetName(npcID) or "Unknown NPC"))
+    end
+end
+
 function QuestMap.ApplyProfile()
     -- Service locations are otherwise static and intentionally cached. A
     -- profile switch or selector change must rebuild that cache immediately.
@@ -1542,7 +1674,9 @@ function QuestMap.Debug()
         .. " indexedPoints=" .. buildStats.points
         .. " partyQuests=" .. buildStats.partyQuests
         .. " partyPoints=" .. buildStats.partyPoints
-        .. " servicePoints=" .. buildStats.servicePoints)
+        .. " servicePoints=" .. buildStats.servicePoints
+        .. " notablePoints=" .. (buildStats.notablePoints or 0)
+        .. " searchedNPCPoints=" .. (buildStats.trackedNPCPoints or 0))
     print("  quest indexes rebuilt=" .. mapContributionStats.rebuilt
         .. " reused=" .. mapContributionStats.reused)
     for _, match in ipairs(buildStats.matches or {}) do
