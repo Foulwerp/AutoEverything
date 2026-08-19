@@ -1929,12 +1929,14 @@ pageBuilders.Quest = function(parent)
         leftControls.acceptTrivialQuests, leftControls.autoSelectRewards)
     BindToggleDependency(rightControls.turnInQuests,
         rightControls.turnInDailyQuests, rightControls.turnInPvPQuests)
+    ScalarCheck(parent, "quest", AutoQuestConfig, "useElvUIQuestMarkers", "Use ElvUI icons", 540, -204, false,
+        "On uses ElvUI's quest icons and hides the addon's nameplate badges. Off uses the addon's kill, loot, and interaction badges and disables ElvUI's NPC quest icons. If ElvUI is unavailable, the addon badges remain active.")
     -- These settings are always visible. Two equal-width columns keep every
     -- track aligned: world map on the left, minimap on the right. Config keys
     -- still say "pin" because they are saved-variable
     -- names, but all user-facing labels say "icon".
     Label(parent, "Map and Minimap Icons", 28, -260, 13)
-    local patrolPaths = ScalarCheck(parent, "quest", AutoQuestConfig, "showPatrolPaths", "Show patrol paths", 390, -256, true,
+    local patrolPaths = ScalarCheck(parent, "quest", AutoQuestConfig, "showPatrolPaths", "Patrol paths", 350, -256, true,
         "Shows grey dotted paths for service NPCs with recorded patrol locations. Hover a route endpoint icon to highlight that NPC's path.")
     patrolPaths:SetOnChanged(function()
         if AutoQuest and AutoQuest.Map then
@@ -1942,8 +1944,6 @@ pageBuilders.Quest = function(parent)
             AutoQuest.Map.UpdateMinimap()
         end
     end)
-    ScalarCheck(parent, "quest", AutoQuestConfig, "useElvUIQuestMarkers", "Use ElvUI icons", 540, -256, false,
-        "On uses ElvUI's quest icons and hides the addon's nameplate badges. Off uses the addon's kill, loot, and interaction badges and disables ElvUI's NPC quest icons. If ElvUI is unavailable, the addon badges remain active.")
     local leftX, rightX = 28, 388
     local firstRow, secondRow, thirdRow = -286, -334, -382
 
@@ -1962,8 +1962,15 @@ pageBuilders.Quest = function(parent)
         "Maximum icons shown on the minimap at once, closest first.",
         "Minimap Max Icons", 306)
     local notableNPCs = ScalarCheck(parent, "quest", AutoQuestConfig, "showNotableNPCPins",
-        "Show bosses and rares", 220, -256, true,
+        "Bosses and rares", 190, -256, true,
         "Shows known bosses and rare creatures on the minimap and on world or instance maps. Dungeon icons follow the selected floor. Newly observed bosses and rares are also detected from live units.")
+    local rareScanner = ScalarCheck(parent, "quest", AutoQuestConfig, "rareScannerEnabled",
+        "Rare alerts", 490, -256, true,
+        "Detects nearby rares through nameplates, targets, party targets, combat activity, and an incremental current-zone creature-cache scan. A detection creates a temporary bright map icon and a visual alert.")
+    local rareSound = ScalarCheck(parent, "quest", AutoQuestConfig, "rareScannerSound",
+        "Sound", 615, -256, false,
+        "Plays the built-in raid-warning sound for a new rare sighting. Repeated observations of the same active sighting do not replay it.")
+    BindToggleDependency(rareScanner, rareSound)
 
     local serviceIconChoices = {
         { text = "Auctioneer", value = "auctioneer" },

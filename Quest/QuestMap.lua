@@ -177,6 +177,8 @@ local function AddLocation(zoneID, zoneName, floor, record, coord, questID, ques
         questID = questID, questTitle = questTitle, kind = kind,
         entityID = record.id, name = record.name,
         item = record.item, progress = progress, isParty=partyMember ~= nil,
+        seenAt = record.seenAt, expiresAt = record.expiresAt,
+        sightingSource = record.source,
         partyMembers = {},
     }
     if partyMember then
@@ -788,7 +790,23 @@ local function AddDiscoveryNPC(npc, kind)
 end
 
 local function AddNPCDiscoveryLocations()
-    buildStats.notablePoints, buildStats.trackedNPCPoints = 0, 0
+    -- Live sightings and explicit searches are added before the static rare
+    -- catalog so they survive the world-map pin cap in crowded zones.
+    buildStats.sightingPoints = 0
+    local scanner = AutoQuest.RareScanner
+    for _, sighting in ipairs(scanner and scanner.GetSightings and scanner.GetSightings() or {}) do
+        if AddLocation(sighting.zoneID, sighting.zone, sighting.floor,
+            sighting, { sighting.x, sighting.y }, nil, nil, "sighting")
+        then
+            buildStats.sightingPoints = buildStats.sightingPoints + 1
+        end
+    end
+    buildStats.trackedNPCPoints = 0
+    for npcID in pairs(trackedNPCIDs) do
+        buildStats.trackedNPCPoints = buildStats.trackedNPCPoints
+            + AddDiscoveryNPC(SpawnStore.GetNPC(npcID), "search")
+    end
+    buildStats.notablePoints = 0
     if NotableNPCsEnabled() then
         for _, metadata in ipairs(SpawnStore.GetNotableNPCs() or {}) do
             if not trackedNPCIDs[metadata.id] then
@@ -796,10 +814,6 @@ local function AddNPCDiscoveryLocations()
                     + AddDiscoveryNPC(SpawnStore.GetNPC(metadata.id), metadata.kind or "rare")
             end
         end
-    end
-    for npcID in pairs(trackedNPCIDs) do
-        buildStats.trackedNPCPoints = buildStats.trackedNPCPoints
-            + AddDiscoveryNPC(SpawnStore.GetNPC(npcID), "search")
     end
 end
 
@@ -916,6 +930,7 @@ local iconTextures = {
     boss = "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga",
     rare = "Interface\\AddOns\\AutoEverything\\Images\\QuestScout.tga",
     search = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
+    sighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestScout.tga",
     auctioneer = "Interface\\AddOns\\AutoEverything\\Images\\ServiceAuctioneer.tga",
     banker = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBanker.tga",
     battlemaster = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBattlemaster.tga",
@@ -932,6 +947,7 @@ local iconTextures = {
 local iconColors = {
     kill={1,0.3,0.3}, loot={0.35,1,0.45}, object={0.45,0.8,1}, scout={1,0.75,0.25},
     boss={1,0.18,0.18}, rare={0.75,0.35,1}, search={0.2,0.85,1},
+    sighting={1,0.82,0.18},
     auctioneer={1,0.65,0.2}, banker={1,0.82,0.2}, battlemaster={0.85,0.9,1},
     flightmaster={0.75,0.9,1}, guildmaster={0.35,0.55,1}, innkeeper={0.35,0.7,1},
     talentunlearner={0.75,0.45,1}, tabardvendor={1,0.3,0.25},
@@ -947,6 +963,7 @@ local headingText = {
     boss = "Boss",
     rare = "Rare",
     search = "NPC Search",
+    sighting = "Recent Rare Sighting",
     loot = "Item",
     object = "Interact",
     scout = "Scout",
@@ -976,6 +993,8 @@ local function DescribeObjective(cluster, point)
         return "Rare: " .. name
     elseif cluster.kind == "search" then
         return "Find " .. name .. " (NPC " .. tostring(point.entityID or "?") .. ")"
+    elseif cluster.kind == "sighting" then
+        return "Recently sighted: " .. name
     elseif cluster.kind == "loot" then
         return point.item and ("Loot " .. point.item .. " from " .. name) or ("Loot from " .. name)
     elseif cluster.kind == "object" then
@@ -1023,6 +1042,11 @@ local function ShowPinTooltip(pin)
                 if not point.isService and point.questTitle then
                     GameTooltip:AddLine("  " .. point.questTitle, 0.6, 0.65, 0.75)
                 end
+                if point.seenAt then
+                    local age = math.max(0, math.floor((GetTime and GetTime() or 0) - point.seenAt))
+                    GameTooltip:AddLine("  Seen " .. age .. " sec ago - "
+                        .. tostring(point.sightingSource or "nearby"), 1, 0.82, 0.25)
+                end
                 local partyNames = {}
                 for name in pairs(point.partyMembers or {}) do partyNames[#partyNames + 1] = name end
                 table.sort(partyNames, function(a, b) return string.lower(a) < string.lower(b) end)
@@ -1047,6 +1071,11 @@ local function ShowPinTooltip(pin)
     GameTooltip:Show()
 end
 
+local function UpdateSightingPulse(pin)
+    local pulse = 0.72 + 0.28 * math.abs(math.sin((GetTime and GetTime() or 0) * 3))
+    pin.icon:SetAlpha(pulse)
+end
+
 local function ConfigurePin(pin, cluster, size)
     pin.cluster = cluster
     pin:SetWidth(size)
@@ -1055,6 +1084,12 @@ local function ConfigurePin(pin, cluster, size)
     -- QuestMarkers.lua (white skull, brown bag) rather than recoloring them.
     pin.icon:SetTexture(iconTextures[cluster.kind] or iconTextures.kill)
     pin.icon:SetVertexColor(1, 1, 1, 1)
+    if cluster.kind == "sighting" then
+        pin:SetScript("OnUpdate", UpdateSightingPulse)
+    else
+        pin:SetScript("OnUpdate", nil)
+        pin.icon:SetAlpha(1)
+    end
     local isParty = false
     for _, point in ipairs(cluster.members or {}) do
         if point.isParty then isParty = true; break end
@@ -1113,6 +1148,8 @@ end
 
 local function HidePins(pool)
     for _, pin in ipairs(pool) do
+        pin:SetScript("OnUpdate", nil)
+        pin.icon:SetAlpha(1)
         pin:Hide()
         pin.partyBadge:Hide()
         pin.cluster = nil
@@ -1348,6 +1385,7 @@ local function UpdatePlayerLocation(force)
         continent=GetCurrentMapContinent and GetCurrentMapContinent(),
         zone=GetCurrentMapZone and GetCurrentMapZone(),
         areaID=GetCurrentMapAreaID and GetCurrentMapAreaID(),
+        floor=GetCurrentMapDungeonLevel and GetCurrentMapDungeonLevel() or 0,
     }
     -- Sub-zone remap (see subZoneParents): the player stands in a micro-zone,
     -- but its quest pins are filed under the parent zone's frame. Only bother
@@ -1394,6 +1432,8 @@ local function UpdatePlayerLocation(force)
             playerMap.x, playerMap.y = nil, nil
         end
         playerMap.name, playerMap.key = name, key
+        playerMap.zoneID = locationDebug.areaID
+        playerMap.floor = locationDebug.floor
     end
     if x and y and (x > 0 or y > 0) then playerMap.x, playerMap.y = x, y end
 
@@ -1565,6 +1605,16 @@ function QuestMap.SetEnabled(enabled)
     AutoCore.Info("Quest", "Quest map pins " .. (enabled and "enabled." or "disabled."))
 end
 
+function QuestMap.GetPlayerLocation(force)
+    UpdatePlayerLocation(force == true)
+    if not playerMap.x or not playerMap.y or not playerMap.name then return nil end
+    return {
+        x=playerMap.x * 100, y=playerMap.y * 100,
+        zone=playerMap.name, zoneID=playerMap.zoneID,
+        floor=tonumber(playerMap.floor) or 0,
+    }
+end
+
 function QuestMap.SetNotableNPCsEnabled(enabled)
     AutoCore.SetSetting("quest", "showNotableNPCPins", enabled and true or false)
     QuestMap.RequestRefresh()
@@ -1676,7 +1726,8 @@ function QuestMap.Debug()
         .. " partyPoints=" .. buildStats.partyPoints
         .. " servicePoints=" .. buildStats.servicePoints
         .. " notablePoints=" .. (buildStats.notablePoints or 0)
-        .. " searchedNPCPoints=" .. (buildStats.trackedNPCPoints or 0))
+        .. " searchedNPCPoints=" .. (buildStats.trackedNPCPoints or 0)
+        .. " sightingPoints=" .. (buildStats.sightingPoints or 0))
     print("  quest indexes rebuilt=" .. mapContributionStats.rebuilt
         .. " reused=" .. mapContributionStats.reused)
     for _, match in ipairs(buildStats.matches or {}) do

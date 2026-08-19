@@ -213,6 +213,7 @@ function AQ.ApplyProfile()
         AQ.db = AutoCore.GetProfileSection("quest", true)
     end
     if AQ.db.enabled == nil then AQ.db.enabled = (AutoQuestConfig or {}).enabled ~= false end
+    if AQ.RareScanner and AQ.RareScanner.ApplyProfile then AQ.RareScanner.ApplyProfile() end
     if AQ.Markers and AQ.Markers.ApplyProfile then AQ.Markers.ApplyProfile() end
     if AQ.Map and AQ.Map.ApplyProfile then AQ.Map.ApplyProfile() end
     if AQ.GroupSync and AQ.GroupSync.ApplyProfile then AQ.GroupSync.ApplyProfile() end
@@ -996,6 +997,22 @@ SlashCmdList["AUTOQUEST"] = function(msg)
         if AQ.Map and AQ.Map.SetNotableNPCsEnabled then AQ.Map.SetNotableNPCsEnabled(true) end
     elseif msg == "npc bosses off" then
         if AQ.Map and AQ.Map.SetNotableNPCsEnabled then AQ.Map.SetNotableNPCsEnabled(false) end
+    elseif msg == "rare on" then
+        if AQ.RareScanner and AQ.RareScanner.SetEnabled then AQ.RareScanner.SetEnabled(true) end
+    elseif msg == "rare off" then
+        if AQ.RareScanner and AQ.RareScanner.SetEnabled then AQ.RareScanner.SetEnabled(false) end
+    elseif msg == "rare sound on" then
+        if AQ.RareScanner and AQ.RareScanner.SetSound then AQ.RareScanner.SetSound(true) end
+    elseif msg == "rare sound off" then
+        if AQ.RareScanner and AQ.RareScanner.SetSound then AQ.RareScanner.SetSound(false) end
+    elseif msg == "rare cache on" then
+        if AQ.RareScanner and AQ.RareScanner.SetCacheEnabled then AQ.RareScanner.SetCacheEnabled(true) end
+    elseif msg == "rare cache off" then
+        if AQ.RareScanner and AQ.RareScanner.SetCacheEnabled then AQ.RareScanner.SetCacheEnabled(false) end
+    elseif msg == "rare clear" then
+        if AQ.RareScanner and AQ.RareScanner.ClearSightings then AQ.RareScanner.ClearSightings() end
+    elseif msg == "rare debug" then
+        if AQ.RareScanner and AQ.RareScanner.Debug then AQ.RareScanner.Debug() end
     elseif string.match(msg, "^npc%s+.+") then
         if AQ.Map and AQ.Map.TrackNPC then
             AQ.Map.TrackNPC(string.match(msg, "^npc%s+(.+)$"))
@@ -1045,6 +1062,10 @@ SlashCmdList["AUTOQUEST"] = function(msg)
         print("  /autoquest npc <name or ID> - Show an NPC on the minimap and instance/world map")
         print("  /autoquest npc clear|list - Clear or list NPC search icons")
         print("  /autoquest npc bosses on|off - Toggle automatic boss and rare icons")
+        print("  /autoquest rare on|off - Toggle live rare sightings and alerts")
+        print("  /autoquest rare sound on|off - Toggle the rare alert sound")
+        print("  /autoquest rare cache on|off - Toggle incremental creature-cache detection")
+        print("  /autoquest rare clear|debug - Clear sightings or show scanner diagnostics")
         print("  /autoquest sync debug - Show synchronized party-member state and protocol")
         print("  /autoquest sync request - Request fresh party quest progress")
         print("  /autoquest whoami - Show which config profile this character is using")
