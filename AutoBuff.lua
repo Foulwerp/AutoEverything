@@ -615,6 +615,7 @@ local function PaintWindow()
     local hideWhenUnavailable = Setting("hideWhenComplete", false) == true
     UpdateCombatVisibility(hideWhenUnavailable)
     local shouldShow = enabled and Setting("showWindow", true) ~= false
+        and #currentMissing > 0
     if shouldShow and hideWhenUnavailable then
         local postCastDelay = castReadyAt and GetTime() < castReadyAt
         local keepVisible = currentCandidate or postCastDelay or HasGlobalCooldownWait(currentMissing)
@@ -670,9 +671,6 @@ local function PaintWindow()
                 statusText:SetText(waiting.name .. ": " .. waiting.spell .. "  -  out of range")
                 castButton:SetText("No target in range")
             end
-        else
-            statusText:SetText("Everyone is buffed")
-            castButton:SetText("Buffs complete")
         end
         castButton:Disable()
     end
