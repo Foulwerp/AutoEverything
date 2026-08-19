@@ -847,6 +847,9 @@ local function CleanupRoster()
         local unit = units[name]
         member.connected = not unit or not UnitIsConnected or UnitIsConnected(unit) ~= false
     end
+    if AQ.QuestieSyncCompat and AQ.QuestieSyncCompat.CleanupRoster then
+        AQ.QuestieSyncCompat.CleanupRoster()
+    end
     if not SyncActive() then
         ClearOutgoing()
         wipe(memberQuests)
@@ -1296,6 +1299,9 @@ function Sync.ApplyProfile()
         wipe(pendingSnapshotTargets)
         requestPending = false
         nextAuditAt = 0
+        if AQ.QuestieSyncCompat and AQ.QuestieSyncCompat.CleanupRoster then
+            AQ.QuestieSyncCompat.CleanupRoster()
+        end
         if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
         if AQ.Map and AQ.Map.RequestRefresh then AQ.Map.RequestRefresh() end
     end

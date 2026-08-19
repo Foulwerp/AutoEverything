@@ -375,11 +375,12 @@ local function ApplyQuest(sender, raw)
     return quest and Sync.ApplyExternalQuest(sender, quest)
 end
 
-local function MergeSnapshot(sender, rawQuests, memberClass)
+local function MergeSnapshot(sender, rawQuests, memberClass, channel)
     local pending = snapshots[sender]
     if not pending then pending = { quests={} }; snapshots[sender] = pending end
     pending.finishAt = GetTime() + SNAPSHOT_SETTLE
     pending.class = memberClass or pending.class
+    pending.channel = channel or pending.channel
     for _, raw in pairs(rawQuests or {}) do
         local quest = CanonicalQuest(raw)
         if quest then pending.quests[quest.key] = quest end
@@ -396,7 +397,7 @@ local function ProcessPacket(packet, channel, sender)
     elseif messageID == 2 then
         Sync.RemoveExternalQuest(sender, packet.id)
     elseif messageID == 10 then
-        MergeSnapshot(sender, packet.rawQuestList)
+        MergeSnapshot(sender, packet.rawQuestList, nil, channel)
     elseif messageID == 11 then
         Compat.QueueSnapshot(sender)
     elseif messageID == 12 and type(packet[1]) == "table" then
@@ -410,6 +411,7 @@ local function ProcessPacket(packet, channel, sender)
         local pending = snapshots[sender] or { quests={} }
         snapshots[sender] = pending
         pending.finishAt = GetTime() + SNAPSHOT_SETTLE
+        pending.channel = channel or pending.channel
         for key, quest in pairs(quests) do pending.quests[key] = quest end
     elseif messageID == 13 and type(packet[1]) == "table" then
         local quest, _, classIndex = TranslateV2(packet[1], 1, true)
@@ -447,7 +449,7 @@ function Compat.Receive(message, channel, sender)
     if control == ACE_FIRST then
         fragments[key] = {
             data={string.sub(message, 2)}, bytes=string.len(message) - 1,
-            count=1, updated=GetTime(),
+            count=1, updated=GetTime(), sender=sender, channel=channel,
         }
         return
     elseif control == ACE_NEXT or control == ACE_LAST then
@@ -472,6 +474,24 @@ function Compat.Receive(message, channel, sender)
     end
     local packet = Compat.Deserialize(message)
     if packet then ProcessPacket(packet, channel, sender) end
+end
+
+-- Roster changes can happen while a multipart packet or a full snapshot is
+-- still settling. Drop every trace of departed senders immediately so their
+-- old data cannot survive a leave/rejoin boundary.
+function Compat.CleanupRoster()
+    for key, pending in pairs(fragments) do
+        if not Sync.CanAcceptExternal(pending.sender, pending.channel) then
+            fragments[key] = nil
+        end
+    end
+    for sender, pending in pairs(snapshots) do
+        local channel = pending.channel or Sync.GetGroupChannel()
+        if not Sync.CanAcceptExternal(sender, channel) then snapshots[sender] = nil end
+    end
+    for sender in pairs(rates) do
+        if not Sync.CanAcceptExternal(sender, Sync.GetGroupChannel()) then rates[sender] = nil end
+    end
 end
 
 function Compat.OnUpdate(now)
