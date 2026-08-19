@@ -426,17 +426,14 @@ local function RefreshUI()
         ui.start.themeAccentColor = canStart and Theme.Colors.brand or nil
         ui.stop.themeAccentColor = canStop and Theme.Colors.warning or nil
         ui.award.themeAccentColor = current.state == STATE_READY and Theme.Colors.success or nil
-        ui.cancel.themeAccentColor = (current.state ~= STATE_PENDING and RoundActive())
-            and Theme.Colors.danger or nil
+        ui.cancel.themeAccentColor = Theme.Colors.danger
         Theme.RefreshButtonTheme(ui.start)
         Theme.RefreshButtonTheme(ui.stop)
         Theme.RefreshButtonTheme(ui.award)
         Theme.RefreshButtonTheme(ui.cancel)
     end
     if current.state == STATE_READY then ui.award:Enable() else ui.award:Disable() end
-    if ui.cancel then
-        if current.state ~= STATE_PENDING and RoundActive() then ui.cancel:Enable() else ui.cancel:Disable() end
-    end
+    if ui.cancel then ui.cancel:Enable() end
 end
 
 local function FailSafe(reason, assignmentUncertain)
@@ -803,7 +800,8 @@ function AA.Cancel(reason)
         return
     end
     if not reason and current.state == STATE_PENDING then
-        Log("The assignment is already in progress; wait for confirmation before starting another roll.", "warn")
+        if frame then frame:Hide() end
+        Log("Window closed; the assignment remains in progress.", "warn")
         return
     end
     local cancelledItem = current.itemLink
@@ -1119,7 +1117,7 @@ local function CreateWindow()
     AddTooltip(ui.award, "Validated handoff", "Loot slots are assigned through Master Loot. Bag items open a trade to the winner and place the exact item for your manual confirmation.")
     ui.cancel = MakeButton(frame, "Cancel", actionWidth, function() AA.Cancel() end, Theme and Theme.Colors.danger)
     ui.cancel:SetPoint("LEFT", ui.award, "RIGHT", actionGap, 0)
-    AddTooltip(ui.cancel, "Cancel", "Stops an active roll before item assignment begins.")
+    AddTooltip(ui.cancel, "Cancel", "Cancels an active roll and closes this window. If assignment has already begun, it only closes the window.")
     ui.auto = Theme.CreateToggle(frame, "Auto Award", Setting("autoAward"), function(enabled)
         SetSetting("autoAward", enabled)
         if not enabled and current.awardDeferred and current.awardDeferredAutomatic then
