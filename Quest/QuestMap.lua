@@ -1382,9 +1382,24 @@ local function DrawWorldRoutes(zone, parent, currentFloor)
     end
 end
 
+-- Dungeon maps do not participate in the classic continent/zone selector.
+-- Resolve the selected map through every map API shape exposed by supported
+-- Ascension builds, including the legacy map-file name returned by
+-- GetMapInfo(). Map-file names omit spaces ("WailingCaverns") but normalize
+-- to the same keys as the database's display names.
 local function CurrentMapName()
     local mapID = GetCurrentMapAreaID and GetCurrentMapAreaID()
     local name = mapID and GetMapName and GetMapName(mapID)
+    if not name and mapID and C_Map and C_Map.GetMapInfo then
+        local ok, info = pcall(C_Map.GetMapInfo, mapID)
+        if ok and type(info) == "table" then name = info.name end
+    end
+    if not name and GetMapInfo then
+        local ok, mapFileName = pcall(GetMapInfo)
+        if ok and type(mapFileName) == "string" and mapFileName ~= "" then
+            name = mapFileName
+        end
+    end
     -- Some Ascension builds expose GetMapName but return nil for area IDs.
     -- Derive the viewed zone from the classic continent/zone selector instead.
     if not name and GetCurrentMapContinent and GetCurrentMapZone and GetMapZones then
@@ -1398,6 +1413,23 @@ local function CurrentMapName()
         name = (GetZoneText and GetZoneText()) or (GetRealZoneText and GetRealZoneText())
     end
     return name, mapID
+end
+
+local function ZoneForMapName(name)
+    local key = NormalizeZone(name)
+    local zone = ZoneForKey(key)
+    -- Legacy dungeon map-file names concatenate a leading article, while
+    -- NormalizeZone removes it from display names such as "The Deadmines".
+    if not zone and string.sub(key, 1, 3) == "the" then
+        key = string.sub(key, 4)
+        zone = ZoneForKey(key)
+    end
+    return zone, key
+end
+
+local function MapKey(name)
+    local _, key = ZoneForMapName(name)
+    return key
 end
 
 function QuestMap.UpdateWorldMap()
@@ -1416,7 +1448,7 @@ function QuestMap.UpdateWorldMap()
         return
     end
     local mapName = CurrentMapName()
-    local zone = mapName and ZoneForKey(NormalizeZone(mapName))
+    local zone = mapName and ZoneForMapName(mapName)
     if not zone then
         HidePins(worldPins)
         return
@@ -1497,9 +1529,11 @@ local function UpdatePlayerLocation(force)
     local x, y = ReadPlayerMapPosition()
     local beforeX, beforeY = x, y
     local setOK, setResult
+    local selectedKey = selectedName and MapKey(selectedName)
+    local playerZoneKey = name and name ~= "" and MapKey(name)
     local wrongMap = (oldContinent and oldContinent > 0 and oldZone == 0)
         or (name and name ~= "" and selectedName
-            and NormalizeZone(selectedName) ~= NormalizeZone(name))
+            and selectedKey ~= playerZoneKey)
     if wrongMap or not x or not y or (x == 0 and y == 0) then
         if SetMapToCurrentZone then setOK, setResult = pcall(SetMapToCurrentZone) end
         x, y = ReadPlayerMapPosition()
@@ -1687,7 +1721,7 @@ RefreshRouteHighlight = function(pin)
 
     local parent = WorldMapDetailFrame or WorldMapButton
     local mapName = CurrentMapName()
-    local zone = mapName and ZoneForKey(NormalizeZone(mapName))
+    local zone = mapName and ZoneForMapName(mapName)
     if parent and zone then
         local currentFloor = GetCurrentMapDungeonLevel and GetCurrentMapDungeonLevel() or 0
         DrawWorldRoutes(zone, parent, currentFloor)
