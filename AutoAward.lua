@@ -411,7 +411,11 @@ local function RefreshUI()
         and { link = current.itemLink, texture = current.itemTexture } or shown
     ui.item:SetText(activeData and activeData.link or "Alt-click loot or a bag item to select")
     ui.icon:SetTexture(activeData and activeData.texture or "Interface\\Icons\\INV_Misc_QuestionMark")
-    ui.state:SetText("State: " .. tostring(current.state))
+    local stateText = tostring(current.state)
+    if current.state == STATE_READY and current.awardDeferred then
+        stateText = stateText .. " (waiting for combat)"
+    end
+    ui.state:SetText("State: " .. stateText)
     ui.rolls:SetText("MS: " .. CountRolls("MS") .. "    OS: " .. CountRolls("OS") .. "    Rejected: " .. #(current.rejectedRolls or {}))
     ui.winner:SetText("Leader: " .. PredictedWinnerText())
     ui.award:SetText(current.source == "inventory" and "Trade" or "Award")
@@ -443,6 +447,21 @@ local function FailSafe(reason)
     SetState(STATE_FAILED, reason)
     current.deadline = nil
     Log(reason .. "; no item was assigned.", "error")
+    RefreshUI()
+end
+
+local function CombatLocked()
+    return InCombatLockdown and InCombatLockdown()
+end
+
+local function DeferAwardUntilCombatEnds()
+    local wasDeferred = current.awardDeferred
+    current.awardAttempted = false
+    current.pendingAward = nil
+    current.awardDeferred = true
+    SetState(STATE_READY)
+    if CloseDropDownMenus then CloseDropDownMenus() end
+    if not wasDeferred then Log("Award deferred until combat ends.", "warn") end
     RefreshUI()
 end
 
@@ -744,6 +763,11 @@ function AA.Award()
         Log("No validated winner is ready to receive the item.", "warn")
         return false
     end
+    if CombatLocked() then
+        DeferAwardUntilCombatEnds()
+        return true
+    end
+    current.awardDeferred = nil
     local result, winner = WinnerFromRolls(current.rollsByPlayer)
     if result ~= "WINNER" or not winner or not current.winner or winner.normalizedPlayer ~= current.winner.normalizedPlayer then
         FailSafe("the winner changed during final validation")
@@ -1086,6 +1110,8 @@ eventFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
 eventFrame:RegisterEvent("PARTY_LOOT_METHOD_CHANGED")
 eventFrame:RegisterEvent("RAID_ROSTER_UPDATE")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("LOOT_BIND_CONFIRM")
 eventFrame:RegisterEvent("TRADE_SHOW")
 eventFrame:RegisterEvent("TRADE_CLOSED")
@@ -1170,6 +1196,12 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         if current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED then AA.Cancel("world changed") end
         local isMaster = PlayerIsMasterLooter()
         if frame and not isMaster then frame:Hide() end
+    elseif event == "PLAYER_REGEN_DISABLED" and current.state == STATE_PENDING and current.pendingAward
+        and (current.pendingAward.kind == "loot-context" or current.pendingAward.kind == "loot-ready")
+    then
+        DeferAwardUntilCombatEnds()
+    elseif event == "PLAYER_REGEN_ENABLED" and current.state == STATE_READY and current.awardDeferred then
+        AA.Award()
     elseif event == "LOOT_BIND_CONFIRM" and current.state == STATE_PENDING then
         current.pendingAward.awaitingBindConfirmation = true
         Log("Bind confirmation requires a manual click until target-server behavior is verified.", "warn")
