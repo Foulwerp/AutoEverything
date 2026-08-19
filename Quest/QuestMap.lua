@@ -2026,7 +2026,7 @@ frame:SetScript("OnUpdate", function(_, elapsed)
         then
             questLayerReady = false
             frame.initialQuestPinsPublished = false
-            local sliceStarted = debugprofilestop and debugprofilestop() or 0
+            local sliceStarted
             local checkpoints = 0
             buildCooperate = function()
                 -- This callback remains reachable while the frame-budgeted
@@ -2040,8 +2040,15 @@ frame:SetScript("OnUpdate", function(_, elapsed)
                 checkpoints = checkpoints + 1
                 if debugprofilestop then
                     local now = debugprofilestop()
+                    -- Start a fresh clock after every resume. The wall time
+                    -- spent suspended between frames is not warmup work and
+                    -- must not make the very first checkpoint yield again.
+                    if not sliceStarted then
+                        sliceStarted = now
+                        return
+                    end
                     if now - sliceStarted < 2 then return end
-                    sliceStarted = now
+                    sliceStarted = nil
                 elseif checkpoints < 200 then
                     return
                 end
