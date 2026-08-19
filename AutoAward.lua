@@ -1251,14 +1251,16 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         local isMaster = PlayerIsMasterLooter()
         if not isMaster then
             if frame then frame:Hide() end
-            if current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED and current.state ~= STATE_CANCELLED and current.state ~= STATE_FAILED then
+            local tradeInProgress = current.state == STATE_PENDING and current.pendingAward
+                and current.pendingAward.kind == "trade"
+            if not tradeInProgress and current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED
+                and current.state ~= STATE_CANCELLED and current.state ~= STATE_FAILED
+            then
                 local submitted = current.state == STATE_PENDING and current.pendingAward
                     and current.pendingAward.kind == "loot"
                 if submitted then FailSafe("you stopped being the master looter before assignment confirmation", true)
                 else AA.Cancel("you are no longer the master looter") end
             end
-        elseif current.state == STATE_PENDING and current.pendingAward and current.pendingAward.kind == "trade" then
-            FailSafe("the group or loot method changed while assignment was pending")
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
         if current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED then
@@ -1344,11 +1346,12 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
         and GetTime() - current.pendingAward.startedAt
             >= (current.pendingAward.awaitingBindConfirmation and BIND_CONFIRM_TIMEOUT or LOOT_ASSIGNMENT_TIMEOUT)
     then
+        local submitted = current.pendingAward.kind == "loot"
         local slot = current.pendingAward.slot
         local data = LootSlotData(slot)
         local errorDetail = current.pendingAward.lastError and ("; last error: " .. current.pendingAward.lastError) or ""
         if data and data.link == current.pendingAward.itemLink then
-            FailSafe("assignment timed out and the item still appears in the loot slot" .. errorDetail)
+            FailSafe("assignment timed out and the item still appears in the loot slot" .. errorDetail, submitted)
         else
             FailSafe("assignment result is uncertain because no success event arrived" .. errorDetail, true)
         end
