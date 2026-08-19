@@ -548,6 +548,7 @@ local function BeginTieRound(tied, bracket)
     roundSerial = roundSerial + 1
     current.id = roundSerial
     current.deadline = GetTime() + math.max(1, tonumber(Setting("tieRollSeconds")) or 10)
+    current.lastCountdown = nil
     SetState(STATE_TIE)
     Announce("Tie between " .. table.concat(names, ", ") .. ". Tied players reroll " .. (bracket == "MS" and "/roll 100" or "/roll 99") .. ".")
     RefreshUI()
@@ -582,10 +583,23 @@ end
 local function BeginGrace()
     if current.state ~= STATE_ROLLING and current.state ~= STATE_TIE then return end
     local grace = math.max(0, math.min(1, tonumber(Setting("graceSeconds")) or 1))
+    Announce("Finish roll.")
     SetState(STATE_GRACE)
     current.deadline = GetTime() + grace
     if grace == 0 then ResolveRound() end
     RefreshUI()
+end
+
+local function UpdateRollCountdown(now)
+    if current.state ~= STATE_ROLLING and current.state ~= STATE_TIE then return end
+    if not current.deadline then return end
+    local remaining = current.deadline - now
+    if remaining <= 0 then return end
+    local count = math.ceil(remaining)
+    if count >= 1 and count <= 5 and current.lastCountdown ~= count then
+        current.lastCountdown = count
+        Announce(tostring(count))
+    end
 end
 
 function AA.Start(slot)
@@ -1130,9 +1144,11 @@ end)
 
 eventFrame:SetScript("OnUpdate", function(_, elapsed)
     if frame and frame:IsShown() then RefreshUI() end
-    if (current.state == STATE_ROLLING or current.state == STATE_TIE) and current.deadline and GetTime() >= current.deadline then
+    local now = GetTime()
+    UpdateRollCountdown(now)
+    if (current.state == STATE_ROLLING or current.state == STATE_TIE) and current.deadline and now >= current.deadline then
         BeginGrace()
-    elseif current.state == STATE_GRACE and current.deadline and GetTime() >= current.deadline then
+    elseif current.state == STATE_GRACE and current.deadline and now >= current.deadline then
         ResolveRound()
     elseif current.state == STATE_PENDING and current.pendingAward and current.pendingAward.kind == "loot-ready" then
         current.pendingAward.kind = "loot"
