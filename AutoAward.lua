@@ -4,6 +4,12 @@
 -- WoW 3.3.5a / Lua 5.1 compatible.
 ----------------------------------------------------------------------
 
+-- Ascension's LootFrame may omit this stock 3.3.5 constant while its
+-- master-loot callback still compares item quality against it.
+if MASTER_LOOT_THREHOLD == nil then
+    MASTER_LOOT_THREHOLD = 4
+end
+
 AutoAward = AutoAward or {}
 local AA = AutoAward
 
