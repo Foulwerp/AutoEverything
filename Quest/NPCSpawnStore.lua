@@ -405,21 +405,32 @@ end
 
 -- Recover monster IDs for quests missing from the public quest catalog by
 -- matching their live objective label against NPC names already present in
--- the generated quest data. Prefer the longest name so a specific creature
--- wins over a shorter name contained inside it.
+-- the generated quest data. Prefer the longest matching names so specific
+-- creatures win over shorter names, while combined objectives can return all
+-- equally specific targets (for example, two named kobold types).
 function Store.FindNPCsByObjectiveText(text, cooperate)
     if type(text) ~= "string" or text == "" then return nil end
     if not npcIDsByName then BuildNPCNameIndex(cooperate) end
     local label = string.lower(text)
-    local best, bestLength
+    local best, bestSeen, bestLength
     for name, npcIDs in pairs(npcIDsByName) do
-        if string.find(label, name, 1, true)
-            and (not bestLength or string.len(name) > bestLength)
-        then
-            best, bestLength = npcIDs, string.len(name)
+        if string.find(label, name, 1, true) then
+            local length = string.len(name)
+            if not bestLength or length > bestLength then
+                best, bestSeen, bestLength = {}, {}, length
+            end
+            if length == bestLength then
+                for _, npcID in ipairs(npcIDs) do
+                    if not bestSeen[npcID] then
+                        bestSeen[npcID] = true
+                        best[#best + 1] = npcID
+                    end
+                end
+            end
         end
         if cooperate then cooperate() end
     end
+    if best then table.sort(best) end
     return best
 end
 

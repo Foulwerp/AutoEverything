@@ -178,7 +178,9 @@ local function AddLocation(zoneID, zoneName, floor, record, coord, questID, ques
         return false
     end
 
-    targetByZone[key] = targetByZone[key] or { name = zoneName, zoneIDs = {}, questIDs = {}, points = {} }
+    targetByZone[key] = targetByZone[key] or {
+        name=zoneName, zoneIDs={}, questIDs={}, points={}, routes={},
+    }
     local zone = targetByZone[key]
     local numericZoneID = tonumber(zoneID)
     if numericZoneID then zone.zoneIDs[numericZoneID] = true end
