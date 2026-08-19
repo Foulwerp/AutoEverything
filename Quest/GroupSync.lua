@@ -23,6 +23,7 @@ local VALID_KINDS = { R=true, B=true, E=true, X=true, Q=true, O=true, H=true }
 local SEP = "\31"
 local SEND_INTERVAL = 0.12
 local UPDATE_DELAY = 0.65
+local ROSTER_SETTLE_DELAY = 0.75
 local MAX_QUEUE = 1000
 local MAX_PAYLOAD_BYTES = 240
 local MAX_REMOTE_QUESTS = 75
@@ -30,7 +31,8 @@ local MAX_REMOTE_OBJECTIVES = 600
 local MAX_MESSAGES_PER_WINDOW = 180
 local MESSAGE_WINDOW = 10
 local RETRY_INTERVAL = 5
-local HEARTBEAT_INTERVAL = 10
+local HEARTBEAT_INTERVAL = 5
+local LOCAL_POLL_INTERVAL = 1
 local PARTY_AUDIT_INTERVAL = 300
 local RAID_AUDIT_INTERVAL = 600
 local STALE_GRACE = 30
@@ -43,6 +45,7 @@ local outgoing = { urgent = {}, bulk = {} }
 local outgoingKeys = {}
 local baselineReady = false
 local updateAt = nil
+local rosterCleanupAt = nil
 local acceptedSharedTitle = nil
 local acceptedSharedUntil = 0
 local pendingShares = {}
@@ -60,6 +63,7 @@ local pendingTurnIns = {}
 local rewardHooked = false
 local localSequence = 0
 local nextHeartbeatAt = 0
+local nextLocalPollAt = 0
 local sessionID = tostring(time and time() or 0) .. "-" .. tostring(math.random(100000, 999999))
 
 local driver = CreateFrame("Frame")
@@ -149,6 +153,19 @@ end
 
 local function RosterKey(name)
     local roster = CurrentRoster()
+    local normalized = NormalizeName(name)
+    if roster[normalized] then return normalized end
+    local short, match = ShortName(name), nil
+    for rosterName in pairs(roster) do
+        if ShortName(rosterName) == short then
+            if match then return nil end
+            match = rosterName
+        end
+    end
+    return match
+end
+
+local function MatchingRosterKey(roster, name)
     local normalized = NormalizeName(name)
     if roster[normalized] then return normalized end
     local short, match = ShortName(name), nil
@@ -688,6 +705,10 @@ local function ScheduleUpdate(delay)
     updateAt = GetTime() + (delay or UPDATE_DELAY)
 end
 
+local function ScheduleRosterCleanup(delay)
+    rosterCleanupAt = GetTime() + (delay or ROSTER_SETTLE_DELAY)
+end
+
 local function TrimMemberObjectives(quest, count)
     for index in pairs(quest.objectives) do
         if type(index) == "number" and index > count then quest.objectives[index] = nil end
@@ -893,15 +914,44 @@ end
 
 local function CleanupRoster()
     local roster, units = CurrentRoster()
+    local migrations, removals = {}, {}
     for name in pairs(memberQuests) do
-        if not roster[name] then
-            memberQuests[name] = nil
-            lastSnapshotAt[name] = nil
-            lastResyncAt[name] = nil
+        local rosterKey = MatchingRosterKey(roster, name)
+        if not rosterKey then
+            removals[#removals + 1] = name
+        elseif rosterKey ~= name then
+            migrations[#migrations + 1] = { from=name, to=rosterKey }
         end
     end
-    for name in pairs(pendingSnapshotTargets) do
-        if not roster[name] then pendingSnapshotTargets[name] = nil end
+    for _, name in ipairs(removals) do
+        memberQuests[name] = nil
+        lastSnapshotAt[name] = nil
+        lastResyncAt[name] = nil
+    end
+    for _, migration in ipairs(migrations) do
+        local member = memberQuests[migration.from]
+        local existing = memberQuests[migration.to]
+        if member and (not existing
+            or (member.updated or 0) >= (existing.updated or 0))
+        then
+            memberQuests[migration.to] = member
+        end
+        memberQuests[migration.from] = nil
+        lastSnapshotAt[migration.to] = math.max(
+            lastSnapshotAt[migration.to] or 0, lastSnapshotAt[migration.from] or 0)
+        lastResyncAt[migration.to] = math.max(
+            lastResyncAt[migration.to] or 0, lastResyncAt[migration.from] or 0)
+        lastSnapshotAt[migration.from] = nil
+        lastResyncAt[migration.from] = nil
+    end
+    for name, target in pairs(pendingSnapshotTargets) do
+        local rosterKey = MatchingRosterKey(roster, name)
+        if not rosterKey then
+            pendingSnapshotTargets[name] = nil
+        elseif rosterKey ~= name then
+            pendingSnapshotTargets[rosterKey] = target
+            pendingSnapshotTargets[name] = nil
+        end
     end
     for name, member in pairs(memberQuests) do
         local unit = units[name]
@@ -1270,10 +1320,12 @@ driver:SetScript("OnEvent", function(self, event, ...)
         ScheduleUpdate(0)
     elseif event == "PLAYER_ENTERING_WORLD" then
         baselineReady = false
+        nextHeartbeatAt = 0
+        nextLocalPollAt = 0
         rewardQuestTitle = nil
         wipe(pendingTurnIns)
         ScheduleUpdate(0.5)
-        CleanupRoster()
+        ScheduleRosterCleanup()
     elseif event == "QUEST_ACCEPTED" then
         AutoShareQuest(arg1)
     elseif event == "QUEST_PROGRESS" then
@@ -1293,7 +1345,7 @@ driver:SetScript("OnEvent", function(self, event, ...)
             end
         end
     elseif event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE" then
-        CleanupRoster()
+        ScheduleRosterCleanup()
         ScheduleUpdate(0.5)
     elseif event == "CHAT_MSG_ADDON" then
         if arg1 == "questie" and AQ.QuestieSyncCompat
@@ -1316,6 +1368,19 @@ driver:SetScript("OnUpdate", function(self, elapsed)
     if updateAt and now >= updateAt then
         updateAt = nil
         ProcessQuestUpdate()
+    end
+    if rosterCleanupAt and now >= rosterCleanupAt then
+        rosterCleanupAt = nil
+        CleanupRoster()
+    end
+
+    if SyncActive() and baselineReady then
+        if now >= nextLocalPollAt then
+            QuestState.Refresh("GROUP_SYNC_POLL", true)
+            nextLocalPollAt = now + LOCAL_POLL_INTERVAL
+        end
+    else
+        nextLocalPollAt = 0
     end
 
     for index = #pendingShares, 1, -1 do
