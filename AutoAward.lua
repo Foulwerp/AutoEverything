@@ -275,22 +275,7 @@ local function FindVerifiedSlot()
         end
         return current.lootSlot
     end
-
-    local matches = {}
-    for slot = 1, (GetNumLootItems and GetNumLootItems() or 0) do
-        local data = LootSlotData(slot)
-        if data and data.link == current.itemLink then table.insert(matches, slot) end
-    end
-    if #matches == 1 then
-        local data = LootSlotData(matches[1])
-        if data.locked then return nil, "the matching loot slot is locked" end
-        if current.itemQuantity and data.quantity ~= current.itemQuantity then
-            return nil, "the matching loot quantity changed"
-        end
-        return matches[1]
-    end
-    if #matches > 1 then return nil, "multiple identical items make the slot ambiguous" end
-    return nil, "the selected item is no longer in the loot window"
+    return nil, "the selected loot slot changed or is no longer available"
 end
 
 local function VerifyRoundItem()
@@ -1242,9 +1227,19 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
             RefreshUI()
         end
     elseif event == "LOOT_SLOT_CLEARED" and current.state == STATE_PENDING and current.pendingAward
-        and current.pendingAward.kind == "loot-context" and tonumber(arg1) == current.pendingAward.slot
+        and (current.pendingAward.kind == "loot-context" or current.pendingAward.kind == "loot-ready")
+        and tonumber(arg1) == current.pendingAward.slot
     then
         FailSafe("the loot slot cleared while preparing the assignment")
+    elseif event == "LOOT_SLOT_CLEARED" and current.source == "loot"
+        and (current.state == STATE_ROLLING or current.state == STATE_TIE
+            or current.state == STATE_GRACE or current.state == STATE_READY)
+        and tonumber(arg1) == current.lootSlot
+    then
+        local cancelledItem = current.itemLink
+        AA.Cancel("the selected loot slot cleared before assignment")
+        Broadcast(cancelledItem and ("Roll canceled for " .. cancelledItem .. ": item no longer available.")
+            or "Roll canceled: item no longer available.")
     elseif event == "UI_ERROR_MESSAGE" and current.state == STATE_PENDING and current.pendingAward then
         -- Combat and unrelated raid actions can emit UI errors during the
         -- assignment window. Preserve the message for timeout diagnostics,
