@@ -18,8 +18,8 @@ local Sync = AQ.GroupSync
 
 local PREFIX = "AEQ2"
 local VERSION = "3"
-local CAPABILITIES = "ids,seq,stale,class"
-local VALID_KINDS = { R=true, B=true, E=true, X=true, Q=true, O=true }
+local CAPABILITIES = "ids,seq,stale,class,contig,heart"
+local VALID_KINDS = { R=true, B=true, E=true, X=true, Q=true, O=true, H=true }
 local SEP = "\31"
 local SEND_INTERVAL = 0.12
 local UPDATE_DELAY = 0.65
@@ -30,6 +30,7 @@ local MAX_REMOTE_OBJECTIVES = 600
 local MAX_MESSAGES_PER_WINDOW = 180
 local MESSAGE_WINDOW = 10
 local RETRY_INTERVAL = 5
+local HEARTBEAT_INTERVAL = 10
 local PARTY_AUDIT_INTERVAL = 300
 local RAID_AUDIT_INTERVAL = 600
 local STALE_GRACE = 30
@@ -46,6 +47,7 @@ local acceptedSharedTitle = nil
 local acceptedSharedUntil = 0
 local pendingShares = {}
 local lastRequestAt = 0
+local lastResyncAt = {}
 local lastSnapshotAt = {}
 local pendingSnapshotTargets = {}
 local requestPending = false
@@ -57,6 +59,7 @@ local rewardQuestTitle = nil
 local pendingTurnIns = {}
 local rewardHooked = false
 local localSequence = 0
+local nextHeartbeatAt = 0
 local sessionID = tostring(time and time() or 0) .. "-" .. tostring(math.random(100000, 999999))
 
 local driver = CreateFrame("Frame")
@@ -174,6 +177,11 @@ local function Split(message)
         table.insert(fields, field)
     end
     return fields
+end
+
+local function HasCapability(member, capability)
+    local capabilities = member and member.capabilities or ""
+    return string.find("," .. capabilities .. ",", "," .. capability .. ",", 1, true) ~= nil
 end
 
 local function QuestKey(questID, title)
@@ -315,7 +323,7 @@ local function ClearOutgoing()
 end
 
 local function QueueMessage(
-    message, channel, target, priority, coalesceKey, batch, batchEnd, messagePrefix
+    message, channel, target, priority, coalesceKey, batch, batchEnd, messagePrefix, sequenced
 )
     if not SendAddonMessage or type(message) ~= "string"
         or string.len(message) > MAX_PAYLOAD_BYTES or QueueCount() >= MAX_QUEUE
@@ -330,19 +338,24 @@ local function QueueMessage(
         }, SEP)
         local existing = outgoingKeys[key]
         if existing then
-            for index = #queue, 1, -1 do
-                if queue[index] == existing then
-                    table.remove(queue, index)
-                    break
-                end
+            if existing.sequence then
+                local fields = Split(message)
+                fields[4] = tostring(existing.sequence)
+                message = table.concat(fields, SEP)
             end
             existing.message = message
-            queue[#queue + 1] = existing
             return true
+        end
+        local sequence
+        if sequenced then
+            sequence = NextSequence()
+            local fields = Split(message)
+            fields[4] = tostring(sequence)
+            message = table.concat(fields, SEP)
         end
         local entry = {
             message=message, channel=channel, target=target, key=key,
-            prefix=messagePrefix,
+            prefix=messagePrefix, sequence=sequence,
         }
         queue[#queue + 1] = entry
         outgoingKeys[key] = entry
@@ -394,24 +407,22 @@ local function QueueDelta(before, after)
 
     for key in pairs(before or {}) do
         if not after[key] then
-            local sequence = NextSequence()
             QueueMessage(table.concat({
-                "X", VERSION, sessionID, tostring(sequence), key,
-            }, SEP), channel, nil, "urgent", "X:" .. key)
+                "X", VERSION, sessionID, "0", key,
+            }, SEP), channel, nil, "urgent", "X:" .. key, nil, nil, nil, true)
         end
     end
     for key, quest in pairs(after) do
         local previous = before and before[key]
         if not previous or previous.title ~= quest.title or previous.complete ~= quest.complete
             or #previous.objectives ~= #quest.objectives then
-            local sequence = NextSequence()
-            QueueMessage(EncodeQuest(quest, sequence), channel, nil, "urgent", "Q:" .. key)
+            QueueMessage(EncodeQuest(quest, 0), channel, nil, "urgent", "Q:" .. key,
+                nil, nil, nil, true)
         end
         for index, objective in ipairs(quest.objectives) do
             if not previous or ObjectiveChanged(previous.objectives[index], objective) then
-                local sequence = NextSequence()
-                QueueMessage(EncodeObjective(key, index, objective, sequence), channel, nil,
-                    "urgent", "O:" .. key .. ":" .. index)
+                QueueMessage(EncodeObjective(key, index, objective, 0), channel, nil,
+                    "urgent", "O:" .. key .. ":" .. index, nil, nil, nil, true)
             end
         end
     end
@@ -482,6 +493,31 @@ local function SendRequest()
         requestPending = true
     end
     return false
+end
+
+local function RequestSnapshotFrom(target)
+    if not SyncActive() or not target then return false end
+    local targetKey = RosterKey(target)
+    if not targetKey then return false end
+    local now = GetTime()
+    if lastResyncAt[targetKey] and now - lastResyncAt[targetKey] < 2 then return true end
+    if QueueMessage(table.concat({
+        "R", VERSION, sessionID, CAPABILITIES,
+    }, SEP), "WHISPER", target, "urgent", "R:" .. targetKey) then
+        lastResyncAt[targetKey] = now
+        return true
+    end
+    return false
+end
+
+local function QueueHeartbeat()
+    local channel = GroupChannel()
+    if not baselineReady or not SyncActive() or not channel or #outgoing.urgent > 0 then
+        return false
+    end
+    return QueueMessage(table.concat({
+        "H", VERSION, sessionID, tostring(localSequence), CAPABILITIES,
+    }, SEP), channel, nil, "urgent", "H")
 end
 
 local function AnnouncementChannel()
@@ -701,7 +737,22 @@ local function ReceiveMessage(prefix, message, channel, sender)
 
     if kind == "R" then
         member.capabilities = CleanField(fields[4], 80)
-        if channel == GroupChannel() then QueueSnapshot(sender) end
+        if channel == GroupChannel() or channel == "WHISPER" then QueueSnapshot(sender) end
+        return
+    end
+
+    if kind == "H" then
+        if channel ~= GroupChannel() then return end
+        member.capabilities = CleanField(fields[5], 80)
+        local advertised = SafeInteger(fields[4], 0, 2147483647)
+        if not advertised then return end
+        if advertised > (member.lastSequence or 0) or not member.completeSnapshot then
+            member.stale = true
+            member.completeSnapshot = false
+            RequestSnapshotFrom(sender)
+            if AQ.Markers and AQ.Markers.RequestRefresh then AQ.Markers.RequestRefresh() end
+            if AQ.Map and AQ.Map.RequestRefresh then AQ.Map.RequestRefresh() end
+        end
         return
     end
 
@@ -719,6 +770,14 @@ local function ReceiveMessage(prefix, message, channel, sender)
     if sequence > 0 then
         local previous = member.lastSequence or 0
         if sequence <= previous then return end
+        if previous > 0 and sequence > previous + 1 and HasCapability(member, "contig") then
+            -- A later delta cannot prove that an earlier one was irrelevant.
+            -- Hide the partial state and request a complete snapshot instead of
+            -- continuing to show an old remaining count as if it were current.
+            member.stale = true
+            member.completeSnapshot = false
+            RequestSnapshotFrom(sender)
+        end
         member.lastSequence = sequence
     end
 
@@ -838,6 +897,7 @@ local function CleanupRoster()
         if not roster[name] then
             memberQuests[name] = nil
             lastSnapshotAt[name] = nil
+            lastResyncAt[name] = nil
         end
     end
     for name in pairs(pendingSnapshotTargets) do
@@ -854,6 +914,7 @@ local function CleanupRoster()
         ClearOutgoing()
         wipe(memberQuests)
         wipe(pendingSnapshotTargets)
+        wipe(lastResyncAt)
         requestPending = false
         nextAuditAt = 0
         profileSyncActive = false
@@ -1271,6 +1332,14 @@ driver:SetScript("OnUpdate", function(self, elapsed)
     end
     AuditSync(now)
 
+    if SyncActive() and baselineReady then
+        if now >= nextHeartbeatAt then
+            nextHeartbeatAt = now + (QueueHeartbeat() and HEARTBEAT_INTERVAL or 1)
+        end
+    else
+        nextHeartbeatAt = 0
+    end
+
     sendElapsed = sendElapsed + elapsed
     if sendElapsed < SEND_INTERVAL or QueueCount() == 0 then return end
     sendElapsed = 0
@@ -1297,6 +1366,7 @@ function Sync.ApplyProfile()
         ClearOutgoing()
         wipe(memberQuests)
         wipe(pendingSnapshotTargets)
+        wipe(lastResyncAt)
         requestPending = false
         nextAuditAt = 0
         if AQ.QuestieSyncCompat and AQ.QuestieSyncCompat.CleanupRoster then
