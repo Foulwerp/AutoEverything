@@ -505,6 +505,13 @@ local function FirstCastable(missing)
     return nil
 end
 
+local function HasTargetInRange(missing)
+    for _, entry in ipairs(missing) do
+        if entry.inRange then return true end
+    end
+    return false
+end
+
 ----------------------------------------------------------------------
 -- Compact status/cast window
 ----------------------------------------------------------------------
@@ -593,6 +600,7 @@ local function PaintWindow()
     local enabled = AB.db and AB.db.enabled == true
     local shouldShow = enabled and Setting("showWindow", true) ~= false
     if shouldShow and Setting("hideWhenComplete", false) and #currentMissing == 0 then shouldShow = false end
+    if shouldShow and #currentMissing > 0 and not HasTargetInRange(currentMissing) then shouldShow = false end
 
     if not InCombat() then
         if shouldShow then window:Show() else window:Hide() end
