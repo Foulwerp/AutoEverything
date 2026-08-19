@@ -15,6 +15,8 @@ local serviceByZone
 local combinedByZone = {}
 local worldPins, minimapPins = {}, {}
 local worldRouteDots, minimapRouteDots = {}, {}
+local minimapVisibleCount = 0
+local minimapZoneKey
 local highlightedRouteEntityID
 local RefreshRouteHighlight
 local refreshPending, refreshAt = false, 0
@@ -1077,7 +1079,9 @@ local function UpdateSightingPulse(pin)
 end
 
 local function ConfigurePin(pin, cluster, size)
+    if pin.cluster == cluster and pin.configuredSize == size then return end
     pin.cluster = cluster
+    pin.configuredSize = size
     pin:SetWidth(size)
     pin:SetHeight(size)
     -- No vertex tint - same natural icon colors as the nameplate badges in
@@ -1153,6 +1157,19 @@ local function HidePins(pool)
         pin:Hide()
         pin.partyBadge:Hide()
         pin.cluster = nil
+    end
+end
+
+local function HidePinsAfter(pool, lastVisible)
+    for index = lastVisible + 1, #pool do
+        local pin = pool[index]
+        if pin:IsShown() or pin.cluster then
+            pin:SetScript("OnUpdate", nil)
+            pin.icon:SetAlpha(1)
+            pin:Hide()
+            pin.partyBadge:Hide()
+            pin.cluster = nil
+        end
     end
 end
 
@@ -1261,14 +1278,22 @@ local function CurrentMapName()
 end
 
 function QuestMap.UpdateWorldMap()
-    HidePins(worldPins)
     HideRouteDots(worldRouteDots)
-    if not Enabled() or not WorldMapFrame or not WorldMapFrame:IsShown() then return end
+    if not Enabled() or not WorldMapFrame or not WorldMapFrame:IsShown() then
+        HidePins(worldPins)
+        return
+    end
     local parent = WorldMapDetailFrame or WorldMapButton
-    if not parent or parent:GetWidth() <= 0 or parent:GetHeight() <= 0 then return end
+    if not parent or parent:GetWidth() <= 0 or parent:GetHeight() <= 0 then
+        HidePins(worldPins)
+        return
+    end
     local mapName = CurrentMapName()
     local zone = mapName and ZoneForKey(NormalizeZone(mapName))
-    if not zone then return end
+    if not zone then
+        HidePins(worldPins)
+        return
+    end
 
     local currentFloor = GetCurrentMapDungeonLevel and GetCurrentMapDungeonLevel() or 0
     local shown = 0
@@ -1292,6 +1317,7 @@ function QuestMap.UpdateWorldMap()
             pin:Show()
         end
     end
+    HidePinsAfter(worldPins, shown)
 end
 
 local function ReadPlayerMapPosition()
@@ -1453,6 +1479,17 @@ local function MinimapRadius()
     return 200
 end
 
+-- Between full map-context checks, the selected map is already known to be
+-- the player's zone. Sampling just its coordinates avoids repeating zone,
+-- quest-map, and debug bookkeeping on every animation tick.
+local function UpdatePlayerPositionFast()
+    if WorldMapFrame and WorldMapFrame:IsShown() then return false end
+    local x, y = ReadPlayerMapPosition()
+    if not x or not y or (x == 0 and y == 0) then return false end
+    playerMap.x, playerMap.y = x, y
+    return true
+end
+
 -- Ascension exposes the same guarded world-position API used by installed map
 -- addons. It fills dimensions for capitals and custom maps that are absent
 -- from the conservative static 3.3.5 zone table above.
@@ -1530,16 +1567,72 @@ RefreshRouteHighlight = function(pin)
     end
 end
 
-function QuestMap.UpdateMinimap()
+local function ClearMinimapPins(status)
     HidePins(minimapPins)
     HideRouteDots(minimapRouteDots)
-    if not Enabled() then minimapStatus = "disabled"; return end
-    if not Minimap then minimapStatus = "Minimap frame unavailable"; return end
-    if not playerMap.key or not playerMap.x then minimapStatus = "player map position unavailable"; return end
+    minimapVisibleCount = 0
+    minimapZoneKey = nil
+    minimapStatus = status
+end
+
+-- Moving pins only changes their screen offsets. Keep this hot path free of
+-- zone scans, sorting, texture changes, and pool teardown so it can run often
+-- enough to remain smooth at flight-path speeds.
+local function PositionMinimapPins()
+    if minimapZoneKey ~= playerMap.key
+        or not Minimap or not playerMap.x or not playerMap.y
+    then
+        return false
+    end
     local zone = ZoneForKey(playerMap.key)
-    if not zone then minimapStatus = "no map icon records for " .. playerMap.key; return end
+    if not zone then return false end
     local size = PhysicalZoneSize(zone, playerMap.key)
-    if not size then minimapStatus = "no physical map dimensions for " .. playerMap.key; return end
+    if not size then return false end
+
+    local radius = MinimapRadius()
+    local facing = GetPlayerFacing and GetPlayerFacing() or 0
+    local rotate = GetCVar and GetCVar("rotateMinimap") == "1"
+    local mapRadius = math.min(Minimap:GetWidth(), Minimap:GetHeight()) / 2 - 10
+    local scale = mapRadius / radius
+    local pinSize = MinimapPinSize()
+    local cosFacing, sinFacing
+    if rotate then cosFacing, sinFacing = math.cos(facing), math.sin(facing) end
+    for index = 1, minimapVisibleCount do
+        local pin = minimapPins[index]
+        local cluster = pin and pin.cluster
+        if cluster then
+            local dx = (cluster.x / 100 - playerMap.x) * size[1]
+            local dy = (cluster.y / 100 - playerMap.y) * size[2]
+            if rotate then
+                dx, dy = dx * cosFacing - dy * sinFacing,
+                    dx * sinFacing + dy * cosFacing
+            end
+            local offsetX, offsetY = ClusterOffset(cluster, pinSize)
+            pin:ClearAllPoints()
+            pin:SetPoint("CENTER", Minimap, "CENTER",
+                dx * scale + offsetX, -dy * scale + offsetY)
+        end
+    end
+    return true
+end
+
+function QuestMap.UpdateMinimap()
+    if not Enabled() then ClearMinimapPins("disabled"); return end
+    if not Minimap then ClearMinimapPins("Minimap frame unavailable"); return end
+    if not playerMap.key or not playerMap.x then
+        ClearMinimapPins("player map position unavailable")
+        return
+    end
+    local zone = ZoneForKey(playerMap.key)
+    if not zone then
+        ClearMinimapPins("no map icon records for " .. playerMap.key)
+        return
+    end
+    local size = PhysicalZoneSize(zone, playerMap.key)
+    if not size then
+        ClearMinimapPins("no physical map dimensions for " .. playerMap.key)
+        return
+    end
 
     local radius = MinimapRadius()
     local radiusLimit = radius * (MinimapPinRadiusPercent() / 100)
@@ -1549,18 +1642,19 @@ function QuestMap.UpdateMinimap()
     DrawMinimapRoutes(zone, size, radius, radiusLimit, mapRadius, facing, rotate)
     local candidates = {}
     local currentFloor = GetCurrentMapDungeonLevel and GetCurrentMapDungeonLevel() or 0
+    local radiusLimitSq = radiusLimit * radiusLimit
     if not zone.exactPoints then zone.exactPoints = GroupExactPoints(zone.points) end
     for _, cluster in ipairs(zone.exactPoints) do
         if cluster.floor == 0 or currentFloor == 0 or cluster.floor == currentFloor then
             local dx = (cluster.x / 100 - playerMap.x) * size[1]
             local dy = (cluster.y / 100 - playerMap.y) * size[2]
-            local distance = math.sqrt(dx * dx + dy * dy)
+            local distanceSq = dx * dx + dy * dy
         -- Only display locations within minimapPinRadiusPercent of the
         -- minimap's own view radius (Map Pins settings). Distant locations
         -- belong on the world map/route arrow; clamping every spawn to the
         -- rim creates an unreadable pile of icons.
-            if distance <= radiusLimit then
-                candidates[#candidates + 1] = { cluster=cluster, dx=dx, dy=dy, distance=distance }
+            if distanceSq <= radiusLimitSq then
+                candidates[#candidates + 1] = { cluster=cluster, distanceSq=distanceSq }
             end
         end
     end
@@ -1568,7 +1662,10 @@ function QuestMap.UpdateMinimap()
         if a.cluster.isService ~= b.cluster.isService then
             return not a.cluster.isService
         end
-        return a.distance < b.distance
+        if a.distanceSq ~= b.distanceSq then return a.distanceSq < b.distanceSq end
+        if a.cluster.x ~= b.cluster.x then return a.cluster.x < b.cluster.x end
+        if a.cluster.y ~= b.cluster.y then return a.cluster.y < b.cluster.y end
+        return tostring(a.cluster.kind) < tostring(b.cluster.kind)
     end)
 
     local pinSize = MinimapPinSize()
@@ -1576,23 +1673,15 @@ function QuestMap.UpdateMinimap()
     minimapStatus = tostring(visibleCount) .. " nearby pins shown from " .. tostring(#zone.exactPoints) .. " zone locations"
     for index = 1, visibleCount do
         local candidate = candidates[index]
-        local dx, dy = candidate.dx, candidate.dy
-        if rotate then
-            local cosFacing, sinFacing = math.cos(facing), math.sin(facing)
-            dx, dy = dx * cosFacing - dy * sinFacing,
-                dx * sinFacing + dy * cosFacing
-        end
-        local scale = mapRadius / radius
-        local sx, sy = dx * scale, -dy * scale
-        local offsetX, offsetY = ClusterOffset(candidate.cluster, pinSize)
-        sx, sy = sx + offsetX, sy + offsetY
         local pin = minimapPins[index]
         if not pin then pin = NewPin(Minimap, true); minimapPins[index] = pin end
         ConfigurePin(pin, candidate.cluster, pinSize)
-        pin:ClearAllPoints()
-        pin:SetPoint("CENTER", Minimap, "CENTER", sx, sy)
         pin:Show()
     end
+    minimapVisibleCount = visibleCount
+    minimapZoneKey = playerMap.key
+    HidePinsAfter(minimapPins, visibleCount)
+    PositionMinimapPins()
 end
 
 function QuestMap.SetEnabled(enabled)
@@ -1785,16 +1874,26 @@ frame:SetScript("OnUpdate", function(_, elapsed)
         refreshPending, refreshAt = true, 0
     end
     frame.pinsWereEnabled = true
-    frame.elapsed = (frame.elapsed or 0) + math.min(elapsed or 0, 0.1)
+    frame.positionElapsed = (frame.positionElapsed or 0) + math.min(elapsed or 0, 0.1)
+    frame.selectionElapsed = (frame.selectionElapsed or 0) + math.min(elapsed or 0, 0.1)
     if refreshPending and GetTime() >= refreshAt then
         refreshPending = false
         QuestMap.RebuildIndex()
         UpdatePlayerLocation()
         QuestMap.UpdateWorldMap()
         QuestMap.UpdateMinimap()
-    elseif frame.elapsed >= 0.12 then
-        frame.elapsed = 0
-        UpdatePlayerLocation()
-        QuestMap.UpdateMinimap()
+        frame.positionElapsed, frame.selectionElapsed = 0, 0
+    elseif frame.positionElapsed >= (1 / 30) then
+        frame.positionElapsed = 0
+        if frame.selectionElapsed >= 0.2 then
+            frame.selectionElapsed = 0
+            UpdatePlayerLocation()
+            QuestMap.UpdateMinimap()
+        elseif WorldMapFrame and WorldMapFrame:IsShown() then
+            PositionMinimapPins()
+        elseif not UpdatePlayerPositionFast() or not PositionMinimapPins() then
+            UpdatePlayerLocation()
+            QuestMap.UpdateMinimap()
+        end
     end
 end)
