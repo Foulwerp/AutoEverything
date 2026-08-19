@@ -1167,13 +1167,6 @@ end
 
 driver:RegisterEvent("ADDON_LOADED")
 driver:RegisterEvent("PLAYER_ENTERING_WORLD")
-driver:RegisterEvent("QUEST_LOG_UPDATE")
-driver:RegisterEvent("QUEST_WATCH_UPDATE")
-driver:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
-driver:RegisterEvent("QUEST_ITEM_UPDATE")
-driver:RegisterEvent("QUEST_FINISHED")
-driver:RegisterEvent("BAG_UPDATE")
-driver:RegisterEvent("ITEM_PUSH")
 driver:RegisterEvent("QUEST_ACCEPTED")
 driver:RegisterEvent("QUEST_ACCEPT_CONFIRM")
 driver:RegisterEvent("QUEST_PROGRESS")
@@ -1196,15 +1189,8 @@ driver:SetScript("OnEvent", function(self, event, ...)
         wipe(pendingTurnIns)
         ScheduleUpdate(0.5)
         CleanupRoster()
-    elseif event == "QUEST_LOG_UPDATE" or event == "QUEST_WATCH_UPDATE"
-        or event == "UNIT_QUEST_LOG_CHANGED"
-        or event == "QUEST_ITEM_UPDATE" or event == "QUEST_FINISHED"
-        or event == "BAG_UPDATE" or event == "ITEM_PUSH"
-    then
-        ScheduleUpdate()
     elseif event == "QUEST_ACCEPTED" then
         AutoShareQuest(arg1)
-        ScheduleUpdate()
     elseif event == "QUEST_PROGRESS" then
         rewardQuestTitle = CleanField(GetTitleText and GetTitleText() or "", 145)
     elseif event == "QUEST_COMPLETE" then
@@ -1227,6 +1213,10 @@ driver:SetScript("OnEvent", function(self, event, ...)
     elseif event == "CHAT_MSG_ADDON" then
         ReceiveMessage(arg1, arg2, arg3, arg4)
     end
+end)
+
+QuestState.Subscribe(function(changes)
+    if changes.semanticChanged then ScheduleUpdate(changes.settled and 0 or nil) end
 end)
 
 local sendElapsed = 0

@@ -675,13 +675,6 @@ end
 ----------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
-eventFrame:RegisterEvent("QUEST_WATCH_UPDATE")
-eventFrame:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
-eventFrame:RegisterEvent("QUEST_ITEM_UPDATE")
-eventFrame:RegisterEvent("QUEST_FINISHED")
-eventFrame:RegisterEvent("BAG_UPDATE")
-eventFrame:RegisterEvent("ITEM_PUSH")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
@@ -710,6 +703,13 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
     else
         refreshPending, refreshAt = true,
             GetTime() + (Resolver.QUEST_LOG_SETTLE_DELAY or 0.75)
+    end
+end)
+AutoQuest.QuestState.Subscribe(function(changes)
+    if changes.semanticChanged then
+        refreshPending = true
+        refreshAt = GetTime()
+            + (changes.settled and 0 or (Resolver.QUEST_LOG_SETTLE_DELAY or 0.75))
     end
 end)
 eventFrame:SetScript("OnUpdate", function(_, elapsed)

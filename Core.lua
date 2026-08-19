@@ -2212,11 +2212,17 @@ function Core.RebuildQuestItems()
 end
 
 local questFrame = CreateFrame("Frame")
-questFrame:RegisterEvent("QUEST_LOG_UPDATE")
 questFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 questFrame:SetScript("OnEvent", function()
     Core.RebuildQuestItems()
 end)
+if AutoQuest and AutoQuest.QuestState and AutoQuest.QuestState.Subscribe then
+    AutoQuest.QuestState.Subscribe(function(changes)
+        if changes.questSetChanged or changes.metadataChanged then
+            Core.RebuildQuestItems()
+        end
+    end)
+end
 
 ----------------------------------------------------------------------
 -- Appearance / vanity learning

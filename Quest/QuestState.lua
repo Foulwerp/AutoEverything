@@ -19,6 +19,12 @@ local revision = 0
 local signature = ""
 local initialized = false
 local refreshing = false
+local listeners = {}
+local lastChanges
+local settleAt
+local settleSource
+
+State.SETTLE_DELAY = 0.65
 
 local function PlainText(value)
     value = string.gsub(value or "", "|c%x%x%x%x%x%x%x%x", "")
@@ -119,18 +125,134 @@ local function BuildSnapshot()
     return ordered, byKey, byID, byTitle, byLogIndex, table.concat(parts, "\31")
 end
 
-function State.Refresh()
+local function ObjectiveChanged(before, after)
+    return not before or not after
+        or before.text ~= after.text
+        or before.type ~= after.type
+        or before.finished ~= after.finished
+        or before.current ~= after.current
+        or before.required ~= after.required
+end
+
+local function MetadataChanged(before, after)
+    return before.title ~= after.title
+        or before.id ~= after.id
+        or before.level ~= after.level
+        or before.tag ~= after.tag
+        or before.suggestedGroup ~= after.suggestedGroup
+        or before.isDaily ~= after.isDaily
+end
+
+local function BuildChanges(nextByKey, wasInitialized, source, settled)
+    local changes = {
+        initial = not wasInitialized,
+        source = source or "manual",
+        settled = settled == true,
+        added = {},
+        removed = {},
+        updated = {},
+        affectedKeys = {},
+        addedCount = 0,
+        removedCount = 0,
+        updatedCount = 0,
+        objectiveCount = 0,
+        questSetChanged = false,
+        completionChanged = false,
+        objectiveChanged = false,
+        metadataChanged = false,
+        indexChanged = false,
+        semanticChanged = false,
+        any = false,
+    }
+
+    for key, before in pairs(questsByKey) do
+        if not nextByKey[key] then
+            changes.removed[key] = before
+            changes.affectedKeys[key] = true
+            changes.questSetChanged = true
+            changes.semanticChanged = true
+            changes.any = true
+            changes.removedCount = changes.removedCount + 1
+        end
+    end
+
+    for key, after in pairs(nextByKey) do
+        local before = questsByKey[key]
+        if not before then
+            changes.added[key] = after
+            changes.affectedKeys[key] = true
+            changes.questSetChanged = true
+            changes.semanticChanged = true
+            changes.any = true
+            changes.addedCount = changes.addedCount + 1
+        else
+            local update = { before = before, after = after, objectives = {} }
+            if before.complete ~= after.complete then
+                update.completion = true
+                changes.completionChanged = true
+            end
+            if MetadataChanged(before, after) then
+                update.metadata = true
+                changes.metadataChanged = true
+            end
+            if before.logIndex ~= after.logIndex or before.collapsed ~= after.collapsed then
+                update.index = true
+                changes.indexChanged = true
+            end
+            local maximum = math.max(before.objectiveCount or 0, after.objectiveCount or 0)
+            for objectiveIndex = 1, maximum do
+                local oldObjective = before.objectives[objectiveIndex]
+                local newObjective = after.objectives[objectiveIndex]
+                if ObjectiveChanged(oldObjective, newObjective) then
+                    update.objectives[objectiveIndex] = {
+                        before = oldObjective,
+                        after = newObjective,
+                    }
+                    update.objective = true
+                    changes.objectiveChanged = true
+                    changes.objectiveCount = changes.objectiveCount + 1
+                end
+            end
+            if update.completion or update.metadata or update.index or update.objective then
+                changes.updated[key] = update
+                changes.affectedKeys[key] = true
+                changes.any = true
+                changes.updatedCount = changes.updatedCount + 1
+                if update.completion or update.metadata or update.objective then
+                    changes.semanticChanged = true
+                end
+            end
+        end
+    end
+    return changes
+end
+
+local function Notify(changes)
+    local callbacks = {}
+    for index, callback in ipairs(listeners) do callbacks[index] = callback end
+    for _, callback in ipairs(callbacks) do
+        local ok, err = pcall(callback, changes)
+        if not ok and geterrorhandler then geterrorhandler()(err) end
+    end
+end
+
+function State.Refresh(source, settled)
     if refreshing then return false end
     refreshing = true
     local ordered, byKey, byID, byTitle, byLogIndex, nextSignature = BuildSnapshot()
+    local changes = BuildChanges(byKey, initialized, source, settled)
     quests, questsByKey, questsByID = ordered, byKey, byID
     questsByTitle, questsByLogIndex = byTitle, byLogIndex
-    local changed = not initialized or nextSignature ~= signature
     signature = nextSignature
     initialized = true
-    if changed then revision = revision + 1 end
+    if changes.any then
+        revision = revision + 1
+        changes.revision = revision
+    end
+    lastChanges = changes
     refreshing = false
-    return changed
+    if changes.any then Notify(changes) end
+    return changes.any, changes
 end
 
 local function EnsureInitialized()
@@ -172,6 +294,31 @@ function State.GetSignature()
     return signature
 end
 
+function State.GetLastChanges()
+    return lastChanges
+end
+
+-- Subscribers receive one immutable-by-convention change set after the new
+-- snapshot has replaced the old one. Duplicate subscriptions are ignored.
+function State.Subscribe(callback)
+    if type(callback) ~= "function" then return nil end
+    for _, existing in ipairs(listeners) do
+        if existing == callback then return callback end
+    end
+    listeners[#listeners + 1] = callback
+    return callback
+end
+
+function State.Unsubscribe(callback)
+    for index = #listeners, 1, -1 do
+        if listeners[index] == callback then
+            table.remove(listeners, index)
+            return true
+        end
+    end
+    return false
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -180,8 +327,29 @@ eventFrame:RegisterEvent("QUEST_WATCH_UPDATE")
 eventFrame:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 eventFrame:RegisterEvent("QUEST_ACCEPTED")
 eventFrame:RegisterEvent("QUEST_FINISHED")
+eventFrame:RegisterEvent("QUEST_ITEM_UPDATE")
+eventFrame:RegisterEvent("BAG_UPDATE")
+eventFrame:RegisterEvent("ITEM_PUSH")
 eventFrame:SetScript("OnEvent", function(_, event, addonName)
-    if event ~= "ADDON_LOADED" or addonName == "AutoEverything" then
-        State.Refresh()
+    if event == "ADDON_LOADED" then
+        if addonName ~= "AutoEverything" then return end
+        State.Refresh(event)
+        return
+    end
+    if event ~= "QUEST_ITEM_UPDATE" and event ~= "BAG_UPDATE" and event ~= "ITEM_PUSH" then
+        State.Refresh(event)
+    end
+    -- Ascension can fire the primary event before objective counts and
+    -- finished flags settle. Inventory events are noisier, so they only use
+    -- this coalesced pass; quest events publish both immediate and settled
+    -- changes when the snapshots actually differ.
+    settleAt = GetTime() + State.SETTLE_DELAY
+    settleSource = event
+end)
+eventFrame:SetScript("OnUpdate", function()
+    if settleAt and GetTime() >= settleAt then
+        local source = settleSource
+        settleAt, settleSource = nil, nil
+        State.Refresh(source, true)
     end
 end)
