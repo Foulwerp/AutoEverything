@@ -1054,7 +1054,7 @@ end
 local function CreateWindow()
     frame = CreateFrame("Frame", "AutoEverythingAwardFrame", UIParent)
     frame:SetWidth(370)
-    frame:SetHeight(124)
+    frame:SetHeight(118)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -1082,13 +1082,13 @@ local function CreateWindow()
     ui.icon = iconFrame:CreateTexture(nil, "ARTWORK")
     ui.icon:SetPoint("TOPLEFT", 2, -2); ui.icon:SetPoint("BOTTOMRIGHT", -2, 2)
     ui.item = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    ui.item:SetPoint("TOPLEFT", 18, -87); ui.item:SetWidth(334); ui.item:SetHeight(14); ui.item:SetJustifyH("LEFT")
+    ui.item:SetPoint("TOPLEFT", 18, -84); ui.item:SetWidth(334); ui.item:SetHeight(14); ui.item:SetJustifyH("LEFT")
     if Theme then Theme.ApplyFont(ui.item, 12) end
     ui.rolls = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ui.rolls:SetPoint("TOPRIGHT", -18, -104); ui.rolls:SetWidth(150); ui.rolls:SetJustifyH("RIGHT")
+    ui.rolls:SetPoint("TOPRIGHT", -18, -98); ui.rolls:SetWidth(150); ui.rolls:SetJustifyH("RIGHT")
     if Theme then Theme.ApplyFont(ui.rolls, 11); ui.rolls:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
     ui.winner = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ui.winner:SetPoint("TOPLEFT", 18, -104); ui.winner:SetWidth(180); ui.winner:SetJustifyH("LEFT")
+    ui.winner:SetPoint("TOPLEFT", 18, -98); ui.winner:SetWidth(180); ui.winner:SetJustifyH("LEFT")
     if Theme then Theme.ApplyFont(ui.winner, 11); ui.winner:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
 
     local actionWidth = 69
