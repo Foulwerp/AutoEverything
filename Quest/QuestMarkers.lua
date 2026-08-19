@@ -841,8 +841,8 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
     if not indexEnabled then return end
     eventFrame.elapsed = (eventFrame.elapsed or 0) + math.min(elapsed or 0, 0.1)
     if refreshPending and GetTime() >= refreshAt then
-        if AutoQuest.Map and AutoQuest.Map.IsInitialBuildComplete
-            and not AutoQuest.Map.IsInitialBuildComplete()
+        if AutoQuest.Map and AutoQuest.Map.IsQuestLayerReady
+            and not AutoQuest.Map.IsQuestLayerReady()
         then
             return
         end

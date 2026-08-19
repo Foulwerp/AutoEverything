@@ -32,6 +32,7 @@ local trackedNPCIDs = {}
 local initialBuildComplete = false
 local initialBuildThread
 local buildCooperate
+local questLayerReady = false
 
 local defaultServiceKinds = {
     "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
@@ -908,6 +909,7 @@ function QuestMap.RebuildIndex()
     activeByZone = {}
     activePointKeys = {}
     combinedByZone = {}
+    questLayerReady = false
     if SpawnStore.AreNotableNPCsReady and not SpawnStore.AreNotableNPCsReady() then
         notableByZone = nil
     end
@@ -916,10 +918,6 @@ function QuestMap.RebuildIndex()
         points=0, servicePoints=0, partyPoints=0, partyQuests=0, matches={}
     }
     if not Enabled() then return end
-    BuildServiceIndex()
-    for _, zone in pairs(serviceByZone or {}) do
-        buildStats.servicePoints = buildStats.servicePoints + #(zone.points or {})
-    end
     local resolverObjectives = Resolver.BuildActive()
     local previous = invalidateContributionCache and {} or mapContributions
     local nextContributions, rebuilt, reused = {}, 0, 0
@@ -963,6 +961,14 @@ function QuestMap.RebuildIndex()
     for _, contribution in pairs(mapContributions) do
         if contribution.remote then MergeContribution(contribution) end
     end
+    AddConfirmedLocations(resolverObjectives)
+    -- Active quest locations are usable now. Static service, notable-NPC, and
+    -- fallback-name indexes can continue warming without withholding them.
+    questLayerReady = true
+    BuildServiceIndex()
+    for _, zone in pairs(serviceByZone or {}) do
+        buildStats.servicePoints = buildStats.servicePoints + #(zone.points or {})
+    end
     AddNPCDiscoveryLocations()
     buildStats.points, buildStats.partyPoints = 0, 0
     for _, zone in pairs(activeByZone) do
@@ -971,7 +977,6 @@ function QuestMap.RebuildIndex()
             if point.isParty then buildStats.partyPoints = buildStats.partyPoints + 1 end
         end
     end
-    AddConfirmedLocations(resolverObjectives)
     if buildCooperate then
         -- Warm both global fallbacks cooperatively even when their individual
         -- pin options are off. Later quest acceptance, NPC lookup, or rare
@@ -1377,7 +1382,7 @@ end
 
 function QuestMap.UpdateWorldMap()
     HideRouteDots(worldRouteDots)
-    if initialBuildThread then
+    if initialBuildThread and not questLayerReady then
         HidePins(worldPins)
         return
     end
@@ -1719,7 +1724,7 @@ local function PositionMinimapPins()
 end
 
 function QuestMap.UpdateMinimap()
-    if initialBuildThread then ClearMinimapPins("map data loading"); return end
+    if initialBuildThread and not questLayerReady then ClearMinimapPins("map data loading"); return end
     if not Enabled() then ClearMinimapPins("disabled"); return end
     if not Minimap then ClearMinimapPins("Minimap frame unavailable"); return end
     if not playerMap.key or not playerMap.x then
@@ -1905,6 +1910,9 @@ function QuestMap.IsEnabled() return Enabled() end
 function QuestMap.IsInitialBuildComplete()
     return initialBuildComplete or not ModuleEnabled()
 end
+function QuestMap.IsQuestLayerReady()
+    return questLayerReady or initialBuildComplete or not ModuleEnabled()
+end
 
 function QuestMap.Debug()
     QuestMap.RebuildIndex()
@@ -1994,6 +2002,14 @@ frame:SetScript("OnUpdate", function(_, elapsed)
             initialBuildThread = nil
             buildCooperate = nil
             initialBuildComplete = true
+            combinedByZone = {}
+            UpdatePlayerLocation()
+            QuestMap.UpdateWorldMap()
+            QuestMap.UpdateMinimap()
+        elseif questLayerReady and not frame.initialQuestPinsPublished then
+            -- Publish the active quest layer on the first cooperative pause;
+            -- the much larger static layers can finish over later frames.
+            frame.initialQuestPinsPublished = true
             UpdatePlayerLocation()
             QuestMap.UpdateWorldMap()
             QuestMap.UpdateMinimap()
@@ -2008,6 +2024,8 @@ frame:SetScript("OnUpdate", function(_, elapsed)
         if not initialBuildComplete and coroutine and coroutine.create
             and coroutine.resume and coroutine.yield
         then
+            questLayerReady = false
+            frame.initialQuestPinsPublished = false
             local sliceStarted = debugprofilestop and debugprofilestop() or 0
             local checkpoints = 0
             buildCooperate = function()
