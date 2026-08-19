@@ -32,6 +32,8 @@ local STATE_FAILED = "FAILED_SAFE"
 
 local LOOT_ASSIGNMENT_TIMEOUT = 5
 local BIND_CONFIRM_TIMEOUT = 30
+local TRADE_OPEN_TIMEOUT = 5
+local TRADE_CLOSE_TIMEOUT = 3
 
 local roundSerial = 0
 local lootSessionID = 0
@@ -449,6 +451,7 @@ local function FailSafe(reason, assignmentUncertain)
     SetState(STATE_FAILED, reason)
     current.deadline = nil
     current.awardDeferred = nil
+    current.awardDeferredAutomatic = nil
     current.pendingAward = nil
     if CloseDropDownMenus then CloseDropDownMenus() end
     if assignmentUncertain then
@@ -463,11 +466,12 @@ local function CombatLocked()
     return InCombatLockdown and InCombatLockdown()
 end
 
-local function DeferAwardUntilCombatEnds()
+local function DeferAwardUntilCombatEnds(automatic)
     local wasDeferred = current.awardDeferred
     current.awardAttempted = false
     current.pendingAward = nil
     current.awardDeferred = true
+    current.awardDeferredAutomatic = automatic == true
     SetState(STATE_READY)
     if CloseDropDownMenus then CloseDropDownMenus() end
     if not wasDeferred then Log("Award deferred until combat ends.", "warn") end
@@ -517,7 +521,7 @@ local function SubmitPendingLootAward()
     local pending = current.pendingAward
     if current.state ~= STATE_PENDING or not pending or pending.kind ~= "loot-ready" then return end
     if CombatLocked() then
-        DeferAwardUntilCombatEnds()
+        DeferAwardUntilCombatEnds(pending.automatic)
         return
     end
 
@@ -621,6 +625,19 @@ local function PlacePendingTradeItem()
     RefreshUI()
 end
 
+local function CompletePendingTrade(message1, message2)
+    local pending = current.pendingAward
+    if current.state ~= STATE_PENDING or not pending or pending.kind ~= "trade" or not pending.tradePlaced then return false end
+    if not ERR_TRADE_COMPLETE or (message1 ~= ERR_TRADE_COMPLETE and message2 ~= ERR_TRADE_COMPLETE) then return false end
+
+    SetState(STATE_AWARDED)
+    current.pendingAward = nil
+    Announce("Gave " .. pending.itemLink .. " to " .. pending.winner .. ".")
+    if frame then frame:Hide() end
+    RefreshUI()
+    return true
+end
+
 local function BeginTieRound(tied, bracket)
     current.tieRound = (current.tieRound or 0) + 1
     if current.tieRound > 3 then
@@ -668,7 +685,7 @@ local function ResolveRound()
     SetState(STATE_READY)
     Announce(winner.player .. " wins " .. winner.bracket .. " with " .. winner.value .. ".")
     RefreshUI()
-    if Setting("autoAward") then AA.Award() end
+    if Setting("autoAward") then AA.Award(true) end
 end
 
 local function BeginGrace()
@@ -802,6 +819,7 @@ function AA.Cancel(reason)
     current.deadline = nil
     current.pendingAward = nil
     current.awardDeferred = nil
+    current.awardDeferredAutomatic = nil
     current.winner = nil
     current.rollsByPlayer = {}
     current.rejectedRolls = {}
@@ -832,16 +850,18 @@ function AA.Clear(name)
     RefreshUI()
 end
 
-function AA.Award()
+function AA.Award(automatic)
+    automatic = automatic == true
     if current.state ~= STATE_READY or current.awardAttempted then
         Log("No validated winner is ready to receive the item.", "warn")
         return false
     end
     if CombatLocked() then
-        DeferAwardUntilCombatEnds()
+        DeferAwardUntilCombatEnds(automatic)
         return true
     end
     current.awardDeferred = nil
+    current.awardDeferredAutomatic = nil
     local result, winner = WinnerFromRolls(current.rollsByPlayer)
     if result ~= "WINNER" or not winner or not current.winner or winner.normalizedPlayer ~= current.winner.normalizedPlayer then
         FailSafe("the winner changed during final validation")
@@ -871,6 +891,7 @@ function AA.Award()
             bagSlot = bagSlot,
             itemLink = current.itemLink,
             winner = winner.player,
+            automatic = automatic,
             startedAt = GetTime(),
         }
         SetState(STATE_PENDING)
@@ -904,6 +925,7 @@ function AA.Award()
         slot = slot,
         itemLink = current.itemLink,
         winner = winner.player,
+        automatic = automatic,
         startedAt = GetTime(),
     }
     SetState(STATE_PENDING)
@@ -1108,7 +1130,13 @@ local function CreateWindow()
     ui.cancel:SetPoint("LEFT", ui.award, "RIGHT", actionGap, 0)
     AddTooltip(ui.cancel, "Cancel", "Stops an active roll before item assignment begins.")
     ui.auto = MakeButton(frame, "Auto: OFF", 71, function()
-        SetSetting("autoAward", not Setting("autoAward"))
+        local enabled = not Setting("autoAward")
+        SetSetting("autoAward", enabled)
+        if not enabled and current.awardDeferred and current.awardDeferredAutomatic then
+            current.awardDeferred = nil
+            current.awardDeferredAutomatic = nil
+            Log("Deferred automatic assignment canceled; use Award manually when ready.", "warn")
+        end
         RefreshUI()
     end)
     ui.auto:SetPoint("TOPRIGHT", -18, -51)
@@ -1202,7 +1230,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         pending.candidate = candidate
         pending.startedAt = GetTime()
     elseif event == "CHAT_MSG_SYSTEM" then
-        AcceptRoll(arg1)
+        if not CompletePendingTrade(arg1, arg2) then AcceptRoll(arg1) end
     elseif event == "LOOT_SLOT_CLEARED" and current.state == STATE_PENDING and current.pendingAward
         and current.pendingAward.kind == "loot"
     then
@@ -1247,11 +1275,20 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         local isMaster = PlayerIsMasterLooter()
         if frame and not isMaster then frame:Hide() end
     elseif event == "PLAYER_REGEN_DISABLED" and current.state == STATE_PENDING and current.pendingAward
-        and (current.pendingAward.kind == "loot-context" or current.pendingAward.kind == "loot-ready")
+        and (current.pendingAward.kind == "loot-context" or current.pendingAward.kind == "loot-ready"
+            or (current.pendingAward.kind == "trade" and not current.pendingAward.tradeShown))
     then
-        DeferAwardUntilCombatEnds()
+        DeferAwardUntilCombatEnds(current.pendingAward.automatic)
     elseif event == "PLAYER_REGEN_ENABLED" and current.state == STATE_READY and current.awardDeferred then
-        AA.Award()
+        local automatic = current.awardDeferredAutomatic
+        current.awardDeferred = nil
+        current.awardDeferredAutomatic = nil
+        if automatic and not Setting("autoAward") then
+            Log("Automatic assignment is off; use Award manually when ready.", "warn")
+            RefreshUI()
+        else
+            AA.Award(automatic)
+        end
     elseif event == "LOOT_BIND_CONFIRM" and current.state == STATE_PENDING and current.pendingAward
         and current.pendingAward.kind == "loot" and tonumber(arg1) == current.pendingAward.slot
     then
@@ -1271,16 +1308,8 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         and current.pendingAward.kind == "trade" and current.pendingAward.tradePlaced
     then
         current.pendingAward.tradeCheckAt = GetTime() + 0.1
-    elseif event == "UI_INFO_MESSAGE" and current.state == STATE_PENDING and current.pendingAward
-        and current.pendingAward.kind == "trade" and ERR_TRADE_COMPLETE
-        and (arg1 == ERR_TRADE_COMPLETE or arg2 == ERR_TRADE_COMPLETE)
-    then
-        local completedTrade = current.pendingAward
-        SetState(STATE_AWARDED)
-        current.pendingAward = nil
-        Announce("Gave " .. completedTrade.itemLink .. " to " .. completedTrade.winner .. ".")
-        if frame then frame:Hide() end
-        RefreshUI()
+    elseif event == "UI_INFO_MESSAGE" then
+        CompletePendingTrade(arg1, arg2)
     end
 end)
 
@@ -1295,7 +1324,7 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
     elseif current.state == STATE_PENDING and current.pendingAward and current.pendingAward.kind == "loot-ready" then
         SubmitPendingLootAward()
     elseif current.state == STATE_PENDING and current.pendingAward and current.pendingAward.kind == "trade" then
-        if not current.pendingAward.tradeShown and GetTime() - current.pendingAward.startedAt >= 2 then
+        if not current.pendingAward.tradeShown and GetTime() - current.pendingAward.startedAt >= TRADE_OPEN_TIMEOUT then
             FailSafe("the trade window did not open for the winner")
         elseif current.pendingAward.tradePlaceAt and GetTime() >= current.pendingAward.tradePlaceAt then
             current.pendingAward.tradePlaceAt = nil
@@ -1306,8 +1335,15 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
             if TradeFrame and TradeFrame:IsShown() and not present then
                 FailSafe("the awarded item was removed from the trade window")
             end
-        elseif current.pendingAward.tradeClosedAt and GetTime() - current.pendingAward.tradeClosedAt >= 1 then
-            FailSafe("the trade closed without a success confirmation")
+        elseif current.pendingAward.tradeClosedAt and GetTime() - current.pendingAward.tradeClosedAt >= TRADE_CLOSE_TIMEOUT then
+            local bag, bagSlot, bagReason = FindVerifiedBagItem()
+            local errorDetail = current.pendingAward.lastError and ("; last error: " .. current.pendingAward.lastError) or ""
+            if bag ~= nil and bagSlot then
+                FailSafe("the trade closed without a success confirmation" .. errorDetail)
+            else
+                FailSafe("the trade closed and the item could not be reverified"
+                    .. (bagReason and (": " .. bagReason) or "") .. errorDetail, true)
+            end
         end
     elseif current.state == STATE_PENDING and current.pendingAward
         and GetTime() - current.pendingAward.startedAt
