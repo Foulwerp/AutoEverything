@@ -1452,7 +1452,8 @@ function QuestMap.Debug()
     local zone = playerMap.key and ZoneForKey(playerMap.key)
     local zonePoints = zone and #zone.points or 0
     print("|cff33ccffMap Pins|r")
-    print("  enabled=" .. tostring(Enabled()) .. " dbLoaded=" .. tostring(type(AscensionQuestLocationDB) == "table"))
+    print("  enabled=" .. tostring(Enabled()) .. " dbLoaded="
+        .. tostring(AutoQuest.DataStore.HasQuestData()))
     print("  activeQuests=" .. buildStats.activeQuests .. " matchedInDB=" .. buildStats.matchedQuests
         .. " confirmedObjectives=" .. buildStats.confirmedObjectives
         .. " indexedPoints=" .. buildStats.points

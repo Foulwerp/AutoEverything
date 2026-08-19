@@ -2200,9 +2200,11 @@ function Core.RebuildQuestItems()
     wipe(ActiveQuestItems)
 
     local state = AutoQuest and AutoQuest.QuestState
+    local data = AutoQuest and AutoQuest.DataStore
     local activeQuests = state and state.GetQuests and state.GetQuests() or {}
     for _, quest in ipairs(activeQuests) do
-        local items = QuestByTitle and QuestByTitle[quest.title]
+        local items = data and data.GetQuestItemIDsByTitle
+            and data.GetQuestItemIDsByTitle(quest.title)
         if items then
             for _, itemID in ipairs(items) do
                 ActiveQuestItems[itemID] = true

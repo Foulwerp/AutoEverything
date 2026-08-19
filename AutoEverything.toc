@@ -8,6 +8,7 @@
 Quest\QuestDatabase.lua
 Quest\NPCSpawnNames.lua
 Quest\ServiceNPCFactions.lua
+Quest\QuestDataStore.lua
 Quest\NPCSpawnStore.lua
 Quest\QuestState.lua
 Config.lua

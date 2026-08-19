@@ -226,42 +226,12 @@ end
 -- whenever the client provides one; title is a database compatibility lookup
 -- for 3.3.5 quest-log entries that do not report a questID.
 ----------------------------------------------------------------------
-local questEntriesByTitle = nil
-
-local function BuildQuestTitleIndex()
-    questEntriesByTitle = {}
-    if type(AscensionQuestLocationDB) ~= "table" then return end
-    for entryQuestID, entry in pairs(AscensionQuestLocationDB) do
-        local title = entry.title
-        if title and title ~= "" then
-            local bucket = questEntriesByTitle[title]
-            if not bucket then
-                bucket = {}
-                questEntriesByTitle[title] = bucket
-            end
-            table.insert(bucket, { id = entryQuestID, entry = entry })
-        end
-    end
-end
-
 -- Returns a list of { id = questID, entry = AscensionQuestLocationDB[questID] }
 -- matches for the given quest-log questID/title, or an empty table if none.
 function AQ.ResolveQuestEntries(questID, title)
-    if type(AscensionQuestLocationDB) ~= "table" then return {} end
-
-    if questID then
-        local entry = AscensionQuestLocationDB[questID]
-        if entry then
-            return { { id = questID, entry = entry } }
-        end
-    end
-
-    if not title or title == "" then return {} end
-
-    if not questEntriesByTitle then
-        BuildQuestTitleIndex()
-    end
-    return questEntriesByTitle[title] or {}
+    local store = AQ.DataStore
+    return store and store.ResolveQuestEntries
+        and store.ResolveQuestEntries(questID, title) or {}
 end
 
 ----------------------------------------------------------------------

@@ -6,6 +6,7 @@
 AutoQuest = AutoQuest or {}
 AutoQuest.NPCSpawnStore = AutoQuest.NPCSpawnStore or {}
 local Store = AutoQuest.NPCSpawnStore
+local DataStore = AutoQuest.DataStore
 
 local decoded = {}
 local decodedQuestNPCs = {}
@@ -33,8 +34,7 @@ local function Decode(packed)
         if areaID and floor and points then
             local location = {
                 zoneID = areaID,
-                zone = type(AutoQuest.NPCSpawnAreas) == "table"
-                    and AutoQuest.NPCSpawnAreas[areaID] or ("Map " .. areaID),
+                zone = DataStore.GetNPCSpawnAreaName(areaID) or ("Map " .. areaID),
                 floor = floor,
                 coords = {},
             }
@@ -55,8 +55,7 @@ function Store.Get(npcID)
     npcID = tonumber(npcID)
     if not npcID then return nil end
 
-    local packed = type(AutoQuest.NPCSpawnPacked) == "table"
-        and AutoQuest.NPCSpawnPacked[npcID] or nil
+    local packed = DataStore.GetNPCSpawnPacked(npcID)
     if type(packed) == "string" then
         if not decoded[npcID] then decoded[npcID] = Decode(packed) end
         return decoded[npcID]
@@ -96,20 +95,25 @@ local function BuildNPCNameIndex()
         if not npcNamesByID[npcID] then npcNamesByID[npcID] = name end
     end
 
-    for _, packed in ipairs(AutoQuest.NPCSpawnNamePacked or {}) do
+    for _, packed in ipairs(DataStore.GetNPCNamePacks()) do
         for row in string.gmatch(packed, "[^\n]+") do
             local npcText, name = string.match(row, "^(%d+)=(.*)$")
             Add(npcText, name)
         end
     end
-    for _, entry in pairs(AscensionQuestLocationDB or {}) do
+    DataStore.ForEachQuest(function(_, entry)
         for _, record in ipairs(entry.records or {}) do
             if tonumber(record.type) ~= 2 and tonumber(record.type) ~= -1 then
                 Add(record.id, record.name)
             end
         end
+    end)
+    for _, packedIDs in pairs(DataStore.GetServicesPacked()) do
+        for value in string.gmatch(type(packedIDs) == "string" and packedIDs or "", "[^,]+") do
+            local npcID = tonumber(value)
+            if npcID then Add(npcID, DataStore.GetServiceName(npcID)) end
+        end
     end
-    for npcID, name in pairs(AutoQuest.ServiceNPCNames or {}) do Add(npcID, name) end
 end
 
 function Store.GetName(npcID)
@@ -169,8 +173,7 @@ function Store.GetObjectiveNPCs(questID)
         return decodedQuestNPCs[questID] or nil
     end
 
-    local packed = type(AutoQuest.QuestObjectiveNPCs) == "table"
-        and AutoQuest.QuestObjectiveNPCs[questID] or nil
+    local packed = DataStore.GetQuestObjectiveNPCPacked(questID)
     if type(packed) ~= "string" or packed == "" then
         decodedQuestNPCs[questID] = false
         return nil
@@ -195,8 +198,7 @@ function Store.GetQuestItemSources(questID)
         return decodedQuestItems[questID] or nil
     end
 
-    local packed = type(AutoQuest.QuestItemNPCs) == "table"
-        and AutoQuest.QuestItemNPCs[questID] or nil
+    local packed = DataStore.GetQuestItemNPCPacked(questID)
     if type(packed) ~= "string" or packed == "" then
         decodedQuestItems[questID] = false
         return nil
@@ -209,8 +211,7 @@ function Store.GetQuestItemSources(questID)
         if itemID then
             local source = {
                 itemID = itemID,
-                itemName = type(AutoQuest.QuestItemNames) == "table"
-                    and AutoQuest.QuestItemNames[itemID] or nil,
+                itemName = DataStore.GetItemName(itemID),
                 npcIDs = {},
             }
             for value in string.gmatch(npcText or "", "[^,]+") do
@@ -227,14 +228,10 @@ end
 function Store.GetServices()
     if decodedServices then return decodedServices end
     decodedServices = {}
-    local packedServices = type(AutoQuest.ServiceNPCs) == "table"
-        and AutoQuest.ServiceNPCs or {}
-    local names = type(AutoQuest.ServiceNPCNames) == "table"
-        and AutoQuest.ServiceNPCNames or {}
+    local packedServices = DataStore.GetServicesPacked()
     if not decodedServiceFactions then
         decodedServiceFactions = {}
-        local packedFactions = type(AutoQuest.ServiceNPCFactions) == "table"
-            and AutoQuest.ServiceNPCFactions or {}
+        local packedFactions = DataStore.GetServiceFactionsPacked()
         for _, faction in ipairs({ "Alliance", "Horde", "Both", "Neither" }) do
             for value in string.gmatch(packedFactions[faction] or "", "[^,]+") do
                 local npcID = tonumber(value)
@@ -251,7 +248,7 @@ function Store.GetServices()
                     decodedServices[#decodedServices + 1] = {
                         id = npcID,
                         kind = kind,
-                        name = names[npcID],
+                        name = DataStore.GetServiceName(npcID),
                         faction = decodedServiceFactions[npcID],
                     }
                 end
@@ -262,6 +259,7 @@ function Store.GetServices()
 end
 
 function Store.ClearCache()
+    if DataStore.ClearCache then DataStore.ClearCache() end
     decoded = {}
     decodedQuestNPCs = {}
     decodedQuestItems = {}

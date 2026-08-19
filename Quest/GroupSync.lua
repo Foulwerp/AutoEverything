@@ -293,7 +293,7 @@ local function BuildLocalState()
         end
         quests[key] = quest
 
-        local questItems = QuestByTitle and QuestByTitle[title]
+        local questItems = AQ.DataStore.GetQuestItemIDsByTitle(title)
         for _, itemID in ipairs(questItems or {}) do
             items[itemID] = items[itemID] or {}
             table.insert(items[itemID], key)
@@ -1015,7 +1015,7 @@ local function QuestKeysForItem(itemID)
                             remoteItems[#remoteItems + 1] = tonumber(objective.targetID)
                         end
                     end
-                    for _, questItemID in ipairs((QuestByTitle and QuestByTitle[quest.title]) or {}) do
+                    for _, questItemID in ipairs(AQ.DataStore.GetQuestItemIDsByTitle(quest.title) or {}) do
                         remoteItems[#remoteItems + 1] = tonumber(questItemID)
                     end
                     for _, questItemID in ipairs(remoteItems) do
