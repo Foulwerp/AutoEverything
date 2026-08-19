@@ -2084,7 +2084,7 @@ pageBuilders.Buff = function(parent)
     Label(parent, "Behavior", 28, -86, 13)
     local windowToggle = ScalarCheck(parent, "buff", AutoBuffConfig, "showWindow", "Show buff window", 20, -112, true,
         "Shows the movable AutoBuff status window and secure Buff Next button.")
-    local hideToggle = ScalarCheck(parent, "buff", AutoBuffConfig, "hideWhenComplete", "Hide when complete", 246, -112, false,
+    local hideToggle = ScalarCheck(parent, "buff", AutoBuffConfig, "hideWhenComplete", "Hide when unable to buff", 246, -112, false,
         "Hides the status window in combat, when targets are out of range, on a long spell cooldown, or fully buffed. It stays visible through the global cooldown and post-cast delay.")
     BindToggleDependency(windowToggle, hideToggle)
     ScalarCheck(parent, "buff", AutoBuffConfig, "includeSelf", "Include yourself", 20, -140, true,
