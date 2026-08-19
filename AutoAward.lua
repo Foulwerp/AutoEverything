@@ -1085,12 +1085,12 @@ local function CreateWindow()
     if Theme then Theme.ApplyFont(ui.timer, 12); ui.timer:SetTextColor(Theme.Unpack(Theme.Colors.brand)) end
 
     local iconFrame = CreateFrame("Frame", nil, frame)
-    iconFrame:SetSize(36, 36); iconFrame:SetPoint("TOPLEFT", 18, -70)
+    iconFrame:SetSize(36, 36); iconFrame:SetPoint("TOPLEFT", 99, -70)
     if Theme then Theme.Backdrop(iconFrame, Theme.Colors.surface, 1) end
     ui.icon = iconFrame:CreateTexture(nil, "ARTWORK")
     ui.icon:SetPoint("TOPLEFT", 2, -2); ui.icon:SetPoint("BOTTOMRIGHT", -2, 2)
     ui.item = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    ui.item:SetPoint("LEFT", iconFrame, "RIGHT", 10, 0); ui.item:SetWidth(289); ui.item:SetJustifyH("LEFT")
+    ui.item:SetPoint("LEFT", iconFrame, "RIGHT", 10, 0); ui.item:SetWidth(207); ui.item:SetJustifyH("LEFT")
     if Theme then Theme.ApplyFont(ui.item, 12) end
     ui.rolls = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     ui.rolls:SetPoint("TOPLEFT", 18, -111)
@@ -1123,7 +1123,7 @@ local function CreateWindow()
         end
         RefreshUI()
     end)
-    ui.auto:SetPoint("TOPRIGHT", -18, -42)
+    ui.auto:SetPoint("RIGHT", iconFrame, "LEFT", -10, 0)
     AddTooltip(ui.auto, "Automatic assignment", "Off by default. When armed, a unique validated winner is assigned after the timer and grace period. Ambiguity always stops safely.")
 
     local close = MakeButton(frame, "x", 22, function() frame:Hide() end)
