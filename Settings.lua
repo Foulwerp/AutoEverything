@@ -1936,7 +1936,7 @@ pageBuilders.Quest = function(parent)
     -- still say "pin" because they are saved-variable
     -- names, but all user-facing labels say "icon".
     Label(parent, "Map and Minimap Icons", 28, -260, 13)
-    local patrolPaths = ScalarCheck(parent, "quest", AutoQuestConfig, "showPatrolPaths", "Patrol paths", 350, -256, true,
+    local patrolPaths = ScalarCheck(parent, "quest", AutoQuestConfig, "showPatrolPaths", "Patrol paths", 410, -256, true,
         "Shows grey dotted paths for service NPCs with recorded patrol locations. Hover a route endpoint icon to highlight that NPC's path.")
     patrolPaths:SetOnChanged(function()
         if AutoQuest and AutoQuest.Map then
@@ -1962,13 +1962,16 @@ pageBuilders.Quest = function(parent)
         "Maximum icons shown on the minimap at once, closest first.",
         "Minimap Max Icons", 306)
     local notableNPCs = ScalarCheck(parent, "quest", AutoQuestConfig, "showNotableNPCPins",
-        "Bosses and rares", 190, -256, true,
-        "Shows known bosses and rare creatures on the minimap and on world or instance maps. Dungeon icons follow the selected floor. Newly observed bosses and rares are also detected from live units.")
+        "Bosses", 190, -256, true,
+        "Shows known bosses on the minimap and on world or instance maps. Dungeon icons follow the selected floor.")
+    local knownRares = ScalarCheck(parent, "quest", AutoQuestConfig, "showRareNPCPins",
+        "Known rares", 290, -256, false,
+        "Shows every known rare location and recorded patrol path. Off by default: rares found by the live scanner still receive a temporary pulsing icon.")
     local rareScanner = ScalarCheck(parent, "quest", AutoQuestConfig, "rareScannerEnabled",
-        "Rare alerts", 490, -256, true,
+        "Rare alerts", 520, -256, true,
         "Detects nearby rares through nameplates, targets, party targets, combat activity, and an incremental current-zone creature-cache scan. A detection creates a temporary bright map icon and a visual alert.")
     local rareSound = ScalarCheck(parent, "quest", AutoQuestConfig, "rareScannerSound",
-        "Sound", 615, -256, false,
+        "Sound", 640, -256, false,
         "Plays the built-in raid-warning sound for a new rare sighting. Repeated observations of the same active sighting do not replay it.")
     BindToggleDependency(rareScanner, rareSound)
 
@@ -2001,7 +2004,7 @@ pageBuilders.Quest = function(parent)
     end)
     AddTooltip(serviceIcons, "Service icons",
         "Choose any combination of service NPC icons for both the world map and minimap. Choose None to hide every service icon while keeping quest-objective icons visible.")
-    BindToggleDependency(rightControls.mapPins, patrolPaths, serviceIcons, notableNPCs)
+    BindToggleDependency(rightControls.mapPins, patrolPaths, serviceIcons, notableNPCs, knownRares)
 
     -- Group progress travels through invisible PARTY/RAID addon messages.
     -- Keep the controls in the owning Quest page; AutoBuff has its own module.

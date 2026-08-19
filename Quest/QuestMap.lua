@@ -146,9 +146,18 @@ local function ExtractProgress(text)
     if current and required then return current .. "/" .. required end
 end
 
-local function NotableNPCsEnabled()
+local function BossNPCsEnabled()
     return AutoCore.GetSetting("quest", "showNotableNPCPins",
         AutoQuestConfig and AutoQuestConfig.showNotableNPCPins) ~= false
+end
+
+local function RareNPCsEnabled()
+    return AutoCore.GetSetting("quest", "showRareNPCPins",
+        AutoQuestConfig and AutoQuestConfig.showRareNPCPins) == true
+end
+
+local function NotableNPCsEnabled()
+    return BossNPCsEnabled() or RareNPCsEnabled()
 end
 
 local function AddLocation(zoneID, zoneName, floor, record, coord, questID, questTitle,
@@ -472,11 +481,20 @@ local function ZoneForKey(key)
     for _, source in ipairs(sources) do
         for zoneID in pairs(source.zoneIDs or {}) do zone.zoneIDs[zoneID] = true end
         for _, point in ipairs(source.points or {}) do
-            if source ~= notableZone or not trackedNPCIDs[tonumber(point.entityID) or point.entityID] then
+            local enabled = source ~= notableZone
+                or (point.kind == "rare" and RareNPCsEnabled())
+                or (point.kind ~= "rare" and BossNPCsEnabled())
+            if enabled and (source ~= notableZone
+                or not trackedNPCIDs[tonumber(point.entityID) or point.entityID])
+            then
                 zone.points[#zone.points + 1] = point
             end
         end
-        for _, route in ipairs(source.routes or {}) do zone.routes[#zone.routes + 1] = route end
+        for _, route in ipairs(source.routes or {}) do
+            if source ~= notableZone or RareNPCsEnabled() then
+                zone.routes[#zone.routes + 1] = route
+            end
+        end
     end
     combinedByZone[key] = zone
     return zone
@@ -857,7 +875,9 @@ local function BuildNotableIndex()
     local pointKeys = {}
     for _, metadata in ipairs(SpawnStore.GetNotableNPCs(buildCooperate) or {}) do
         local npc = SpawnStore.GetNPC(metadata.id)
-        if metadata.kind == "rare" and npc and type(npc.locations) == "table" then
+        if metadata.kind == "rare" and RareNPCsEnabled()
+            and npc and type(npc.locations) == "table"
+        then
             for _, location in ipairs(npc.locations) do
                 local key = NormalizeZone(location.zone)
                 if key ~= "" then
@@ -872,7 +892,7 @@ local function BuildNotableIndex()
                 end
                 if buildCooperate then buildCooperate() end
             end
-        else
+        elseif metadata.kind ~= "rare" and BossNPCsEnabled() then
             AddDiscoveryNPC(npc, metadata.kind or "rare", notableByZone, pointKeys)
         end
         if buildCooperate then buildCooperate() end
@@ -1033,9 +1053,9 @@ local iconTextures = {
     object = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
     scout = "Interface\\AddOns\\AutoEverything\\Images\\QuestScout.tga",
     boss = "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga",
-    rare = "Interface\\AddOns\\AutoEverything\\Images\\QuestScout.tga",
+    rare = "Interface\\AddOns\\AutoEverything\\Images\\QuestRare.tga",
     search = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
-    sighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestScout.tga",
+    sighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestRare.tga",
     auctioneer = "Interface\\AddOns\\AutoEverything\\Images\\ServiceAuctioneer.tga",
     banker = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBanker.tga",
     battlemaster = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBattlemaster.tga",
@@ -1814,9 +1834,18 @@ end
 
 function QuestMap.SetNotableNPCsEnabled(enabled)
     AutoCore.SetSetting("quest", "showNotableNPCPins", enabled and true or false)
+    notableByZone = nil
     combinedByZone = {}
     QuestMap.RequestRefresh()
-    AutoCore.Info("Quest", "Boss and rare icons " .. (enabled and "enabled." or "disabled."))
+    AutoCore.Info("Quest", "Boss icons " .. (enabled and "enabled." or "disabled."))
+end
+
+function QuestMap.SetRareNPCsEnabled(enabled)
+    AutoCore.SetSetting("quest", "showRareNPCPins", enabled and true or false)
+    notableByZone = nil
+    combinedByZone = {}
+    QuestMap.RequestRefresh()
+    AutoCore.Info("Quest", "Known rare icons " .. (enabled and "enabled." or "disabled."))
 end
 
 local function TrackResults(results, exactName)
@@ -1894,6 +1923,7 @@ function QuestMap.ApplyProfile()
     -- Service locations are otherwise static and intentionally cached. A
     -- profile switch or selector change must rebuild that cache immediately.
     serviceByZone = nil
+    notableByZone = nil
     invalidateContributionCache = true
     QuestMap.RebuildIndex()
     QuestMap.UpdateWorldMap()

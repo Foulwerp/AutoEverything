@@ -187,6 +187,7 @@ AutoQuestConfig = {
     rareScannerCache = true,
     rareScannerSound = false,
     showNotableNPCPins = true,
+    showRareNPCPins = false,
     showPatrolPaths = true,
     acceptTrivialQuests = true,
     quickAbandonKeepComplete = true,

@@ -997,6 +997,10 @@ SlashCmdList["AUTOQUEST"] = function(msg)
         if AQ.Map and AQ.Map.SetNotableNPCsEnabled then AQ.Map.SetNotableNPCsEnabled(true) end
     elseif msg == "npc bosses off" then
         if AQ.Map and AQ.Map.SetNotableNPCsEnabled then AQ.Map.SetNotableNPCsEnabled(false) end
+    elseif msg == "npc rares on" then
+        if AQ.Map and AQ.Map.SetRareNPCsEnabled then AQ.Map.SetRareNPCsEnabled(true) end
+    elseif msg == "npc rares off" then
+        if AQ.Map and AQ.Map.SetRareNPCsEnabled then AQ.Map.SetRareNPCsEnabled(false) end
     elseif msg == "rare on" then
         if AQ.RareScanner and AQ.RareScanner.SetEnabled then AQ.RareScanner.SetEnabled(true) end
     elseif msg == "rare off" then
@@ -1061,7 +1065,8 @@ SlashCmdList["AUTOQUEST"] = function(msg)
         print("  /autoquest pins debug - Diagnose active quest map/minimap matching")
         print("  /autoquest npc <name or ID> - Show an NPC on the minimap and instance/world map")
         print("  /autoquest npc clear|list - Clear or list NPC search icons")
-        print("  /autoquest npc bosses on|off - Toggle automatic boss and rare icons")
+        print("  /autoquest npc bosses on|off - Toggle automatic boss icons")
+        print("  /autoquest npc rares on|off - Toggle all known rare locations and patrols")
         print("  /autoquest rare on|off - Toggle live rare sightings and alerts")
         print("  /autoquest rare sound on|off - Toggle the rare alert sound")
         print("  /autoquest rare cache on|off - Toggle incremental creature-cache detection")
