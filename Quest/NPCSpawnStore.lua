@@ -16,6 +16,9 @@ local decodedServiceFactions
 local observedNames = {}
 local npcIDsByName
 local npcNamesByID
+local npcNamesByPrefix
+local shortNPCNames
+local objectiveNPCMatchCache = {}
 local metadataByID = {}
 local metadataPackStarts
 local notableNPCs
@@ -257,6 +260,9 @@ end
 local function BuildNPCNameIndex(cooperate)
     npcIDsByName = {}
     npcNamesByID = {}
+    npcNamesByPrefix = {}
+    shortNPCNames = {}
+    objectiveNPCMatchCache = {}
     local seen = {}
     local function Add(npcID, name)
         npcID = tonumber(npcID)
@@ -267,6 +273,14 @@ local function BuildNPCNameIndex(cooperate)
             bucket = {}
             npcIDsByName[key] = bucket
             seen[key] = {}
+            if string.len(key) < 3 then
+                shortNPCNames[#shortNPCNames + 1] = key
+            else
+                local prefix = string.sub(key, 1, 3)
+                local names = npcNamesByPrefix[prefix]
+                if not names then names = {}; npcNamesByPrefix[prefix] = names end
+                names[#names + 1] = key
+            end
         end
         if not seen[key][npcID] then
             seen[key][npcID] = true
@@ -412,8 +426,23 @@ function Store.FindNPCsByObjectiveText(text, cooperate)
     if type(text) ~= "string" or text == "" then return nil end
     if not npcIDsByName then BuildNPCNameIndex(cooperate) end
     local label = string.lower(text)
+    local cached = objectiveNPCMatchCache[label]
+    if cached ~= nil then return cached or nil end
     local best, bestSeen, bestLength
-    for name, npcIDs in pairs(npcIDsByName) do
+    local candidateNames, candidateSeen = {}, {}
+    local function AddCandidate(name)
+        if not candidateSeen[name] then
+            candidateSeen[name] = true
+            candidateNames[#candidateNames + 1] = name
+        end
+    end
+    for _, name in ipairs(shortNPCNames or {}) do AddCandidate(name) end
+    for index = 1, math.max(0, string.len(label) - 2) do
+        local names = npcNamesByPrefix and npcNamesByPrefix[string.sub(label, index, index + 2)]
+        for _, name in ipairs(names or {}) do AddCandidate(name) end
+    end
+    for _, name in ipairs(candidateNames) do
+        local npcIDs = npcIDsByName[name]
         if string.find(label, name, 1, true) then
             local length = string.len(name)
             if not bestLength or length > bestLength then
@@ -431,6 +460,7 @@ function Store.FindNPCsByObjectiveText(text, cooperate)
         if cooperate then cooperate() end
     end
     if best then table.sort(best) end
+    objectiveNPCMatchCache[label] = best or false
     return best
 end
 
@@ -543,4 +573,7 @@ function Store.ClearCache()
     notableNPCsBuilding = false
     npcIDsByName = nil
     npcNamesByID = nil
+    npcNamesByPrefix = nil
+    shortNPCNames = nil
+    objectiveNPCMatchCache = {}
 end
