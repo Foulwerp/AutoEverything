@@ -905,8 +905,12 @@ local function AddNPCDiscoveryLocations()
     buildStats.sightingPoints = 0
     local scanner = AutoQuest.RareScanner
     for _, sighting in ipairs(scanner and scanner.GetSightings and scanner.GetSightings() or {}) do
+        local pinKind = sighting.kind == "boss" and "bossSighting"
+            or sighting.kind == "quest" and "questSighting"
+            or sighting.kind == "questLoot" and "questLootSighting"
+            or "sighting"
         if AddLocation(sighting.zoneID, sighting.zone, sighting.floor,
-            sighting, { sighting.x, sighting.y }, nil, nil, "sighting")
+            sighting, { sighting.x, sighting.y }, nil, nil, pinKind)
         then
             buildStats.sightingPoints = buildStats.sightingPoints + 1
         end
@@ -1056,6 +1060,9 @@ local iconTextures = {
     rare = "Interface\\AddOns\\AutoEverything\\Images\\QuestRare.tga",
     search = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
     sighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestRare.tga",
+    bossSighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga",
+    questSighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga",
+    questLootSighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestLootBag.tga",
     auctioneer = "Interface\\AddOns\\AutoEverything\\Images\\ServiceAuctioneer.tga",
     banker = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBanker.tga",
     battlemaster = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBattlemaster.tga",
@@ -1072,7 +1079,8 @@ local iconTextures = {
 local iconColors = {
     kill={1,0.3,0.3}, loot={0.35,1,0.45}, object={0.45,0.8,1}, scout={1,0.75,0.25},
     boss={1,0.18,0.18}, rare={0.75,0.35,1}, search={0.2,0.85,1},
-    sighting={1,0.82,0.18},
+    sighting={1,0.82,0.18}, bossSighting={1,0.35,0.2},
+    questSighting={1,0.3,0.3}, questLootSighting={0.35,1,0.45},
     auctioneer={1,0.65,0.2}, banker={1,0.82,0.2}, battlemaster={0.85,0.9,1},
     flightmaster={0.75,0.9,1}, guildmaster={0.35,0.55,1}, innkeeper={0.35,0.7,1},
     talentunlearner={0.75,0.45,1}, tabardvendor={1,0.3,0.25},
@@ -1089,6 +1097,9 @@ local headingText = {
     rare = "Rare",
     search = "NPC Search",
     sighting = "Recent Rare Sighting",
+    bossSighting = "Recent Boss Sighting",
+    questSighting = "Recent Quest Target Sighting",
+    questLootSighting = "Recent Quest Loot Sighting",
     loot = "Item",
     object = "Interact",
     scout = "Scout",
@@ -1118,7 +1129,9 @@ local function DescribeObjective(cluster, point)
         return "Rare: " .. name
     elseif cluster.kind == "search" then
         return "Find " .. name .. " (NPC " .. tostring(point.entityID or "?") .. ")"
-    elseif cluster.kind == "sighting" then
+    elseif cluster.kind == "sighting" or cluster.kind == "bossSighting"
+        or cluster.kind == "questSighting" or cluster.kind == "questLootSighting"
+    then
         return "Recently sighted: " .. name
     elseif cluster.kind == "loot" then
         return point.item and ("Loot " .. point.item .. " from " .. name) or ("Loot from " .. name)
@@ -1211,7 +1224,9 @@ local function ConfigurePin(pin, cluster, size)
     -- QuestMarkers.lua (white skull, brown bag) rather than recoloring them.
     pin.icon:SetTexture(iconTextures[cluster.kind] or iconTextures.kill)
     pin.icon:SetVertexColor(1, 1, 1, 1)
-    if cluster.kind == "sighting" then
+    if cluster.kind == "sighting" or cluster.kind == "bossSighting"
+        or cluster.kind == "questSighting" or cluster.kind == "questLootSighting"
+    then
         pin:SetScript("OnUpdate", UpdateSightingPulse)
     else
         pin:SetScript("OnUpdate", nil)
@@ -1537,8 +1552,17 @@ local function UpdatePlayerLocation(force)
     if wrongMap or not x or not y or (x == 0 and y == 0) then
         if SetMapToCurrentZone then setOK, setResult = pcall(SetMapToCurrentZone) end
         x, y = ReadPlayerMapPosition()
+        selectedName = CurrentMapName() or selectedName
     end
     if not name or name == "" then name = CurrentMapName() end
+
+    -- Instance display names and legacy map-file names can differ completely
+    -- ("Ragefire Chasm" versus "Ragefire"). Static spawn data uses the map
+    -- file when the generated area catalog has no dungeon display name, so
+    -- prefer that selected-map identity only when it actually has pin data.
+    local selectedZone = selectedName and ZoneForMapName(selectedName)
+    local displayZone = name and name ~= "" and ZoneForMapName(name)
+    if selectedZone and not displayZone then name = selectedName end
 
     local probeSelector, probeQuestID
     -- Ascension can leave GetPlayerMapPosition at 0,0 after selecting the

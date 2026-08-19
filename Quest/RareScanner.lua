@@ -48,20 +48,29 @@ local function NormalizeZone(name)
     return string.gsub(name, "[^%w]", "")
 end
 
-local function IsRareMetadata(metadata)
+local function NotableKindForMetadata(metadata)
     local classification = metadata and tonumber(metadata.classification)
-    return classification == 2 or classification == 4
+    if metadata and (metadata.boss == true or metadata.boss == 1 or classification == 3) then
+        return "boss"
+    end
+    if classification == 2 or classification == 4 then return "rare" end
 end
 
-local function IsRareClassification(classification)
-    return classification == "rare" or classification == "rareelite"
+local function NotableKindForClassification(classification)
+    if classification == "worldboss" then return "boss" end
+    if classification == "rare" or classification == "rareelite" then return "rare" end
 end
 
-local function RareMetadataForID(npcID)
-    if SpawnStore.GetRareMetadata then return SpawnStore.GetRareMetadata(npcID) end
+local function NotableMetadataForID(npcID)
+    if SpawnStore.GetMetadata then
+        local metadata = SpawnStore.GetMetadata(npcID)
+        if NotableKindForMetadata(metadata) then return metadata end
+    end
     -- Compatibility for older embedded data-store shims.
     for _, metadata in ipairs(SpawnStore.GetNotableNPCs() or {}) do
-        if tonumber(metadata.id) == tonumber(npcID) and metadata.kind == "rare" then
+        if tonumber(metadata.id) == tonumber(npcID)
+            and (metadata.kind == "rare" or metadata.kind == "boss")
+        then
             return metadata
         end
     end
@@ -168,7 +177,7 @@ local function PruneSightings(silent)
     return changed
 end
 
-function Scanner.ObserveNPC(npcID, name, guid, level, source, dead)
+function Scanner.ObserveNPC(npcID, name, guid, level, source, dead, kind)
     npcID = tonumber(npcID)
     if not Enabled() or not npcID or dead == true then return false end
     local now = Now()
@@ -179,6 +188,7 @@ function Scanner.ObserveNPC(npcID, name, guid, level, source, dead)
     sighting.guid = guid or sighting.guid
     sighting.level = level or sighting.level
     sighting.source = source or sighting.source or "nearby"
+    sighting.kind = kind or sighting.kind or "rare"
     sighting.seenAt = existing and sighting.seenAt or now
     sighting.lastSeen = now
     sighting.expiresAt = now + SIGHTING_SECONDS
@@ -189,7 +199,7 @@ function Scanner.ObserveNPC(npcID, name, guid, level, source, dead)
     sighting.floor = tonumber(location.floor or sighting.floor) or 0
     sightings[npcID] = sighting
 
-    local canAlert = not existing and (not lastAlerts[npcID]
+    local canAlert = sighting.kind == "rare" and not existing and (not lastAlerts[npcID]
         or now - lastAlerts[npcID] >= ALERT_COOLDOWN)
     if canAlert then
         lastAlerts[npcID] = now
@@ -205,7 +215,8 @@ function Scanner.ObserveUnit(unit, source)
     if UnitPlayerControlled and UnitPlayerControlled(unit) then return false end
     if UnitIsVisible and not UnitIsVisible(unit) then return false end
     local classification = UnitClassification and UnitClassification(unit)
-    if not IsRareClassification(classification) then return false end
+    local kind = NotableKindForClassification(classification)
+    if not kind then return false end
     local guid = UnitGUID and UnitGUID(unit)
     local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
     if not npcID then return false end
@@ -213,7 +224,23 @@ function Scanner.ObserveUnit(unit, source)
     SpawnStore.RememberClassification(npcID, classification)
     return Scanner.ObserveNPC(npcID, UnitName and UnitName(unit), guid,
         UnitLevel and UnitLevel(unit), source or unit,
-        UnitIsDead and UnitIsDead(unit) or false)
+        UnitIsDead and UnitIsDead(unit) or false, kind)
+end
+
+-- Custom instances may have no shipped spawn coordinates. Once live tooltip
+-- evidence proves that a visible unit belongs to an active quest, retain the
+-- player's current position as a short-lived approximate map sighting.
+function Scanner.ObserveQuestUnit(unit, match, source)
+    if not Enabled() or not match or not UnitExists or not UnitExists(unit) then return false end
+    if UnitIsPlayer and UnitIsPlayer(unit) then return false end
+    if not match.kill and not match.loot and not match.talk then return false end
+    local guid = UnitGUID and UnitGUID(unit)
+    local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
+    if not npcID then return false end
+    local kind = match.loot and "questLoot" or "quest"
+    return Scanner.ObserveNPC(npcID, UnitName and UnitName(unit), guid,
+        UnitLevel and UnitLevel(unit), source or "quest objective",
+        UnitIsDead and UnitIsDead(unit) or false, kind)
 end
 
 function Scanner.MarkDead(guid, npcID)
@@ -243,9 +270,11 @@ function Scanner.HandleCombatLog(...)
     end
     local function ObserveGUID(guid, name)
         local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
-        local metadata = npcID and RareMetadataForID(npcID)
-        if npcID and metadata and IsRareMetadata(metadata) then
-            Scanner.ObserveNPC(npcID, name or metadata.name, guid, nil, "combat log", false)
+        local metadata = npcID and NotableMetadataForID(npcID)
+        local kind = NotableKindForMetadata(metadata)
+        if npcID and metadata and kind then
+            Scanner.ObserveNPC(npcID, name or metadata.name, guid, nil,
+                "combat log", false, kind)
         end
     end
     ObserveGUID(sourceGUID, sourceName)

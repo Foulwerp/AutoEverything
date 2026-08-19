@@ -516,6 +516,11 @@ local function MatchUnit(unit)
     else
         match = tooltipMatch
     end
+    if match and npcID and AutoQuest.RareScanner
+        and AutoQuest.RareScanner.ObserveQuestUnit
+    then
+        AutoQuest.RareScanner.ObserveQuestUnit(unit, match, "quest objective")
+    end
     return match, npcID
 end
 
