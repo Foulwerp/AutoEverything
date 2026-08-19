@@ -2010,9 +2010,31 @@ frame:SetScript("OnUpdate", function(_, elapsed)
             -- Publish the active quest layer on the first cooperative pause;
             -- the much larger static layers can finish over later frames.
             frame.initialQuestPinsPublished = true
+            frame.initialPositionElapsed = 0
+            frame.initialSelectionElapsed = 0
             UpdatePlayerLocation()
             QuestMap.UpdateWorldMap()
             QuestMap.UpdateMinimap()
+        end
+        if initialBuildThread and questLayerReady and frame.initialQuestPinsPublished then
+            -- The player can move while static layers continue warming. Keep
+            -- already-published pins anchored to their world coordinates
+            -- instead of leaving their screen offsets frozen until completion.
+            frame.initialPositionElapsed = (frame.initialPositionElapsed or 0)
+                + math.min(elapsed or 0, 0.1)
+            frame.initialSelectionElapsed = (frame.initialSelectionElapsed or 0)
+                + math.min(elapsed or 0, 0.1)
+            if frame.initialSelectionElapsed >= 0.2 then
+                frame.initialPositionElapsed, frame.initialSelectionElapsed = 0, 0
+                UpdatePlayerLocation()
+                QuestMap.UpdateMinimap()
+            elseif frame.initialPositionElapsed >= (1 / 30) then
+                frame.initialPositionElapsed = 0
+                if not UpdatePlayerPositionFast() or not PositionMinimapPins() then
+                    UpdatePlayerLocation()
+                    QuestMap.UpdateMinimap()
+                end
+            end
         end
         return
     end
