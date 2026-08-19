@@ -30,6 +30,9 @@ local STATE_AWARDED = "AWARDED"
 local STATE_CANCELLED = "CANCELLED"
 local STATE_FAILED = "FAILED_SAFE"
 
+local LOOT_ASSIGNMENT_TIMEOUT = 5
+local BIND_CONFIRM_TIMEOUT = 30
+
 local roundSerial = 0
 local lootSessionID = 0
 local lootOpen = false
@@ -437,12 +440,22 @@ local function RefreshUI()
     ui.start:Enable()
     if RoundActive() then ui.start:Disable() end
     if current.state == STATE_READY then ui.award:Enable() else ui.award:Disable() end
+    if ui.cancel then
+        if current.state == STATE_PENDING then ui.cancel:Disable() else ui.cancel:Enable() end
+    end
 end
 
-local function FailSafe(reason)
+local function FailSafe(reason, assignmentUncertain)
     SetState(STATE_FAILED, reason)
     current.deadline = nil
-    Log(reason .. "; no item was assigned.", "error")
+    current.awardDeferred = nil
+    current.pendingAward = nil
+    if CloseDropDownMenus then CloseDropDownMenus() end
+    if assignmentUncertain then
+        Log(reason .. "; verify the loot before attempting another assignment.", "error")
+    else
+        Log(reason .. "; no item was assigned.", "error")
+    end
     RefreshUI()
 end
 
@@ -498,6 +511,50 @@ local function ActivateMasterLootSlot(slot)
     end
     LootSlot(slot)
     return true
+end
+
+local function SubmitPendingLootAward()
+    local pending = current.pendingAward
+    if current.state ~= STATE_PENDING or not pending or pending.kind ~= "loot-ready" then return end
+    if CombatLocked() then
+        DeferAwardUntilCombatEnds()
+        return
+    end
+
+    local result, winner = WinnerFromRolls(current.rollsByPlayer)
+    if result ~= "WINNER" or not winner or not current.winner
+        or winner.normalizedPlayer ~= current.winner.normalizedPlayer
+        or not SamePlayer(winner.player, pending.winner)
+    then
+        FailSafe("the winner changed before final assignment")
+        return
+    end
+    if not IsCurrentMember(winner.player) then FailSafe("the winner left the group before final assignment"); return end
+
+    local isMaster, reason = PlayerIsMasterLooter()
+    if not isMaster then FailSafe(reason); return end
+    local slot
+    slot, reason = FindVerifiedSlot()
+    if not slot or slot ~= pending.slot or pending.sessionID ~= lootSessionID then
+        FailSafe(reason or "the prepared loot slot changed")
+        return
+    end
+
+    local slotData = LootSlotData(slot)
+    local threshold = GetLootThreshold and tonumber(GetLootThreshold()) or nil
+    local quality = slotData and tonumber(slotData.quality) or nil
+    if not threshold or not quality then FailSafe("the Master Loot threshold could not be reverified"); return end
+    if quality < threshold then FailSafe("the item fell below the Master Loot threshold"); return end
+    if not GiveMasterLoot then FailSafe("assignment API became unavailable"); return end
+
+    local candidate
+    candidate, reason = CandidateForName(slot, winner.player)
+    if not candidate then FailSafe(reason); return end
+    pending.candidate = candidate
+    pending.kind = "loot"
+    pending.startedAt = GetTime()
+    GiveMasterLoot(slot, candidate)
+    if CloseDropDownMenus then CloseDropDownMenus() end
 end
 
 local function GroupUnitForName(name)
@@ -734,6 +791,10 @@ function AA.Cancel(reason)
         or current.state == STATE_CANCELLED or current.state == STATE_FAILED
     then
         if frame then frame:Hide() end
+        return
+    end
+    if not reason and current.state == STATE_PENDING then
+        Log("The assignment is already in progress; wait for confirmation before starting another roll.", "warn")
         return
     end
     local cancelledItem = current.itemLink
@@ -1043,9 +1104,9 @@ local function CreateWindow()
     ui.award = MakeButton(frame, "Award", actionWidth, function() AA.Award() end, Theme and Theme.Colors.success)
     ui.award:SetPoint("LEFT", stop, "RIGHT", actionGap, 0)
     AddTooltip(ui.award, "Validated handoff", "Loot slots are assigned through Master Loot. Bag items open a trade to the winner and place the exact item for your manual confirmation.")
-    local cancel = MakeButton(frame, "Cancel", actionWidth, function() AA.Cancel() end, Theme and Theme.Colors.danger)
-    cancel:SetPoint("LEFT", ui.award, "RIGHT", actionGap, 0)
-    AddTooltip(cancel, "Cancel", "Stops without assigning the item.")
+    ui.cancel = MakeButton(frame, "Cancel", actionWidth, function() AA.Cancel() end, Theme and Theme.Colors.danger)
+    ui.cancel:SetPoint("LEFT", ui.award, "RIGHT", actionGap, 0)
+    AddTooltip(ui.cancel, "Cancel", "Stops an active roll before item assignment begins.")
     ui.auto = MakeButton(frame, "Auto: OFF", 71, function()
         SetSetting("autoAward", not Setting("autoAward"))
         RefreshUI()
@@ -1117,7 +1178,9 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         lootOpen = false
         selectedSlot = nil
         if current.source ~= "inventory" then
-            if current.state == STATE_PENDING then FailSafe("loot closed before assignment was confirmed")
+            if current.state == STATE_PENDING then
+                local submitted = current.pendingAward and current.pendingAward.kind == "loot"
+                FailSafe("loot closed before assignment was confirmed", submitted)
             elseif current.state == STATE_ROLLING or current.state == STATE_TIE or current.state == STATE_GRACE or current.state == STATE_READY then
                 AA.Cancel("loot window closed")
             end
@@ -1154,8 +1217,11 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         and current.pendingAward.kind == "loot-context" and tonumber(arg1) == current.pendingAward.slot
     then
         FailSafe("the loot slot cleared while preparing the assignment")
-    elseif event == "UI_ERROR_MESSAGE" and current.state == STATE_PENDING then
-        FailSafe("the server rejected or could not confirm the assignment: " .. tostring(arg1 or "unknown error"))
+    elseif event == "UI_ERROR_MESSAGE" and current.state == STATE_PENDING and current.pendingAward then
+        -- Combat and unrelated raid actions can emit UI errors during the
+        -- assignment window. Preserve the message for timeout diagnostics,
+        -- but trust only loot/trade state changes as confirmation or failure.
+        current.pendingAward.lastError = tostring(arg1 or arg2 or "unknown error")
     elseif event == "LOOT_SLOT_CHANGED" then
         RefreshUI()
     elseif event == "PARTY_MEMBERS_CHANGED" or event == "PARTY_LOOT_METHOD_CHANGED" or event == "RAID_ROSTER_UPDATE" then
@@ -1163,13 +1229,21 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         if not isMaster then
             if frame then frame:Hide() end
             if current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED and current.state ~= STATE_CANCELLED and current.state ~= STATE_FAILED then
-                AA.Cancel("you are no longer the master looter")
+                local submitted = current.state == STATE_PENDING and current.pendingAward
+                    and current.pendingAward.kind == "loot"
+                if submitted then FailSafe("you stopped being the master looter before assignment confirmation", true)
+                else AA.Cancel("you are no longer the master looter") end
             end
-        elseif current.state == STATE_PENDING then
+        elseif current.state == STATE_PENDING and current.pendingAward and current.pendingAward.kind == "trade" then
             FailSafe("the group or loot method changed while assignment was pending")
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
-        if current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED then AA.Cancel("world changed") end
+        if current.state ~= STATE_IDLE and current.state ~= STATE_AWARDED then
+            local submitted = current.state == STATE_PENDING and current.pendingAward
+                and current.pendingAward.kind == "loot"
+            if submitted then FailSafe("world changed before assignment confirmation", true)
+            else AA.Cancel("world changed") end
+        end
         local isMaster = PlayerIsMasterLooter()
         if frame and not isMaster then frame:Hide() end
     elseif event == "PLAYER_REGEN_DISABLED" and current.state == STATE_PENDING and current.pendingAward
@@ -1178,8 +1252,11 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         DeferAwardUntilCombatEnds()
     elseif event == "PLAYER_REGEN_ENABLED" and current.state == STATE_READY and current.awardDeferred then
         AA.Award()
-    elseif event == "LOOT_BIND_CONFIRM" and current.state == STATE_PENDING then
+    elseif event == "LOOT_BIND_CONFIRM" and current.state == STATE_PENDING and current.pendingAward
+        and current.pendingAward.kind == "loot" and tonumber(arg1) == current.pendingAward.slot
+    then
         current.pendingAward.awaitingBindConfirmation = true
+        current.pendingAward.startedAt = GetTime()
         Log("Bind confirmation requires a manual click until target-server behavior is verified.", "warn")
     elseif event == "TRADE_SHOW" and current.state == STATE_PENDING and current.pendingAward
         and current.pendingAward.kind == "trade"
@@ -1216,10 +1293,7 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
     elseif current.state == STATE_GRACE and current.deadline and now >= current.deadline then
         ResolveRound()
     elseif current.state == STATE_PENDING and current.pendingAward and current.pendingAward.kind == "loot-ready" then
-        current.pendingAward.kind = "loot"
-        current.pendingAward.startedAt = GetTime()
-        GiveMasterLoot(current.pendingAward.slot, current.pendingAward.candidate)
-        if CloseDropDownMenus then CloseDropDownMenus() end
+        SubmitPendingLootAward()
     elseif current.state == STATE_PENDING and current.pendingAward and current.pendingAward.kind == "trade" then
         if not current.pendingAward.tradeShown and GetTime() - current.pendingAward.startedAt >= 2 then
             FailSafe("the trade window did not open for the winner")
@@ -1236,14 +1310,16 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
             FailSafe("the trade closed without a success confirmation")
         end
     elseif current.state == STATE_PENDING and current.pendingAward
-        and GetTime() - current.pendingAward.startedAt >= (current.pendingAward.awaitingBindConfirmation and 15 or 2)
+        and GetTime() - current.pendingAward.startedAt
+            >= (current.pendingAward.awaitingBindConfirmation and BIND_CONFIRM_TIMEOUT or LOOT_ASSIGNMENT_TIMEOUT)
     then
         local slot = current.pendingAward.slot
         local data = LootSlotData(slot)
+        local errorDetail = current.pendingAward.lastError and ("; last error: " .. current.pendingAward.lastError) or ""
         if data and data.link == current.pendingAward.itemLink then
-            FailSafe("assignment timed out and the item still appears in the loot slot")
+            FailSafe("assignment timed out and the item still appears in the loot slot" .. errorDetail)
         else
-            FailSafe("assignment result is uncertain because no success event arrived")
+            FailSafe("assignment result is uncertain because no success event arrived" .. errorDetail, true)
         end
     end
 end)
