@@ -18,7 +18,7 @@ local Sync = AQ.GroupSync
 
 local PREFIX = "AEQ2"
 local VERSION = "3"
-local CAPABILITIES = "ids,seq,stale,class,contig,heart"
+local CAPABILITIES = "ids,seq,stale,class,contig,heart,digest"
 local VALID_KINDS = { R=true, B=true, E=true, X=true, Q=true, O=true, H=true }
 local SEP = "\31"
 local SEND_INTERVAL = 0.12
@@ -41,8 +41,9 @@ local EXPIRE_GRACE = 300
 local localQuests = {}
 local memberQuests = {}
 local itemQuestKeys = {}
-local outgoing = { urgent = {}, bulk = {} }
+local outgoing = { urgent = {}, bulk = {}, snapshotBarriers = {} }
 local outgoingKeys = {}
+local outgoingOrder = 0
 local baselineReady = false
 local updateAt = nil
 local rosterCleanupAt = nil
@@ -219,6 +220,46 @@ local function SafeInteger(value, minimum, maximum)
     return number
 end
 
+local function SafeDigest(value)
+    value = string.lower(tostring(value or ""))
+    if string.len(value) == 8 and not string.find(value, "[^0-9a-f]") then return value end
+    return nil
+end
+
+local function HashText(hash, value)
+    value = tostring(value or "")
+    for index = 1, string.len(value) do
+        hash = math.fmod((hash * 33) + string.byte(value, index), 4294967296)
+    end
+    return math.fmod((hash * 33) + 31, 4294967296)
+end
+
+local function QuestDigest(quests)
+    local keys = {}
+    for key in pairs(quests or {}) do keys[#keys + 1] = tostring(key) end
+    table.sort(keys)
+    local hash = 5381
+    for _, key in ipairs(keys) do
+        local quest = quests[key] or {}
+        hash = HashText(hash, key)
+        hash = HashText(hash, quest.id or "")
+        hash = HashText(hash, CleanField(quest.title, 80))
+        hash = HashText(hash, quest.complete and "1" or "0")
+        hash = HashText(hash, #(quest.objectives or {}))
+        for index, objective in ipairs(quest.objectives or {}) do
+            hash = HashText(hash, index)
+            hash = HashText(hash, objective.finished and "1" or "0")
+            hash = HashText(hash, CleanField(objective.type, 12))
+            hash = HashText(hash, CleanField(objective.targetType, 8))
+            hash = HashText(hash, objective.targetID or "")
+            hash = HashText(hash, objective.current or "")
+            hash = HashText(hash, objective.required or "")
+            hash = HashText(hash, CleanField(objective.text, 100))
+        end
+    end
+    return string.format("%08x", hash)
+end
+
 local function NextSequence()
     localSequence = localSequence + 1
     if localSequence > 2147483647 then localSequence = 1 end
@@ -336,14 +377,21 @@ local function ClearOutgoing()
     wipe(outgoing.urgent)
     wipe(outgoing.bulk)
     wipe(outgoingKeys)
+    wipe(outgoing.snapshotBarriers)
     outgoing.activeBatch = nil
+    outgoingOrder = 0
+end
+
+local function NextOutgoingOrder()
+    outgoingOrder = outgoingOrder + 1
+    return outgoingOrder
 end
 
 local function QueueMessage(
     message, channel, target, priority, coalesceKey, batch, batchEnd, messagePrefix, sequenced
 )
     if not SendAddonMessage or type(message) ~= "string"
-        or string.len(message) > MAX_PAYLOAD_BYTES or QueueCount() >= MAX_QUEUE
+        or string.len(message) > MAX_PAYLOAD_BYTES
     then
         return false
     end
@@ -363,6 +411,7 @@ local function QueueMessage(
             existing.message = message
             return true
         end
+        if QueueCount() >= MAX_QUEUE then return false end
         local sequence
         if sequenced then
             sequence = NextSequence()
@@ -372,15 +421,24 @@ local function QueueMessage(
         end
         local entry = {
             message=message, channel=channel, target=target, key=key,
-            prefix=messagePrefix, sequence=sequence,
+            prefix=messagePrefix, sequence=sequence, order=NextOutgoingOrder(),
         }
         queue[#queue + 1] = entry
         outgoingKeys[key] = entry
         return true
     end
+    if QueueCount() >= MAX_QUEUE then return false end
+    local sequence
+    if sequenced then
+        sequence = NextSequence()
+        local fields = Split(message)
+        fields[4] = tostring(sequence)
+        message = table.concat(fields, SEP)
+    end
     queue[#queue + 1] = {
         message=message, channel=channel, target=target,
-        batch=batch, batchEnd=batchEnd, prefix=messagePrefix,
+        batch=batch, batchEnd=batchEnd, prefix=messagePrefix, sequence=sequence,
+        order=NextOutgoingOrder(),
     }
     return true
 end
@@ -403,13 +461,6 @@ local function EncodeObjective(questKey, index, objective, sequence)
     }, SEP)
 end
 
-local function QueueQuest(quest, channel, target, batch)
-    QueueMessage(EncodeQuest(quest, 0), channel, target, "bulk", nil, batch)
-    for index, objective in ipairs(quest.objectives) do
-        QueueMessage(EncodeObjective(quest.key, index, objective, 0), channel, target, "bulk", nil, batch)
-    end
-end
-
 local function ObjectiveChanged(before, after)
     if not before then return true end
     return before.finished ~= after.finished or before.text ~= after.text
@@ -426,20 +477,20 @@ local function QueueDelta(before, after)
         if not after[key] then
             QueueMessage(table.concat({
                 "X", VERSION, sessionID, "0", key,
-            }, SEP), channel, nil, "urgent", "X:" .. key, nil, nil, nil, true)
+            }, SEP), channel, nil, "urgent", nil, nil, nil, nil, true)
         end
     end
     for key, quest in pairs(after) do
         local previous = before and before[key]
         if not previous or previous.title ~= quest.title or previous.complete ~= quest.complete
             or #previous.objectives ~= #quest.objectives then
-            QueueMessage(EncodeQuest(quest, 0), channel, nil, "urgent", "Q:" .. key,
+            QueueMessage(EncodeQuest(quest, 0), channel, nil, "urgent", nil,
                 nil, nil, nil, true)
         end
         for index, objective in ipairs(quest.objectives) do
             if not previous or ObjectiveChanged(previous.objectives[index], objective) then
                 QueueMessage(EncodeObjective(key, index, objective, 0), channel, nil,
-                    "urgent", "O:" .. key .. ":" .. index, nil, nil, nil, true)
+                    "urgent", nil, nil, nil, nil, true)
             end
         end
     end
@@ -456,11 +507,13 @@ local function QueueSnapshot(target)
         return true
     end
 
-    local questCount, objectiveCount = 0, 0
-    for _, quest in pairs(localQuests) do
-        questCount = questCount + 1
+    local questKeys, objectiveCount = {}, 0
+    for key, quest in pairs(localQuests) do
+        questKeys[#questKeys + 1] = key
         objectiveCount = objectiveCount + #quest.objectives
     end
+    table.sort(questKeys)
+    local questCount = #questKeys
     local requiredCapacity = questCount + objectiveCount + 2
     if requiredCapacity > MAX_QUEUE or QueueCount() + requiredCapacity > MAX_QUEUE then
         if targetKey then pendingSnapshotTargets[targetKey] = target end
@@ -469,16 +522,47 @@ local function QueueSnapshot(target)
 
     snapshotSerial = snapshotSerial + 1
     local snapshotID = sessionID .. ":" .. tostring(snapshotSerial)
-    if targetKey then lastSnapshotAt[targetKey] = GetTime() end
-    QueueMessage(table.concat({
-        "B", VERSION, sessionID, snapshotID, tostring(localSequence),
-        tostring(questCount), tostring(objectiveCount), PlayerClass(), CAPABILITIES,
-    }, SEP), "WHISPER", target, "bulk", nil, snapshotID)
-    for _, quest in pairs(localQuests) do QueueQuest(quest, "WHISPER", target, snapshotID) end
-    QueueMessage(table.concat({
+    local digest = QuestDigest(localQuests)
+    local messages = {
+        table.concat({
+            "B", VERSION, sessionID, snapshotID, tostring(localSequence),
+            tostring(questCount), tostring(objectiveCount), PlayerClass(), CAPABILITIES, digest,
+        }, SEP),
+    }
+    for _, key in ipairs(questKeys) do
+        local quest = localQuests[key]
+        messages[#messages + 1] = EncodeQuest(quest, 0)
+        for index, objective in ipairs(quest.objectives) do
+            messages[#messages + 1] = EncodeObjective(quest.key, index, objective, 0)
+        end
+    end
+    messages[#messages + 1] = table.concat({
         "E", VERSION, sessionID, snapshotID, tostring(localSequence),
-        tostring(questCount), tostring(objectiveCount),
-    }, SEP), "WHISPER", target, "bulk", nil, snapshotID, true)
+        tostring(questCount), tostring(objectiveCount), digest,
+    }, SEP)
+    for _, message in ipairs(messages) do
+        if string.len(message) > MAX_PAYLOAD_BYTES then
+            if targetKey then pendingSnapshotTargets[targetKey] = target end
+            return false
+        end
+    end
+
+    local bulkStart, orderStart = #outgoing.bulk, outgoingOrder
+    outgoing.snapshotBarriers[#outgoing.snapshotBarriers + 1] = {
+        batch=snapshotID, order=outgoingOrder,
+    }
+    for index, message in ipairs(messages) do
+        if not QueueMessage(message, "WHISPER", target, "bulk", nil,
+            snapshotID, index == #messages)
+        then
+            while #outgoing.bulk > bulkStart do table.remove(outgoing.bulk) end
+            table.remove(outgoing.snapshotBarriers)
+            outgoingOrder = orderStart
+            if targetKey then pendingSnapshotTargets[targetKey] = target end
+            return false
+        end
+    end
+    if targetKey then lastSnapshotAt[targetKey] = GetTime() end
     if targetKey then pendingSnapshotTargets[targetKey] = nil end
     return true
 end
@@ -534,6 +618,7 @@ local function QueueHeartbeat()
     end
     return QueueMessage(table.concat({
         "H", VERSION, sessionID, tostring(localSequence), CAPABILITIES,
+        QuestDigest(localQuests),
     }, SEP), channel, nil, "urgent", "H")
 end
 
@@ -772,7 +857,13 @@ local function ReceiveMessage(prefix, message, channel, sender)
         member.capabilities = CleanField(fields[5], 80)
         local advertised = SafeInteger(fields[4], 0, 2147483647)
         if not advertised then return end
-        if advertised > (member.lastSequence or 0) or not member.completeSnapshot then
+        local digest = SafeDigest(fields[6])
+        local digestMismatch = digest and member.completeSnapshot
+            and advertised == (member.lastSequence or 0)
+            and QuestDigest(member.quests) ~= digest
+        if advertised > (member.lastSequence or 0) or not member.completeSnapshot
+            or digestMismatch
+        then
             -- Keep the last complete snapshot visible while its replacement is
             -- transferred. The E packet commits the new snapshot atomically.
             member.resyncPending = true
@@ -819,6 +910,7 @@ local function ReceiveMessage(prefix, message, channel, sender)
             receivedObjectives = 0,
             quests = {},
             hadComplete = member.completeSnapshot,
+            digest = SafeDigest(fields[10]),
         }
         member.class = CleanField(fields[8], 16)
         member.capabilities = CleanField(fields[9], 80)
@@ -848,6 +940,11 @@ local function ReceiveMessage(prefix, message, channel, sender)
                 end
                 valid = actualQuests == snapshot.expectedQuests
                     and actualObjectives == snapshot.expectedObjectives
+            end
+            if valid and HasCapability(member, "digest") then
+                local endingDigest = SafeDigest(fields[8])
+                valid = snapshot.digest ~= nil and snapshot.digest == endingDigest
+                    and QuestDigest(snapshot.quests) == snapshot.digest
             end
         end
         if valid then
@@ -958,6 +1055,34 @@ local function CleanupRoster()
             pendingSnapshotTargets[name] = nil
         end
     end
+
+    -- A departed member can leave a long multipart whisper snapshot at the
+    -- head of the bulk queue. Remove those packets and their barrier so fresh
+    -- deltas for the members who remain are not blocked behind dead traffic.
+    for _, queueName in ipairs({ "urgent", "bulk" }) do
+        local queue = outgoing[queueName]
+        for index = #queue, 1, -1 do
+            local entry = queue[index]
+            if entry.channel == "WHISPER"
+                and not MatchingRosterKey(roster, entry.target)
+            then
+                if entry.key then outgoingKeys[entry.key] = nil end
+                table.remove(queue, index)
+            end
+        end
+    end
+    local remainingBatches = {}
+    for _, entry in ipairs(outgoing.bulk) do
+        if entry.batch then remainingBatches[entry.batch] = true end
+    end
+    if outgoing.activeBatch and not remainingBatches[outgoing.activeBatch] then
+        outgoing.activeBatch = nil
+    end
+    for index = #outgoing.snapshotBarriers, 1, -1 do
+        if not remainingBatches[outgoing.snapshotBarriers[index].batch] then
+            table.remove(outgoing.snapshotBarriers, index)
+        end
+    end
     for name, member in pairs(memberQuests) do
         local unit = units[name]
         member.connected = not unit or not UnitIsConnected or UnitIsConnected(unit) ~= false
@@ -1040,16 +1165,28 @@ local function PopOutgoing()
             entry = nil
         end
     end
-    if not entry and not outgoing.activeBatch and #outgoing.urgent > 0 then
-        entry = table.remove(outgoing.urgent, 1)
-    end
-    if not entry and #outgoing.bulk > 0 then
-        entry = table.remove(outgoing.bulk, 1)
-        if entry.batch then outgoing.activeBatch = entry.batch end
+    if not entry and not outgoing.activeBatch then
+        local barrier = outgoing.snapshotBarriers[1]
+        local urgent = outgoing.urgent[1]
+        if urgent and (not barrier or (urgent.order or 0) <= barrier.order) then
+            entry = table.remove(outgoing.urgent, 1)
+        elseif #outgoing.bulk > 0 then
+            entry = table.remove(outgoing.bulk, 1)
+            if entry.batch then outgoing.activeBatch = entry.batch end
+        elseif urgent then
+            -- A barrier can only outlive its batch if a defensive queue limit
+            -- rejected part of that batch. Do not deadlock all later deltas.
+            table.remove(outgoing.snapshotBarriers, 1)
+            entry = table.remove(outgoing.urgent, 1)
+        end
     end
     if entry and entry.key then outgoingKeys[entry.key] = nil end
     if entry and entry.batchEnd and outgoing.activeBatch == entry.batch then
         outgoing.activeBatch = nil
+    end
+    local barrier = outgoing.snapshotBarriers[1]
+    if entry and entry.batchEnd and barrier and barrier.batch == entry.batch then
+        table.remove(outgoing.snapshotBarriers, 1)
     end
     return entry
 end
