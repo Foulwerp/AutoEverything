@@ -145,6 +145,72 @@ function UI.SkinButton(button, accentColor)
     UI.RefreshButtonTheme(button)
 end
 
+-- Shared compact toggle used outside the settings window. It matches the
+-- settings pill control while keeping its state and callback API self-contained.
+function UI.CreateToggle(parent, text, checked, callback)
+    local toggle = CreateFrame("Button", nil, parent)
+    toggle:SetSize(28, 14)
+    toggle.checked = checked == true
+
+    local radius = 7
+    local center = toggle:CreateTexture(nil, "BACKGROUND")
+    center:SetTexture(UI.Textures.white)
+    center:SetPoint("TOPLEFT", radius, 0)
+    center:SetPoint("BOTTOMRIGHT", -radius, 0)
+    local left = toggle:CreateTexture(nil, "BACKGROUND")
+    left:SetTexture(UI.Textures.circle)
+    left:SetTexCoord(0, 0.5, 0, 1)
+    left:SetPoint("TOPLEFT")
+    left:SetPoint("BOTTOMLEFT")
+    left:SetWidth(radius)
+    local right = toggle:CreateTexture(nil, "BACKGROUND")
+    right:SetTexture(UI.Textures.circle)
+    right:SetTexCoord(0.5, 1, 0, 1)
+    right:SetPoint("TOPRIGHT")
+    right:SetPoint("BOTTOMRIGHT")
+    right:SetWidth(radius)
+
+    local knob = toggle:CreateTexture(nil, "ARTWORK")
+    knob:SetTexture(UI.Textures.circle)
+    knob:SetSize(10, 10)
+    knob:SetVertexColor(1, 1, 1, 1)
+
+    local label = toggle:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    label:SetPoint("LEFT", toggle, "RIGHT", 8, 0)
+    label:SetText(text or "")
+    UI.ApplyFont(label, 12)
+    label:SetTextColor(UI.Unpack(UI.Colors.text))
+    toggle.text = label
+
+    local function Paint(hovered)
+        local color = toggle.checked and UI.Colors.toggleOn or UI.Colors.toggleOff
+        local lift = hovered and 0.08 or 0
+        center:SetVertexColor(color[1] + lift, color[2] + lift, color[3] + lift, 1)
+        left:SetVertexColor(color[1] + lift, color[2] + lift, color[3] + lift, 1)
+        right:SetVertexColor(color[1] + lift, color[2] + lift, color[3] + lift, 1)
+        knob:ClearAllPoints()
+        knob:SetPoint(toggle.checked and "RIGHT" or "LEFT", toggle,
+            toggle.checked and "RIGHT" or "LEFT", toggle.checked and -2 or 2, 0)
+    end
+
+    function toggle:SetChecked(value)
+        self.checked = value == true
+        Paint(false)
+    end
+    toggle:HookScript("OnEnter", function() Paint(true) end)
+    toggle:HookScript("OnLeave", function() Paint(false) end)
+    toggle:SetScript("OnClick", function(self)
+        self.checked = not self.checked
+        Paint(true)
+        if callback then callback(self.checked) end
+    end)
+    if toggle.SetHitRectInsets then
+        toggle:SetHitRectInsets(-5, -(13 + (label:GetStringWidth() or 0)), -5, -5)
+    end
+    Paint(false)
+    return toggle
+end
+
 -- Shared compact vertical scrollbar: a thin neutral line with a draggable
 -- rounded blue pill. It intentionally has no arrow buttons and does not use a
 -- Blizzard scrollbar template, so every addon surface behaves consistently.

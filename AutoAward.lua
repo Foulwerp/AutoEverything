@@ -409,16 +409,7 @@ local function RefreshUI()
     ui.rolls:SetText("MS: " .. CountRolls("MS") .. "    OS: " .. CountRolls("OS") .. "    Rejected: " .. #(current.rejectedRolls or {}))
     ui.winner:SetText("Leader: " .. PredictedWinnerText())
     ui.award:SetText(current.source == "inventory" and "Trade" or "Award")
-    ui.auto:SetText(Setting("autoAward") and "Auto: ON" or "Auto: OFF")
-    if Theme then
-        ui.auto.themeAccentColor = Setting("autoAward") and Theme.Colors.brand or nil
-        if Theme.RefreshButtonTheme then Theme.RefreshButtonTheme(ui.auto) end
-    end
-    local autoText = ui.auto.GetFontString and ui.auto:GetFontString()
-    if Theme and autoText and autoText.SetTextColor then
-        if Setting("autoAward") then autoText:SetTextColor(Theme.Unpack(Theme.Colors.text))
-        else autoText:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
-    end
+    ui.auto:SetChecked(Setting("autoAward"))
 
     local now = GetTime and GetTime() or 0
     local remaining = current.deadline and math.max(0, current.deadline - now) or 0
@@ -1062,7 +1053,7 @@ end
 local function CreateWindow()
     frame = CreateFrame("Frame", "AutoEverythingAwardFrame", UIParent)
     frame:SetWidth(370)
-    frame:SetHeight(190)
+    frame:SetHeight(160)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -1085,36 +1076,35 @@ local function CreateWindow()
     if Theme then Theme.ApplyFont(ui.timer, 12); ui.timer:SetTextColor(Theme.Unpack(Theme.Colors.brand)) end
 
     local iconFrame = CreateFrame("Frame", nil, frame)
-    iconFrame:SetSize(36, 36); iconFrame:SetPoint("TOPLEFT", 99, -70)
+    iconFrame:SetSize(36, 36); iconFrame:SetPoint("TOPLEFT", 162, -72)
     if Theme then Theme.Backdrop(iconFrame, Theme.Colors.surface, 1) end
     ui.icon = iconFrame:CreateTexture(nil, "ARTWORK")
     ui.icon:SetPoint("TOPLEFT", 2, -2); ui.icon:SetPoint("BOTTOMRIGHT", -2, 2)
     ui.item = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    ui.item:SetPoint("LEFT", iconFrame, "RIGHT", 10, 0); ui.item:SetWidth(207); ui.item:SetJustifyH("LEFT")
+    ui.item:SetPoint("LEFT", iconFrame, "RIGHT", 10, 0); ui.item:SetWidth(144); ui.item:SetJustifyH("LEFT")
     if Theme then Theme.ApplyFont(ui.item, 12) end
     ui.rolls = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ui.rolls:SetPoint("TOPLEFT", 18, -111)
+    ui.rolls:SetPoint("TOPLEFT", 18, -116)
     if Theme then Theme.ApplyFont(ui.rolls, 11); ui.rolls:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
     ui.winner = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ui.winner:SetPoint("TOPLEFT", 18, -128)
+    ui.winner:SetPoint("TOPLEFT", 18, -133)
     if Theme then Theme.ApplyFont(ui.winner, 11); ui.winner:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
 
-    local actionWidth = 78
+    local actionWidth = 64
     local actionGap = 4
     ui.start = MakeButton(frame, "Start", actionWidth, function() AA.StartSelected() end, Theme and Theme.Colors.brand)
-    ui.start:SetPoint("BOTTOM", frame, "BOTTOM", -123, 13)
+    ui.start:SetPoint("TOPLEFT", 18, -67)
     AddTooltip(ui.start, "Start roll", "Snapshots the current group and starts MS /roll 100 and OS /roll 99 tracking for the selected item.")
     local stop = MakeButton(frame, "Stop", actionWidth, function() AA.Stop() end)
     stop:SetPoint("LEFT", ui.start, "RIGHT", actionGap, 0)
     AddTooltip(stop, "Stop roll", "Ends the timer now and resolves the accepted rolls.")
     ui.award = MakeButton(frame, "Award", actionWidth, function() AA.Award() end, Theme and Theme.Colors.success)
-    ui.award:SetPoint("LEFT", stop, "RIGHT", actionGap, 0)
+    ui.award:SetPoint("TOP", ui.start, "BOTTOM", 0, -2)
     AddTooltip(ui.award, "Validated handoff", "Loot slots are assigned through Master Loot. Bag items open a trade to the winner and place the exact item for your manual confirmation.")
     ui.cancel = MakeButton(frame, "Cancel", actionWidth, function() AA.Cancel() end, Theme and Theme.Colors.danger)
     ui.cancel:SetPoint("LEFT", ui.award, "RIGHT", actionGap, 0)
     AddTooltip(ui.cancel, "Cancel", "Stops an active roll before item assignment begins.")
-    ui.auto = MakeButton(frame, "Auto: OFF", 71, function()
-        local enabled = not Setting("autoAward")
+    ui.auto = Theme.CreateToggle(frame, "Auto", Setting("autoAward"), function(enabled)
         SetSetting("autoAward", enabled)
         if not enabled and current.awardDeferred and current.awardDeferredAutomatic then
             current.awardDeferred = nil
@@ -1123,7 +1113,7 @@ local function CreateWindow()
         end
         RefreshUI()
     end)
-    ui.auto:SetPoint("RIGHT", iconFrame, "LEFT", -10, 0)
+    ui.auto:SetPoint("TOPLEFT", 286, -47)
     AddTooltip(ui.auto, "Automatic assignment", "Off by default. When armed, a unique validated winner is assigned after the timer and grace period. Ambiguity always stops safely.")
 
     local close = MakeButton(frame, "x", 22, function() frame:Hide() end)
