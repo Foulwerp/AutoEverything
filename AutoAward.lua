@@ -105,6 +105,11 @@ local function Announce(message)
     Log(message)
 end
 
+local function Broadcast(message)
+    local channel = GroupChannel()
+    if channel and SendChatMessage then SendChatMessage(message, channel) end
+end
+
 local function GetRoster()
     local byName = {}
     local function Add(name)
@@ -583,7 +588,7 @@ end
 local function BeginGrace()
     if current.state ~= STATE_ROLLING and current.state ~= STATE_TIE then return end
     local grace = math.max(0, math.min(1, tonumber(Setting("graceSeconds")) or 1))
-    Announce("Finish roll.")
+    Broadcast("Rolling ended.")
     SetState(STATE_GRACE)
     current.deadline = GetTime() + grace
     if grace == 0 then ResolveRound() end
@@ -598,7 +603,7 @@ local function UpdateRollCountdown(now)
     local count = math.ceil(remaining)
     if count >= 1 and count <= 5 and current.lastCountdown ~= count then
         current.lastCountdown = count
-        Announce(tostring(count))
+        Broadcast("Rolling ends in " .. count .. ".")
     end
 end
 
