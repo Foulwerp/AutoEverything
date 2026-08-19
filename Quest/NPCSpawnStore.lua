@@ -17,7 +17,9 @@ local observedNames = {}
 local npcIDsByName
 local npcNamesByID
 local metadataByID = {}
+local metadataPackStarts
 local notableNPCs
+local notableNPCsBuilding = false
 local observedClassifications = {}
 
 local serviceOrder = {
@@ -47,13 +49,31 @@ local function MetadataRow(row)
     }
 end
 
-local function ForEachMetadata(callback)
+local function ForEachMetadata(callback, cooperate)
     for _, packed in ipairs(DataStore.GetNPCMetadataPacks()) do
         for row in string.gmatch(packed, "[^\n]+") do
             local metadata = MetadataRow(row)
             if metadata then callback(metadata) end
+            if cooperate then cooperate() end
         end
     end
+end
+
+-- Metadata is generated in ascending NPC-ID chunks. Index only each chunk's
+-- first ID so a one-NPC lookup parses roughly one chunk, not the full file.
+local function MetadataPackForID(npcID)
+    local packs = DataStore.GetNPCMetadataPacks()
+    if not metadataPackStarts then
+        metadataPackStarts = {}
+        for index, packed in ipairs(packs) do
+            metadataPackStarts[index] = tonumber(string.match(packed, "^(%d+)\t"))
+        end
+    end
+    local selected
+    for index, firstID in ipairs(metadataPackStarts) do
+        if firstID and firstID <= npcID then selected = packs[index] else break end
+    end
+    return selected
 end
 
 local function NotableKind(metadata)
@@ -145,34 +165,45 @@ function Store.GetMetadata(npcID)
         return metadata
     end
     local found
-    ForEachMetadata(function(metadata)
-        if not found and metadata.id == npcID then found = metadata end
-    end)
+    local packed = MetadataPackForID(npcID)
+    for row in string.gmatch(packed or "", "[^\n]+") do
+        local metadata = MetadataRow(row)
+        if metadata and metadata.id == npcID then found = metadata; break end
+        if metadata and metadata.id > npcID then break end
+    end
     metadataByID[npcID] = found or false
     return found
 end
 
-function Store.GetNotableNPCs()
+function Store.GetNotableNPCs(cooperate)
     if notableNPCs then return notableNPCs end
-    notableNPCs = {}
+    if notableNPCsBuilding then return nil end
+    notableNPCsBuilding = true
+    local result = {}
     local seen = {}
     local function Add(metadata)
         local kind = NotableKind(metadata)
         if kind and not seen[metadata.id] then
             seen[metadata.id] = true
             metadata.kind = kind
-            notableNPCs[#notableNPCs + 1] = metadata
+            result[#result + 1] = metadata
             metadataByID[metadata.id] = metadata
         end
     end
-    ForEachMetadata(Add)
+    ForEachMetadata(Add, cooperate)
     for npcID in pairs(observedClassifications) do
         Add(Store.GetMetadata(npcID) or { id=npcID, name=Store.GetName(npcID) })
     end
+    notableNPCs = result
+    notableNPCsBuilding = false
     return notableNPCs
 end
 
-local function BuildNPCNameIndex()
+function Store.AreNotableNPCsReady()
+    return notableNPCs ~= nil
+end
+
+local function BuildNPCNameIndex(cooperate)
     npcIDsByName = {}
     npcNamesByID = {}
     local seen = {}
@@ -197,6 +228,7 @@ local function BuildNPCNameIndex()
         for row in string.gmatch(packed, "[^\n]+") do
             local npcText, name = string.match(row, "^(%d+)=(.*)$")
             Add(npcText, name)
+            if cooperate then cooperate() end
         end
     end
     DataStore.ForEachQuest(function(_, entry)
@@ -205,23 +237,33 @@ local function BuildNPCNameIndex()
                 Add(record.id, record.name)
             end
         end
+        if cooperate then cooperate() end
     end)
     for _, packedIDs in pairs(DataStore.GetServicesPacked()) do
         for value in string.gmatch(type(packedIDs) == "string" and packedIDs or "", "[^,]+") do
             local npcID = tonumber(value)
             if npcID then Add(npcID, DataStore.GetServiceName(npcID)) end
+            if cooperate then cooperate() end
         end
     end
+end
+
+function Store.PrepareQuestLookups(cooperate)
+    if not npcIDsByName then BuildNPCNameIndex(cooperate) end
 end
 
 function Store.GetName(npcID)
     npcID = tonumber(npcID)
     if not npcID then return nil end
     if observedNames[npcID] then return observedNames[npcID] end
-    if not npcNamesByID then BuildNPCNameIndex() end
-    if npcNamesByID[npcID] then return npcNamesByID[npcID] end
+    if npcNamesByID and npcNamesByID[npcID] then return npcNamesByID[npcID] end
     local metadata = Store.GetMetadata(npcID)
-    return metadata and metadata.name or nil
+    if metadata and metadata.name then return metadata.name end
+    -- Generated metadata normally supplies every NPC name. Keep the broader
+    -- quest-record fallback for unusual legacy data, but do not build that
+    -- global index for ordinary one-ID lookups.
+    if not npcNamesByID then BuildNPCNameIndex() end
+    return npcNamesByID[npcID]
 end
 
 -- Unified NPC spawn record used by map pins, diagnostics, and manual lookup.
@@ -257,24 +299,34 @@ function Store.SearchNPCs(query, maximum)
         return {}
     end
 
+    if not npcIDsByName then BuildNPCNameIndex() end
     local needle, exact, partial = string.lower(query), {}, {}
-    ForEachMetadata(function(metadata)
-        local name = string.lower(metadata.name or "")
-        if name == needle then
-            exact[#exact + 1] = metadata
-        elseif #partial < maximum and string.find(name, needle, 1, true) then
-            partial[#partial + 1] = metadata
+    for _, npcID in ipairs(npcIDsByName[needle] or {}) do
+        exact[#exact + 1] = {
+            id=npcID, name=npcNamesByID[npcID] or query,
+        }
+    end
+    for name, npcIDs in pairs(npcIDsByName) do
+        if name ~= needle and #partial < maximum
+            and string.find(name, needle, 1, true)
+        then
+            for _, npcID in ipairs(npcIDs) do
+                partial[#partial + 1] = {
+                    id=npcID, name=npcNamesByID[npcID] or name,
+                }
+                if #partial >= maximum then break end
+            end
         end
-    end)
+    end
     local results, seen = {}, {}
     local function Add(metadata)
         if #results >= maximum or seen[metadata.id] then return end
         seen[metadata.id] = true
-        metadataByID[metadata.id] = metadata
+        local fullMetadata = Store.GetMetadata(metadata.id) or metadata
         local npc = Store.GetNPC(metadata.id)
         results[#results + 1] = npc or {
-            id=metadata.id, name=metadata.name or ("NPC " .. metadata.id),
-            locations={}, kind=NotableKind(metadata), metadata=metadata,
+            id=metadata.id, name=fullMetadata.name or ("NPC " .. metadata.id),
+            locations={}, kind=NotableKind(fullMetadata), metadata=fullMetadata,
         }
     end
     table.sort(exact, function(a, b) return a.id < b.id end)
@@ -297,9 +349,9 @@ end
 -- matching their live objective label against NPC names already present in
 -- the generated quest data. Prefer the longest name so a specific creature
 -- wins over a shorter name contained inside it.
-function Store.FindNPCsByObjectiveText(text)
+function Store.FindNPCsByObjectiveText(text, cooperate)
     if type(text) ~= "string" or text == "" then return nil end
-    if not npcIDsByName then BuildNPCNameIndex() end
+    if not npcIDsByName then BuildNPCNameIndex(cooperate) end
     local label = string.lower(text)
     local best, bestLength
     for name, npcIDs in pairs(npcIDsByName) do
@@ -308,6 +360,7 @@ function Store.FindNPCsByObjectiveText(text)
         then
             best, bestLength = npcIDs, string.len(name)
         end
+        if cooperate then cooperate() end
     end
     return best
 end
@@ -415,6 +468,10 @@ function Store.ClearCache()
     decodedServices = nil
     decodedServiceFactions = nil
     observedNames = {}
+    metadataByID = {}
+    metadataPackStarts = nil
+    notableNPCs = nil
+    notableNPCsBuilding = false
     npcIDsByName = nil
     npcNamesByID = nil
 end

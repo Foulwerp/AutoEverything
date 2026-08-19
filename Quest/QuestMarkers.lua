@@ -841,6 +841,11 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
     if not indexEnabled then return end
     eventFrame.elapsed = (eventFrame.elapsed or 0) + math.min(elapsed or 0, 0.1)
     if refreshPending and GetTime() >= refreshAt then
+        if AutoQuest.Map and AutoQuest.Map.IsInitialBuildComplete
+            and not AutoQuest.Map.IsInitialBuildComplete()
+        then
+            return
+        end
         refreshPending = false
         Markers.RebuildIndex()
         if visualEnabled then RefreshVisible() end

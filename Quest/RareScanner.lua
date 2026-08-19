@@ -60,10 +60,13 @@ end
 
 local function RareMetadataIndex()
     if rareMetadataByID then return rareMetadataByID end
-    rareMetadataByID = {}
-    for _, metadata in ipairs(SpawnStore.GetNotableNPCs() or {}) do
-        if metadata.kind == "rare" then rareMetadataByID[metadata.id] = metadata end
+    local notable = SpawnStore.GetNotableNPCs()
+    if not notable then return nil end
+    local result = {}
+    for _, metadata in ipairs(notable) do
+        if metadata.kind == "rare" then result[metadata.id] = metadata end
     end
+    rareMetadataByID = result
     return rareMetadataByID
 end
 
@@ -243,7 +246,8 @@ function Scanner.HandleCombatLog(...)
     end
     local function ObserveGUID(guid, name)
         local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
-        local metadata = npcID and RareMetadataIndex()[npcID]
+        local metadataIndex = npcID and RareMetadataIndex()
+        local metadata = metadataIndex and metadataIndex[npcID]
         if npcID and metadata and IsRareMetadata(metadata) then
             Scanner.ObserveNPC(npcID, name or metadata.name, guid, nil, "combat log", false)
         end
@@ -291,6 +295,11 @@ local function IsCreatureCached(npcID)
 end
 
 local function RebuildCacheCandidates()
+    if AutoQuest.Map and AutoQuest.Map.IsInitialBuildComplete
+        and not AutoQuest.Map.IsInitialBuildComplete()
+    then
+        return
+    end
     local playerLocation = AutoQuest.Map and AutoQuest.Map.GetPlayerLocation
         and AutoQuest.Map.GetPlayerLocation(false) or nil
     local zone = playerLocation and playerLocation.zone
@@ -302,7 +311,7 @@ local function RebuildCacheCandidates()
     cacheZoneKey = zoneKey
     cacheCandidates, cacheCandidateIndex, cacheBaseline = {}, 1, true
     local seen = {}
-    for _, metadata in pairs(RareMetadataIndex()) do
+    for _, metadata in pairs(RareMetadataIndex() or {}) do
         for _, location in ipairs(SpawnStore.Get(metadata.id) or {}) do
             if tonumber(location.zoneID) == tonumber(zoneID)
                 or NormalizeZone(location.zone) == NormalizeZone(zone)

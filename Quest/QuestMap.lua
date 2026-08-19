@@ -12,6 +12,7 @@ local SpawnStore = AutoQuest.NPCSpawnStore
 local activeByZone = {}
 local activePointKeys = {}
 local serviceByZone
+local notableByZone
 local combinedByZone = {}
 local worldPins, minimapPins = {}, {}
 local worldRouteDots, minimapRouteDots = {}, {}
@@ -28,6 +29,9 @@ local mapContributions = {}
 local mapContributionStats = { rebuilt=0, reused=0 }
 local invalidateContributionCache = false
 local trackedNPCIDs = {}
+local initialBuildComplete = false
+local initialBuildThread
+local buildCooperate
 
 local defaultServiceKinds = {
     "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
@@ -110,10 +114,13 @@ local function NormalizeZone(name)
     return zoneAliases[name] or name
 end
 
-local function Enabled()
-    local moduleEnabled = AutoCore.GetSetting("quest", "enabled",
+local function ModuleEnabled()
+    return AutoCore.GetSetting("quest", "enabled",
         AutoQuestConfig and AutoQuestConfig.enabled) ~= false
-    return moduleEnabled and AutoCore.GetSetting("quest", "mapPins",
+end
+
+local function Enabled()
+    return ModuleEnabled() and AutoCore.GetSetting("quest", "mapPins",
         AutoQuestConfig and AutoQuestConfig.mapPins) ~= false
 end
 
@@ -144,7 +151,9 @@ local function NotableNPCsEnabled()
 end
 
 local function AddLocation(zoneID, zoneName, floor, record, coord, questID, questTitle,
-    kind, progress, partyMember, partyClass)
+    kind, progress, partyMember, partyClass, targetByZone, targetPointKeys)
+    targetByZone = targetByZone or activeByZone
+    targetPointKeys = targetPointKeys or activePointKeys
     local key = NormalizeZone(zoneName)
     local x, y = tonumber(coord[1]), tonumber(coord[2])
     if key == "" or not x or not y then return false end
@@ -157,7 +166,7 @@ local function AddLocation(zoneID, zoneName, floor, record, coord, questID, ques
         tostring(record.id or ""), tostring(record.item or ""),
         string.format("%.3f", x), string.format("%.3f", y),
     }, ":")
-    local existing = activePointKeys[pointKey]
+    local existing = targetPointKeys[pointKey]
     if existing then
         if partyMember then
             existing.partyMembers = existing.partyMembers or {}
@@ -169,8 +178,8 @@ local function AddLocation(zoneID, zoneName, floor, record, coord, questID, ques
         return false
     end
 
-    activeByZone[key] = activeByZone[key] or { name = zoneName, zoneIDs = {}, questIDs = {}, points = {} }
-    local zone = activeByZone[key]
+    targetByZone[key] = targetByZone[key] or { name = zoneName, zoneIDs = {}, questIDs = {}, points = {} }
+    local zone = targetByZone[key]
     local numericZoneID = tonumber(zoneID)
     if numericZoneID then zone.zoneIDs[numericZoneID] = true end
     if questID then zone.questIDs[questID] = true end
@@ -187,7 +196,7 @@ local function AddLocation(zoneID, zoneName, floor, record, coord, questID, ques
         point.partyMembers[partyMember] = { progress=progress, class=partyClass }
     end
     zone.points[#zone.points + 1] = point
-    activePointKeys[pointKey] = point
+    targetPointKeys[pointKey] = point
     return true
 end
 
@@ -398,7 +407,9 @@ local function BuildServiceIndex()
                 if numericZoneID then zone.zoneIDs[numericZoneID] = true end
                 AddServiceLocation(zone, service, location)
             end
+            if buildCooperate then buildCooperate() end
         end
+        if buildCooperate then buildCooperate() end
     end
 end
 
@@ -406,20 +417,28 @@ local function ZoneForKey(key)
     if not key then return nil end
     local cached = combinedByZone[key]
     if cached then return cached end
-    local questZone, serviceZone = activeByZone[key], serviceByZone and serviceByZone[key]
-    if not questZone then return serviceZone end
-    if not serviceZone then return questZone end
+    local questZone = activeByZone[key]
+    local notableZone = NotableNPCsEnabled() and notableByZone and notableByZone[key]
+    local serviceZone = serviceByZone and serviceByZone[key]
+    local sources = {}
+    if questZone then sources[#sources + 1] = questZone end
+    if notableZone then sources[#sources + 1] = notableZone end
+    if serviceZone then sources[#sources + 1] = serviceZone end
+    if #sources == 0 then return nil end
+    if #sources == 1 then return sources[1] end
     local zone = {
-        name=questZone.name or serviceZone.name,
-        zoneIDs={}, questIDs=questZone.questIDs, points={}, routes={},
+        name=(questZone and questZone.name) or sources[1].name,
+        zoneIDs={}, questIDs=questZone and questZone.questIDs or {}, points={}, routes={},
     }
-    for zoneID in pairs(serviceZone.zoneIDs or {}) do zone.zoneIDs[zoneID] = true end
-    for zoneID in pairs(questZone.zoneIDs or {}) do zone.zoneIDs[zoneID] = true end
-    for _, point in ipairs(questZone.points or {}) do zone.points[#zone.points + 1] = point end
-    -- Active quest objectives always receive world-map pins before the static
-    -- service catalog if the user's pin cap is reached in a crowded city.
-    for _, point in ipairs(serviceZone.points or {}) do zone.points[#zone.points + 1] = point end
-    for _, route in ipairs(serviceZone.routes or {}) do zone.routes[#zone.routes + 1] = route end
+    for _, source in ipairs(sources) do
+        for zoneID in pairs(source.zoneIDs or {}) do zone.zoneIDs[zoneID] = true end
+        for _, point in ipairs(source.points or {}) do
+            if source ~= notableZone or not trackedNPCIDs[tonumber(point.entityID) or point.entityID] then
+                zone.points[#zone.points + 1] = point
+            end
+        end
+        for _, route in ipairs(source.routes or {}) do zone.routes[#zone.routes + 1] = route end
+    end
     combinedByZone[key] = zone
     return zone
 end
@@ -720,7 +739,7 @@ local function IndexLocalQuest(quest)
     for _, objective in ipairs(objectives) do
         local objectiveType = string.lower(objective.kind or "")
         if not objective.done and (objectiveType == "monster" or objectiveType == "player") then
-            local npcIDs = SpawnStore.FindNPCsByObjectiveText(objective.text)
+            local npcIDs = SpawnStore.FindNPCsByObjectiveText(objective.text, buildCooperate)
             if npcIDs then AddQuestObjectiveNPCs(questID, title, { objective }, npcIDs) end
         end
     end
@@ -775,20 +794,33 @@ local function MergeContribution(contribution)
     end
 end
 
-local function AddDiscoveryNPC(npc, kind)
+local function AddDiscoveryNPC(npc, kind, targetByZone, targetPointKeys)
     if not npc or type(npc.locations) ~= "table" then return 0 end
     local added = 0
     local record = { id=npc.id, name=npc.name }
     for _, location in ipairs(npc.locations) do
         for _, coord in ipairs(location.coords or {}) do
             if AddLocation(location.zoneID, location.zone, location.floor,
-                record, coord, nil, nil, kind)
+                record, coord, nil, nil, kind, nil, nil, nil,
+                targetByZone, targetPointKeys)
             then
                 added = added + 1
             end
         end
+        if buildCooperate then buildCooperate() end
     end
     return added
+end
+
+local function BuildNotableIndex()
+    if notableByZone then return end
+    notableByZone = {}
+    local pointKeys = {}
+    for _, metadata in ipairs(SpawnStore.GetNotableNPCs(buildCooperate) or {}) do
+        AddDiscoveryNPC(SpawnStore.GetNPC(metadata.id),
+            metadata.kind or "rare", notableByZone, pointKeys)
+        if buildCooperate then buildCooperate() end
+    end
 end
 
 local function AddNPCDiscoveryLocations()
@@ -810,11 +842,9 @@ local function AddNPCDiscoveryLocations()
     end
     buildStats.notablePoints = 0
     if NotableNPCsEnabled() then
-        for _, metadata in ipairs(SpawnStore.GetNotableNPCs() or {}) do
-            if not trackedNPCIDs[metadata.id] then
-                buildStats.notablePoints = buildStats.notablePoints
-                    + AddDiscoveryNPC(SpawnStore.GetNPC(metadata.id), metadata.kind or "rare")
-            end
+        BuildNotableIndex()
+        for _, zone in pairs(notableByZone or {}) do
+            buildStats.notablePoints = buildStats.notablePoints + #(zone.points or {})
         end
     end
 end
@@ -884,6 +914,16 @@ function QuestMap.RebuildIndex()
         end
     end
     AddConfirmedLocations(resolverObjectives)
+    if buildCooperate then
+        -- Warm both global fallbacks cooperatively even when their individual
+        -- pin options are off. Later quest acceptance, NPC lookup, or rare
+        -- scanning must never become the first synchronous full-catalog scan.
+        SpawnStore.GetNotableNPCs(buildCooperate)
+        BuildNotableIndex()
+        if SpawnStore.PrepareQuestLookups then
+            SpawnStore.PrepareQuestLookups(buildCooperate)
+        end
+    end
 end
 
 -- Every exposed quest-objective coordinate gets its own pin. Service patrols
@@ -1279,6 +1319,10 @@ end
 
 function QuestMap.UpdateWorldMap()
     HideRouteDots(worldRouteDots)
+    if initialBuildThread then
+        HidePins(worldPins)
+        return
+    end
     if not Enabled() or not WorldMapFrame or not WorldMapFrame:IsShown() then
         HidePins(worldPins)
         return
@@ -1617,6 +1661,7 @@ local function PositionMinimapPins()
 end
 
 function QuestMap.UpdateMinimap()
+    if initialBuildThread then ClearMinimapPins("map data loading"); return end
     if not Enabled() then ClearMinimapPins("disabled"); return end
     if not Minimap then ClearMinimapPins("Minimap frame unavailable"); return end
     if not playerMap.key or not playerMap.x then
@@ -1706,6 +1751,7 @@ end
 
 function QuestMap.SetNotableNPCsEnabled(enabled)
     AutoCore.SetSetting("quest", "showNotableNPCPins", enabled and true or false)
+    combinedByZone = {}
     QuestMap.RequestRefresh()
     AutoCore.Info("Quest", "Boss and rare icons " .. (enabled and "enabled." or "disabled."))
 end
@@ -1798,6 +1844,9 @@ function QuestMap.RequestRefresh(invalidate)
 end
 
 function QuestMap.IsEnabled() return Enabled() end
+function QuestMap.IsInitialBuildComplete()
+    return initialBuildComplete or not ModuleEnabled()
+end
 
 function QuestMap.Debug()
     QuestMap.RebuildIndex()
@@ -1869,19 +1918,70 @@ frame:SetScript("OnUpdate", function(_, elapsed)
             HideRouteDots(minimapRouteDots)
             frame.pinsWereEnabled = false
         end
-        return
+        if initialBuildComplete or not ModuleEnabled() then return end
     elseif frame.pinsWereEnabled == false then
         refreshPending, refreshAt = true, 0
     end
     frame.pinsWereEnabled = true
+
+    if initialBuildThread then
+        local ok, message = coroutine.resume(initialBuildThread)
+        if not ok then
+            initialBuildThread = nil
+            buildCooperate = nil
+            initialBuildComplete = true
+            refreshPending, refreshAt = true, 0
+            AutoCore.Warn("Quest", "Map data loading stopped: " .. tostring(message))
+        elseif coroutine.status(initialBuildThread) == "dead" then
+            initialBuildThread = nil
+            buildCooperate = nil
+            initialBuildComplete = true
+            UpdatePlayerLocation()
+            QuestMap.UpdateWorldMap()
+            QuestMap.UpdateMinimap()
+        end
+        return
+    end
+
     frame.positionElapsed = (frame.positionElapsed or 0) + math.min(elapsed or 0, 0.1)
     frame.selectionElapsed = (frame.selectionElapsed or 0) + math.min(elapsed or 0, 0.1)
     if refreshPending and GetTime() >= refreshAt then
         refreshPending = false
-        QuestMap.RebuildIndex()
-        UpdatePlayerLocation()
-        QuestMap.UpdateWorldMap()
-        QuestMap.UpdateMinimap()
+        if not initialBuildComplete and coroutine and coroutine.create
+            and coroutine.resume and coroutine.yield
+        then
+            local sliceStarted = debugprofilestop and debugprofilestop() or 0
+            local checkpoints = 0
+            buildCooperate = function()
+                checkpoints = checkpoints + 1
+                if debugprofilestop then
+                    local now = debugprofilestop()
+                    if now - sliceStarted < 2 then return end
+                    sliceStarted = now
+                elseif checkpoints < 200 then
+                    return
+                end
+                checkpoints = 0
+                coroutine.yield()
+            end
+            initialBuildThread = coroutine.create(function()
+                if Enabled() then
+                    QuestMap.RebuildIndex()
+                else
+                    BuildServiceIndex()
+                    BuildNotableIndex()
+                    if SpawnStore.PrepareQuestLookups then
+                        SpawnStore.PrepareQuestLookups(buildCooperate)
+                    end
+                end
+            end)
+        else
+            QuestMap.RebuildIndex()
+            initialBuildComplete = true
+            UpdatePlayerLocation()
+            QuestMap.UpdateWorldMap()
+            QuestMap.UpdateMinimap()
+        end
         frame.positionElapsed, frame.selectionElapsed = 0, 0
     elseif frame.positionElapsed >= (1 / 30) then
         frame.positionElapsed = 0
