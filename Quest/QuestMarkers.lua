@@ -253,23 +253,15 @@ function Markers.RebuildIndex()
     if not Enabled() and not GroupTooltipsRequested() then return end
     Resolver.BuildActive()
 
-    local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
-    for logIndex = 1, entries do
-        local title, _, _, _, isHeader, _, complete, _, questID = GetQuestLogTitle(logIndex)
-        local objectives
-        if title and not isHeader then
-            objectives = {}
-            local count = GetNumQuestLeaderBoards(logIndex) or 0
-            for objectiveIndex = 1, count do
-                local text, objectiveType, done = GetQuestLogLeaderBoard(objectiveIndex, logIndex)
+    for _, quest in ipairs(AutoQuest.QuestState.GetQuests()) do
+        if not quest.complete then
+            local objectives = {}
+            for objectiveIndex, objective in ipairs(quest.objectives) do
                 objectives[objectiveIndex] = {
-                    text=text or "", kind=objectiveType,
-                    done=Resolver.ObjectiveIsComplete(text, done),
+                    text=objective.text, kind=objective.type, done=objective.finished,
                 }
             end
-        end
-        if title and not isHeader and not Resolver.IsComplete(complete) then
-            IndexQuestTargets(title, questID, objectives)
+            IndexQuestTargets(quest.title, quest.id, objectives)
         end
     end
 

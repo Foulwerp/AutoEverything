@@ -11,6 +11,7 @@
 AutoQuest = AutoQuest or {}
 local AQ = AutoQuest
 local SpawnStore = AQ.NPCSpawnStore
+local QuestState = AQ.QuestState
 
 AQ.GroupSync = AQ.GroupSync or {}
 local Sync = AQ.GroupSync
@@ -174,25 +175,8 @@ local function Split(message)
     return fields
 end
 
-local function TitleHash(title)
-    local hash = 5381
-    for index = 1, string.len(title or "") do
-        hash = math.fmod((hash * 33) + string.byte(title, index), 4294967296)
-    end
-    return string.format("T%08x", hash)
-end
-
 local function QuestKey(questID, title)
-    if type(questID) == "number" and questID > 0 then return "I" .. tostring(questID) end
-    return TitleHash(title or "")
-end
-
-local function IsComplete(value)
-    return value == true or value == 1
-end
-
-local function ObjectiveProgressValues(text)
-    return AQ.ObjectiveResolver.Progress(text)
+    return QuestState.QuestKey(questID, title)
 end
 
 local function PlayerClass()
@@ -280,44 +264,39 @@ end
 local function BuildLocalState()
     local quests = {}
     local items = {}
-    local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
+    QuestState.Refresh()
 
-    for questIndex = 1, entries do
-        local title, level, questTag, suggestedGroup, isHeader, isCollapsed,
-            questComplete, isDaily, questID = GetQuestLogTitle(questIndex)
-        if title and not isHeader then
-            local key = QuestKey(questID, title)
-            local quest = {
-                key = key,
-                id = tonumber(questID),
-                title = title,
-                complete = IsComplete(questComplete),
-                objectives = {},
+    for _, cachedQuest in ipairs(QuestState.GetQuests()) do
+        local title, questID = cachedQuest.title, cachedQuest.id
+        local key = QuestKey(questID, title)
+        local quest = {
+            key = key,
+            id = tonumber(questID),
+            title = title,
+            complete = cachedQuest.complete,
+            objectives = {},
+        }
+        for objectiveIndex, cachedObjective in ipairs(cachedQuest.objectives) do
+            local text, objectiveType = cachedObjective.text, cachedObjective.type
+            local targetType, targetID = ObjectiveTarget(
+                tonumber(questID), title, objectiveIndex, text or "", objectiveType
+            )
+            quest.objectives[objectiveIndex] = {
+                text = text or ("Objective " .. objectiveIndex),
+                finished = cachedObjective.finished,
+                type = objectiveType or "",
+                current = cachedObjective.current,
+                required = cachedObjective.required,
+                targetType = targetType,
+                targetID = targetID,
             }
-            local objectiveCount = GetNumQuestLeaderBoards and (GetNumQuestLeaderBoards(questIndex) or 0) or 0
-            for objectiveIndex = 1, objectiveCount do
-                local text, objectiveType, finished = GetQuestLogLeaderBoard(objectiveIndex, questIndex)
-                local current, required = ObjectiveProgressValues(text)
-                local targetType, targetID = ObjectiveTarget(
-                    tonumber(questID), title, objectiveIndex, text or "", objectiveType
-                )
-                quest.objectives[objectiveIndex] = {
-                    text = text or ("Objective " .. objectiveIndex),
-                    finished = IsComplete(finished),
-                    type = objectiveType or "",
-                    current = current,
-                    required = required,
-                    targetType = targetType,
-                    targetID = targetID,
-                }
-            end
-            quests[key] = quest
+        end
+        quests[key] = quest
 
-            local questItems = QuestByTitle and QuestByTitle[title]
-            for _, itemID in ipairs(questItems or {}) do
-                items[itemID] = items[itemID] or {}
-                table.insert(items[itemID], key)
-            end
+        local questItems = QuestByTitle and QuestByTitle[title]
+        for _, itemID in ipairs(questItems or {}) do
+            items[itemID] = items[itemID] or {}
+            table.insert(items[itemID], key)
         end
     end
     return quests, items
@@ -1161,8 +1140,9 @@ end
 local function AutoShareQuest(index)
     if not index or RaidCount() > 0 or PartyCount() == 0 or Setting("autoShareQuests", false) ~= true then return end
     if acceptedSharedTitle and GetTime() <= acceptedSharedUntil then
-        local title = GetQuestLogTitle(index)
-        if title == acceptedSharedTitle then
+        QuestState.Refresh()
+        local quest = QuestState.GetByLogIndex(index)
+        if quest and quest.title == acceptedSharedTitle then
             acceptedSharedTitle = nil
             return
         end

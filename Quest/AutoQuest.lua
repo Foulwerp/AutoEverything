@@ -71,17 +71,10 @@ local function QuickAbandonFlag(key, fallback)
 end
 
 local function HasPartialProgress(questIndex)
-    local numObjectives = GetNumQuestLeaderBoards(questIndex)
-    if not numObjectives or numObjectives == 0 then return false end
-    for i = 1, numObjectives do
-        local description, _, isCompleted = GetQuestLogLeaderBoard(i, questIndex)
-        if isCompleted then return true end
-        if description then
-            local current, total = description:match("(%d+)/(%d+)")
-            if current and total and tonumber(current) and tonumber(current) > 0 then
-                return true
-            end
-        end
+    local quest = AQ.QuestState.GetByLogIndex(questIndex)
+    if not quest then return false end
+    for _, objective in ipairs(quest.objectives) do
+        if objective.finished or (objective.current and objective.current > 0) then return true end
     end
     return false
 end
@@ -105,10 +98,10 @@ local function QuickAbandonShouldKeep(title, level, questTag, isComplete, isDail
     if QuickAbandonFlag("quickAbandonKeepPathToAscension", true) and title:match("Path to Ascension") then
         return true
     end
-    if QuickAbandonFlag("quickAbandonKeepComplete", true) and isComplete == 1 then
+    if QuickAbandonFlag("quickAbandonKeepComplete", true) and (isComplete == true or isComplete == 1) then
         if not trivial or QuickAbandonFlag("quickAbandonKeepTrivialComplete", false) then return true end
     end
-    if QuickAbandonFlag("quickAbandonKeepDaily", true) and isDaily == 1 then return true end
+    if QuickAbandonFlag("quickAbandonKeepDaily", true) and (isDaily == true or isDaily == 1) then return true end
     if QuickAbandonFlag("quickAbandonKeepDungeon", true) and questTag == "Dungeon" then
         if not trivial or QuickAbandonFlag("quickAbandonKeepTrivialDungeon", false) then return true end
     end
@@ -123,10 +116,15 @@ end
 function AQ.GetQuickAbandonCandidates()
     local playerLevel = UnitLevel("player")
     local candidates = {}
-    for i = 1, GetNumQuestLogEntries() do
-        local title, level, questTag, _, isHeader, _, isComplete, isDaily = GetQuestLogTitle(i)
-        if title and not isHeader and not QuickAbandonShouldKeep(title, level, questTag, isComplete, isDaily, playerLevel, i) then
-            table.insert(candidates, { index = i, title = title, level = level or 0, tag = questTag or "" })
+    AQ.QuestState.Refresh()
+    for _, quest in ipairs(AQ.QuestState.GetQuests()) do
+        if not QuickAbandonShouldKeep(quest.title, quest.level, quest.tag, quest.complete,
+            quest.isDaily, playerLevel, quest.logIndex)
+        then
+            table.insert(candidates, {
+                index = quest.logIndex, title = quest.title,
+                level = quest.level or 0, tag = quest.tag or "",
+            })
         end
     end
     return candidates
@@ -398,10 +396,11 @@ local function IsQuestReadyToTurnIn(title)
     local foundTitle = false
     local lastReason = "quest is not in the quest log"
 
-    for i = 1, GetNumQuestLogEntries() do
-        local questTitle, level, questTag, suggestedGroup, isHeader, isCollapsed, isComplete, isDaily = GetQuestLogTitle(i)
-
-        if not isHeader and questTitle == title then
+    AQ.QuestState.Refresh()
+    for _, quest in ipairs(AQ.QuestState.GetByTitle(title)) do
+        local questTitle, level, questTag = quest.title, quest.level, quest.tag
+        local isComplete, isDaily = quest.complete, quest.isDaily
+        if questTitle == title then
             foundTitle = true
             if isDaily and not cfg.turnInDailyQuests then
                 lastReason = "daily quest turn-in is disabled"
@@ -409,7 +408,7 @@ local function IsQuestReadyToTurnIn(title)
                 lastReason = "PvP quest turn-in is disabled"
             elseif IsTrivialQuest(level, playerLevel) and not cfg.acceptTrivialQuests then
                 lastReason = "quest is trivial (more than " .. TRIVIAL_LEVEL_GAP .. " levels below you)"
-            elseif (isComplete == 1) or (GetNumQuestLeaderBoards(i) == 0) then
+            elseif isComplete or quest.objectiveCount == 0 then
                 return true, nil
             else
                 lastReason = "quest objectives are incomplete"
@@ -860,22 +859,22 @@ function AQ.DebugQuestClient()
     local refreshedPOICount = DebugCall("QuestMapUpdateAllQuests()", QuestMapUpdateAllQuests)
 
     DebugPrint("Active quest log")
-    local numEntries, numQuests = GetNumQuestLogEntries()
+    AQ.QuestState.Refresh()
+    local activeQuests = AQ.QuestState.GetQuests()
     local destinationProbes = {}
-    DebugPrint("  entries=" .. DebugValue(numEntries) .. ", quests=" .. DebugValue(numQuests))
+    DebugPrint("  cached quests=" .. tostring(#activeQuests)
+        .. ", revision=" .. tostring(AQ.QuestState.GetRevision()))
 
-    for questLogIndex = 1, (numEntries or 0) do
-        local title, level, questTag, suggestedGroup, isHeader, isCollapsed,
-            isComplete, isDaily, questID = GetQuestLogTitle(questLogIndex)
-
-        if title and not isHeader then
+    for _, quest in ipairs(activeQuests) do
+            local questLogIndex = quest.logIndex
+            local title, questID = quest.title, quest.id
             DebugPrint("Quest log " .. questLogIndex .. ": " .. tostring(title))
-            DebugPrint("  level=" .. DebugValue(level)
-                .. ", tag=" .. DebugValue(questTag)
-                .. ", group=" .. DebugValue(suggestedGroup)
-                .. ", collapsed=" .. DebugValue(isCollapsed)
-                .. ", complete=" .. DebugValue(isComplete)
-                .. ", daily=" .. DebugValue(isDaily)
+            DebugPrint("  level=" .. DebugValue(quest.level)
+                .. ", tag=" .. DebugValue(quest.tag)
+                .. ", group=" .. DebugValue(quest.suggestedGroup)
+                .. ", collapsed=" .. DebugValue(quest.collapsed)
+                .. ", complete=" .. DebugValue(quest.complete)
+                .. ", daily=" .. DebugValue(quest.isDaily)
                 .. ", questID=" .. DebugValue(questID))
 
             DebugCall("GetQuestLink(" .. questLogIndex .. ")", GetQuestLink, questLogIndex)
@@ -895,16 +894,12 @@ function AQ.DebugQuestClient()
                 })
             end
 
-            local objectiveCount = GetNumQuestLeaderBoards(questLogIndex) or 0
-            DebugPrint("  objectives=" .. tostring(objectiveCount))
-            for objectiveIndex = 1, objectiveCount do
-                local description, objectiveType, objectiveComplete =
-                    GetQuestLogLeaderBoard(objectiveIndex, questLogIndex)
-                DebugPrint("    [" .. objectiveIndex .. "] text=" .. DebugValue(description)
-                    .. ", type=" .. DebugValue(objectiveType)
-                    .. ", complete=" .. DebugValue(objectiveComplete))
+            DebugPrint("  objectives=" .. tostring(quest.objectiveCount))
+            for objectiveIndex, objective in ipairs(quest.objectives) do
+                DebugPrint("    [" .. objectiveIndex .. "] text=" .. DebugValue(objective.text)
+                    .. ", type=" .. DebugValue(objective.type)
+                    .. ", complete=" .. DebugValue(objective.finished))
             end
-        end
     end
 
     DebugPrint("Visible world-map quest POIs")

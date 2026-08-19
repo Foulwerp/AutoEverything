@@ -6,6 +6,7 @@
 AutoQuest = AutoQuest or {}
 AutoQuest.ObjectiveResolver = AutoQuest.ObjectiveResolver or {}
 local Resolver = AutoQuest.ObjectiveResolver
+local QuestState = AutoQuest.QuestState
 
 local activeObjectives = {}
 local activeByKey = {}
@@ -219,35 +220,19 @@ end
 
 function Resolver.BuildActive()
     local objectives, byKey, byLabel = {}, {}, {}
-    local stateParts = {}
-    local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
-    for logIndex = 1, entries do
-        local title, _, _, _, isHeader, _, questComplete, _, questID =
-            GetQuestLogTitle(logIndex)
-        if title and not isHeader then
-            stateParts[#stateParts + 1] = table.concat({
-                tostring(questID or ""), title,
-                Resolver.IsComplete(questComplete) and "1" or "0",
-            }, "\30")
-        end
-        if title and not isHeader and not Resolver.IsComplete(questComplete) then
-            local count = GetNumQuestLeaderBoards and GetNumQuestLeaderBoards(logIndex) or 0
-            stateParts[#stateParts + 1] = tostring(count)
-            for objectiveIndex = 1, count do
-                local raw, objectiveType, done =
-                    GetQuestLogLeaderBoard(objectiveIndex, logIndex)
-                stateParts[#stateParts + 1] = table.concat({
-                    raw or "", objectiveType or "",
-                    Resolver.ObjectiveIsComplete(raw, done) and "1" or "0",
-                }, "\30")
+    for _, quest in ipairs(QuestState.GetQuests()) do
+        if not quest.complete then
+            for objectiveIndex, cachedObjective in ipairs(quest.objectives) do
+                local raw = cachedObjective.text
+                local objectiveType = cachedObjective.type
                 local label, display = Resolver.Normalize(raw)
-                if not Resolver.ObjectiveIsComplete(raw, done) and label ~= "" then
-                    local numericQuestID = tonumber(questID)
+                if not cachedObjective.finished and label ~= "" then
+                    local numericQuestID = tonumber(quest.id)
                     local objective = {
-                        key = ObjectiveKey(numericQuestID, title, objectiveIndex, label),
+                        key = ObjectiveKey(numericQuestID, quest.title, objectiveIndex, label),
                         questID = numericQuestID and numericQuestID > 0 and numericQuestID or nil,
-                        questTitle = title,
-                        logIndex = logIndex,
+                        questTitle = quest.title,
+                        logIndex = quest.logIndex,
                         objectiveIndex = objectiveIndex,
                         rawLabel = raw or "",
                         label = label,
@@ -264,7 +249,7 @@ function Resolver.BuildActive()
         end
     end
     activeObjectives, activeByKey, activeByLabel = objectives, byKey, byLabel
-    observedQuestState = table.concat(stateParts, "\31")
+    observedQuestState = QuestState.GetSignature()
     Resolver.Prune(byKey)
     return objectives, byKey, byLabel
 end
@@ -274,31 +259,8 @@ end
 -- so observed progress changes can rebuild immediately without scanning map
 -- databases or nameplates every frame.
 local function CurrentQuestState()
-    local parts = {}
-    local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
-    for logIndex = 1, entries do
-        local title, _, _, _, isHeader, _, questComplete, _, questID =
-            GetQuestLogTitle(logIndex)
-        if title and not isHeader then
-            parts[#parts + 1] = table.concat({
-                tostring(questID or ""), title,
-                Resolver.IsComplete(questComplete) and "1" or "0",
-            }, "\30")
-            if not Resolver.IsComplete(questComplete) then
-                local count = GetNumQuestLeaderBoards and GetNumQuestLeaderBoards(logIndex) or 0
-                parts[#parts + 1] = tostring(count)
-                for objectiveIndex = 1, count do
-                    local raw, objectiveType, done =
-                        GetQuestLogLeaderBoard(objectiveIndex, logIndex)
-                    parts[#parts + 1] = table.concat({
-                        raw or "", objectiveType or "",
-                        Resolver.ObjectiveIsComplete(raw, done) and "1" or "0",
-                    }, "\30")
-                end
-            end
-        end
-    end
-    return table.concat(parts, "\31")
+    QuestState.Refresh()
+    return QuestState.GetSignature()
 end
 
 local function RefreshVisualIndexes()

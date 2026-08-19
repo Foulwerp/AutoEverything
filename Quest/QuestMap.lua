@@ -620,23 +620,17 @@ function QuestMap.RebuildIndex()
     end
     local resolverObjectives = Resolver.BuildActive()
 
-    local entries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
-    for logIndex = 1, entries do
-        local title, _, _, _, isHeader, _, complete, _, questID = GetQuestLogTitle(logIndex)
+    for _, quest in ipairs(AutoQuest.QuestState.GetQuests()) do
+        local title, questID = quest.title, quest.id
         -- Resolve by questID, falling back to title (the client may not return
         -- a questID at all on 3.3.5). See AutoQuest.ResolveQuestEntries.
-        local resolved = (title and not isHeader) and AutoQuest.ResolveQuestEntries(questID, title) or {}
-        if title and not isHeader then
-            buildStats.activeQuests = buildStats.activeQuests + 1
-        end
-        if title and not isHeader and not Resolver.IsComplete(complete) then
+        local resolved = AutoQuest.ResolveQuestEntries(questID, title) or {}
+        buildStats.activeQuests = buildStats.activeQuests + 1
+        if not quest.complete then
             local objectives = {}
-            local count = GetNumQuestLeaderBoards(logIndex) or 0
-            for objectiveIndex = 1, count do
-                local text, objectiveType, done = GetQuestLogLeaderBoard(objectiveIndex, logIndex)
+            for _, objective in ipairs(quest.objectives) do
                 objectives[#objectives + 1] = {
-                    text=text or "", kind=objectiveType,
-                    done=Resolver.ObjectiveIsComplete(text, done),
+                    text=objective.text, kind=objective.type, done=objective.finished,
                 }
             end
 

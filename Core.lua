@@ -2199,14 +2199,13 @@ end
 function Core.RebuildQuestItems()
     wipe(ActiveQuestItems)
 
-    for i = 1, GetNumQuestLogEntries() do
-        local title, _, _, _, isHeader = GetQuestLogTitle(i)
-        if not isHeader then
-            local items = QuestByTitle and QuestByTitle[title]
-            if items then
-                for _, itemID in ipairs(items) do
-                    ActiveQuestItems[itemID] = true
-                end
+    local state = AutoQuest and AutoQuest.QuestState
+    local activeQuests = state and state.GetQuests and state.GetQuests() or {}
+    for _, quest in ipairs(activeQuests) do
+        local items = QuestByTitle and QuestByTitle[quest.title]
+        if items then
+            for _, itemID in ipairs(items) do
+                ActiveQuestItems[itemID] = true
             end
         end
     end
