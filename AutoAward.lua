@@ -436,10 +436,6 @@ local function RefreshUI()
         and string.format("%.1fs", remaining) or "")
     ui.start:Enable()
     if RoundActive() then ui.start:Disable() end
-    if ui.previous and ui.nextButton then
-        if RoundActive() then ui.previous:Disable(); ui.nextButton:Disable()
-        else ui.previous:Enable(); ui.nextButton:Enable() end
-    end
     if current.state == STATE_READY then ui.award:Enable() else ui.award:Disable() end
 end
 
@@ -960,21 +956,6 @@ local function StartFromItemLink(itemLink)
     end
 end
 
-local function SelectAdjacent(direction)
-    if RoundActive() then return end
-    local count = GetNumLootItems and GetNumLootItems() or 0
-    if count <= 0 then return end
-    local start = selectedSlot or (direction > 0 and 0 or count + 1)
-    for offset = 1, count do
-        local slot = ((start - 1 + direction * offset) % count) + 1
-        if LootSlotData(slot) then
-            selectedSlot, selectedBag, selectedBagSlot = slot, nil, nil
-            RefreshUI()
-            return
-        end
-    end
-end
-
 local function MakeButton(parent, text, width, callback, accentColor)
     local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     button:SetWidth(width)
@@ -982,21 +963,6 @@ local function MakeButton(parent, text, width, callback, accentColor)
     button:SetText(text)
     button:SetScript("OnClick", callback)
     if Theme and Theme.SkinButton then Theme.SkinButton(button, accentColor) end
-    return button
-end
-
--- ASCII arrows remain reliable on every 3.3.5 font renderer. A larger outlined
--- theme font gives them enough weight without returning to stock button art.
-local function MakeArrowButton(parent, direction, callback)
-    local button = MakeButton(parent, direction < 0 and "<" or ">", 28, callback)
-    local font = button.GetFontString and button:GetFontString()
-    if Theme and font then
-        local original = font:GetFont()
-        if not font:SetFont(Theme.Font, 18, "OUTLINE") and original then
-            font:SetFont(original, 18, "OUTLINE")
-        end
-        font:SetTextColor(Theme.Unpack(Theme.Colors.brand))
-    end
     return button
 end
 
@@ -1049,28 +1015,21 @@ local function CreateWindow()
     ui.winner:SetPoint("TOPLEFT", 18, -140)
     if Theme then Theme.ApplyFont(ui.winner, 11); ui.winner:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
 
-    local controlWidth = 71
-    local previous = MakeArrowButton(frame, -1, function() SelectAdjacent(-1) end)
-    ui.previous = previous
-    previous:SetPoint("BOTTOMLEFT", 16, 16)
-    AddTooltip(previous, "Previous loot slot", "Selects the previous item in the current loot window.")
-    local nextButton = MakeArrowButton(frame, 1, function() SelectAdjacent(1) end)
-    ui.nextButton = nextButton
-    nextButton:SetPoint("LEFT", previous, "RIGHT", 2, 0)
-    AddTooltip(nextButton, "Next loot slot", "Selects the next item in the current loot window.")
-    ui.start = MakeButton(frame, "Start", controlWidth, function() AA.StartSelected() end, Theme and Theme.Colors.brand)
-    ui.start:SetPoint("LEFT", nextButton, "RIGHT", 8, 0)
+    local actionWidth = 87
+    local actionGap = 3
+    ui.start = MakeButton(frame, "Start", actionWidth, function() AA.StartSelected() end, Theme and Theme.Colors.brand)
+    ui.start:SetPoint("BOTTOMLEFT", 16, 16)
     AddTooltip(ui.start, "Start roll", "Snapshots the current group and starts MS /roll 100 and OS /roll 99 tracking for the selected item.")
-    local stop = MakeButton(frame, "Stop", controlWidth, function() AA.Stop() end)
-    stop:SetPoint("LEFT", ui.start, "RIGHT", 2, 0)
+    local stop = MakeButton(frame, "Stop", actionWidth, function() AA.Stop() end)
+    stop:SetPoint("LEFT", ui.start, "RIGHT", actionGap, 0)
     AddTooltip(stop, "Stop roll", "Ends the timer now and resolves the accepted rolls.")
-    ui.award = MakeButton(frame, "Award", controlWidth, function() AA.Award() end, Theme and Theme.Colors.success)
-    ui.award:SetPoint("LEFT", stop, "RIGHT", 2, 0)
+    ui.award = MakeButton(frame, "Award", actionWidth, function() AA.Award() end, Theme and Theme.Colors.success)
+    ui.award:SetPoint("LEFT", stop, "RIGHT", actionGap, 0)
     AddTooltip(ui.award, "Validated handoff", "Loot slots are assigned through Master Loot. Bag items open a trade to the winner and place the exact item for your manual confirmation.")
-    local cancel = MakeButton(frame, "Cancel", controlWidth, function() AA.Cancel() end, Theme and Theme.Colors.danger)
-    cancel:SetPoint("LEFT", ui.award, "RIGHT", 2, 0)
+    local cancel = MakeButton(frame, "Cancel", actionWidth, function() AA.Cancel() end, Theme and Theme.Colors.danger)
+    cancel:SetPoint("LEFT", ui.award, "RIGHT", actionGap, 0)
     AddTooltip(cancel, "Cancel", "Stops without assigning the item.")
-    ui.auto = MakeButton(frame, "Auto: OFF", controlWidth, function()
+    ui.auto = MakeButton(frame, "Auto: OFF", 71, function()
         SetSetting("autoAward", not Setting("autoAward"))
         RefreshUI()
     end)
