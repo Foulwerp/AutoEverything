@@ -170,15 +170,8 @@ local function BuildQuestContribution(quest, member, sourceKey, fingerprint)
         local objectives = member and RemoteObjectives(quest) or LocalObjectives(quest)
         local questID = tonumber(quest.id)
             or tonumber(string.match(quest.key or sourceKey or "", "I(%d+)$"))
-        local memberName, memberClass
-        if member then
-            memberName, memberClass = member.name, member.class
-        elseif GroupTooltipsRequested() then
-            memberName = UnitName and UnitName("player") or nil
-            if UnitClass then _, memberClass = UnitClass("player") end
-        end
         IndexQuestTargets(quest.title, questID, objectives,
-            memberName, memberClass)
+            member and member.name, member and member.class)
     end
     local contribution = {
         fingerprint=fingerprint, byNPC=activeByNPC, byName=activeByName,
@@ -482,7 +475,6 @@ local function ScanUnitForQuestMatch(unit)
 end
 
 local function MatchUnit(unit)
-    if UnitPlayerControlled and UnitPlayerControlled(unit) then return nil end
     if UnitIsUnit and UnitIsUnit(unit, "pet") then return nil end
     local npcID = NPCIDFromGUID(UnitGUID(unit))
     local name = UnitName(unit)
@@ -530,7 +522,6 @@ end
 
 function Markers.GetGroupTooltipRows(unit)
     if not unit or not UnitExists(unit) or UnitIsPlayer(unit) then return {} end
-    if UnitPlayerControlled and UnitPlayerControlled(unit) then return {} end
     if UnitIsUnit and UnitIsUnit(unit, "pet") then return {} end
     if not GroupTooltipsRequested() then return {} end
     if not next(activeByNPC) and not next(activeByName) then Markers.RebuildIndex() end
@@ -650,7 +641,6 @@ local function UpdateUnit(unit, plate)
     end
 
     if not Enabled() or not UnitExists(unit) or UnitIsPlayer(unit)
-        or (UnitPlayerControlled and UnitPlayerControlled(unit))
         or (UnitIsUnit and UnitIsUnit(unit, "pet"))
     then
         marker:Hide()
