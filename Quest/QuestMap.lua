@@ -2206,6 +2206,14 @@ function QuestMap.Debug()
         .. " parentQuest=" .. tostring(parentZone and #parentZone.points or 0)
         .. " installed=" .. tostring(buildStats.mappedQuestZones
             and buildStats.mappedQuestZones[playerMap.key] or 0))
+    local listed = 0
+    for key, value in pairs(activeByZone) do
+        if value and #(value.points or {}) > 0 then
+            print("    active zone " .. tostring(key) .. "=" .. tostring(#value.points))
+            listed = listed + 1
+            if listed >= 8 then break end
+        end
+    end
     print("  minimap=" .. minimapStatus)
     print("  raw zoneText=" .. tostring(locationDebug.zoneText) .. " realZone=" .. tostring(locationDebug.realZoneText)
         .. " subZone=" .. tostring(locationDebug.subZoneText)
