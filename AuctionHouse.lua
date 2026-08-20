@@ -17,9 +17,9 @@ local HARD_RETRY_AFTER = 2
 -- The AH does not expose a reliable maximum page count. Server-reported totals
 -- stop normal scans earlier; this is only a runaway-response circuit breaker.
 local MAX_PAGES = 5000
-local MAX_HISTORY = 20
+local MAX_HISTORY = 7
 local MAX_SAVED_PRICES = 100
-local DATABASE_MAX_AGE = 60 * 24 * 60 * 60
+local DATABASE_MAX_AGE = 7 * 24 * 60 * 60
 
 local scan, posting, marketQuery, upgradeAnalysis, window, statusText, scanStatusText, scanStatsText
 local scanButton, postButton, modeButton
@@ -236,6 +236,19 @@ local function InsertLowest(prices, row)
     while #prices > MAX_SAVED_PRICES do table.remove(prices) end
 end
 
+local function TrimHistory(history, now)
+    if type(history) ~= "table" then return {} end
+    now = tonumber(now) or time()
+    for index = #history, 1, -1 do
+        local timestamp = tonumber(history[index].time)
+        if timestamp and now - timestamp > DATABASE_MAX_AGE then
+            table.remove(history, index)
+        end
+    end
+    while #history > MAX_HISTORY do table.remove(history, 1) end
+    return history
+end
+
 local function Median(values)
     if #values == 0 then return nil end
     table.sort(values)
@@ -370,14 +383,14 @@ local function UpdateCheckedMarketItem(link, itemType, rows)
     item.current, item.listings, item.quantity = current, listings, quantity
     item.lastChecked = now
     if #current > 0 then item.lastSeen = now end
-    item.history = type(item.history) == "table" and item.history or {}
+    item.history = TrimHistory(item.history, now)
     -- Current-only support allows a legitimate upward move to become the new
     -- cached per-item price without an older observation vetoing it.
     local price = ReasonablePrice({ current = current, history = {} })
     item.price = price or (current[1] and current[1].unit) or item.price
     item.priceTime = #current > 0 and now or item.priceTime
     table.insert(item.history, { time = now, floor = price, listings = item.listings, quantity = item.quantity })
-    while #item.history > MAX_HISTORY do table.remove(item.history, 1) end
+    TrimHistory(item.history, now)
     market.items[key] = item
     market.lastIncrementalUpdate = now
     return item
@@ -799,7 +812,11 @@ local function FinishScan()
             market.items[key] = nil
         else
             old.current = {}
-            if old.lastSeen and now - old.lastSeen > DATABASE_MAX_AGE then market.items[key] = nil end
+            if old.lastSeen and now - old.lastSeen > DATABASE_MAX_AGE then
+                market.items[key] = nil
+            else
+                old.history = TrimHistory(old.history, now)
+            end
         end
     end
     local itemCount = 0
@@ -811,11 +828,11 @@ local function FinishScan()
         item.requiredLevel, item.equipSlot = gathered.requiredLevel, gathered.equipSlot
         item.current, item.listings, item.quantity = gathered.current, gathered.listings, gathered.quantity
         item.lastSeen = now
-        item.history = type(item.history) == "table" and item.history or {}
+        item.history = TrimHistory(item.history, now)
         local floor = ReasonablePrice(item)
         item.price, item.priceTime = floor or (item.current[1] and item.current[1].unit), now
         table.insert(item.history, { time = now, floor = floor, listings = item.listings, quantity = item.quantity })
-        while #item.history > MAX_HISTORY do table.remove(item.history, 1) end
+        TrimHistory(item.history, now)
         market.items[key] = item
         itemCount = itemCount + 1
     end
