@@ -515,10 +515,8 @@ local function ZoneForKey(key)
     local questZone = activeByZone[key]
     local notableZone = NotableNPCsEnabled() and notableByZone and notableByZone[key]
     local serviceZone = serviceByZone and serviceByZone[key]
-    local starterQuestZone = StarterZoneForKey and StarterZoneForKey(key)
     local sources = {}
     if questZone then sources[#sources + 1] = questZone end
-    if starterQuestZone then sources[#sources + 1] = starterQuestZone end
     if notableZone then sources[#sources + 1] = notableZone end
     if serviceZone then sources[#sources + 1] = serviceZone end
     if #sources == 0 then return nil end
@@ -599,10 +597,39 @@ StarterZoneForKey = function(key)
     return zone
 end
 
+-- Materialize alternate-map quest layers before static pins are built. This
+-- makes map identity independent of whether a boss or service layer exists,
+-- and avoids relying on a lazy combined-layer lookup during map API events.
+local function BuildMappedQuestZones()
+    local mapped = {}
+    buildStats.mappedQuestPoints = 0
+    for key in pairs(starterMapTransforms) do
+        local zone = StarterZoneForKey(key)
+        if zone then
+            mapped[key] = zone
+            buildStats.mappedQuestPoints = buildStats.mappedQuestPoints + #(zone.points or {})
+        end
+    end
+    for key, zone in pairs(mapped) do
+        local existing = activeByZone[key]
+        if not existing then
+            activeByZone[key] = zone
+        else
+            for zoneID in pairs(zone.zoneIDs or {}) do existing.zoneIDs[zoneID] = true end
+            for questID in pairs(zone.questIDs or {}) do existing.questIDs[questID] = true end
+            for _, point in ipairs(zone.points or {}) do
+                existing.points[#existing.points + 1] = point
+            end
+            for _, route in ipairs(zone.routes or {}) do
+                existing.routes[#existing.routes + 1] = route
+            end
+        end
+    end
+end
+
 local function HasActiveQuestPoints(key)
     if not key then return false end
     local zone = activeByZone[key]
-    if not zone and starterMapTransforms[key] then zone = StarterZoneForKey(key) end
     return zone and (#(zone.points or {}) > 0 or #(zone.routes or {}) > 0) or false
 end
 
@@ -1092,6 +1119,7 @@ function QuestMap.RebuildIndex()
         if contribution.remote then MergeContribution(contribution) end
     end
     AddConfirmedLocations(resolverObjectives)
+    BuildMappedQuestZones()
     -- Active quest locations are usable now. Static service, notable-NPC, and
     -- fallback-name indexes can continue warming without withholding them.
     questLayerReady = true
@@ -2140,6 +2168,7 @@ function QuestMap.Debug()
     print("  activeQuests=" .. buildStats.activeQuests .. " matchedInDB=" .. buildStats.matchedQuests
         .. " confirmedObjectives=" .. buildStats.confirmedObjectives
         .. " indexedPoints=" .. buildStats.points
+        .. " mappedQuestPoints=" .. (buildStats.mappedQuestPoints or 0)
         .. " partyQuests=" .. buildStats.partyQuests
         .. " partyPoints=" .. buildStats.partyPoints
         .. " servicePoints=" .. buildStats.servicePoints
