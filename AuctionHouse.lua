@@ -39,7 +39,7 @@ local events = CreateFrame("Frame")
 local ProcessAuctionWork
 
 local function AttachFauxPillScrollbar(parent, scrollFrame, height, rowHeight,
-    totalItems, visibleItems, refresh)
+    totalItems, visibleItems)
     local syncing = false
     local scrollbar = Core.UI.CreateVerticalScrollbar(parent, height, function(value)
         if syncing then return end
@@ -1962,17 +1962,26 @@ local function ShoppingThreshold(entry)
 end
 
 local function ShoppingRowKey(row)
-    return row and table.concat({ tostring(row.page), tostring(row.index), tostring(row.buyout), tostring(row.count), tostring(row.link) }, ":")
+    if not row then return nil end
+    if not row.key then
+        row.key = table.concat({ tostring(row.page), tostring(row.index), tostring(row.buyout), tostring(row.count), tostring(row.link) }, ":")
+    end
+    return row.key
 end
 
 RefreshShoppingResults = function()
     if not shopping.resultText then return end
     local entry = shopping.active
-    if not entry then shopping.resultText:SetText("No shopping item selected.") else
-        local eligible, selected = 0, 0
-        for _, row in ipairs(shopping.results) do
-            if row.eligible and not (shopping.dismissedResults and shopping.dismissedResults[ShoppingRowKey(row)]) then eligible = eligible + 1 end
+    if not shopping.eligibleResults then
+        shopping.eligibleResults = {}
+        for _, row in ipairs(shopping.results or {}) do
+            if row.eligible and not (shopping.dismissedResults and shopping.dismissedResults[ShoppingRowKey(row)]) then
+                table.insert(shopping.eligibleResults, row)
+            end
         end
+    end
+    if not entry then shopping.resultText:SetText("No shopping item selected.") else
+        local eligible, selected = #shopping.eligibleResults, 0
         for _ in pairs(shopping.selectedResults or {}) do selected = selected + 1 end
         local reference = entry.referencePrice and Money(entry.referencePrice) .. " each" or "not set"
         shopping.resultText:SetText("Reference: " .. reference .. " | ceiling: " .. (ShoppingThreshold(entry) and Money(ShoppingThreshold(entry)) .. " each" or "none")
@@ -1985,14 +1994,6 @@ RefreshShoppingResults = function()
             shopping.buyButton:SetText("Buy " .. Money(shopping.pendingBuy.buyout))
         else
             shopping.buyButton:SetText(selectedCount > 0 and "Buy Selected" or "Buy Cheapest")
-        end
-    end
-    if not shopping.eligibleResults then
-        shopping.eligibleResults = {}
-        for _, row in ipairs(shopping.results) do
-            if row.eligible and not (shopping.dismissedResults and shopping.dismissedResults[ShoppingRowKey(row)]) then
-                table.insert(shopping.eligibleResults, row)
-            end
         end
     end
     local offset = shopping.resultScroll and FauxScrollFrame_GetOffset(shopping.resultScroll) or 0
@@ -2826,7 +2827,7 @@ local function CreateUpgradePage(upgradePage, contentWidth)
     end
     upgrades.scrollbar = AttachFauxPillScrollbar(upgradePage, upgrades.scroll, 240, 24,
         function() return #(upgrades.filtered or {}) end,
-        function() return #(upgrades.rows or {}) end, RefreshUpgradeResults)
+        function() return #(upgrades.rows or {}) end)
     RefreshUpgradeResults()
     AddScanFooter(upgradePage)
 end
@@ -2925,8 +2926,7 @@ local function CreateWindow()
     end
     owned.scrollbar = AttachFauxPillScrollbar(ownedPage, owned.scroll, 264, 24,
         function() return #(owned.results or {}) end,
-        function() return #(owned.rows or {}) end,
-        function() RefreshOwnedAuctions(false) end)
+        function() return #(owned.rows or {}) end)
     AddScanFooter(ownedPage)
 
     local sell = pageFrames.sell
@@ -3000,7 +3000,7 @@ local function CreateWindow()
     manual.scrollFrame:SetScript("OnMouseWheel", function(_, delta) ScrollSellGrid(delta) end)
     manual.scrollbar = AttachFauxPillScrollbar(sell, manual.scrollFrame, 189, 27,
         function() return #(manual.inventory or {}) end,
-        function() return #(manual.rows or {}) end, RefreshSellGrid)
+        function() return #(manual.rows or {}) end)
     AddHelp(manual.scrollFrame, "Sellable bag items", "Scroll to review unlocked auctionable bag items. Selecting a row replaces the previous selection; stack size and stack count are configured below.")
     local refreshBags = Button(sell, "Refresh Bags", math.floor((sellRightWidth - 8) * 0.6)); refreshBags:SetPoint("TOPLEFT", sellRightX, -28)
     refreshBags:SetScript("OnClick", function() ScanSellInventory(); if RefreshSellGrid then RefreshSellGrid() end end)
@@ -3254,7 +3254,7 @@ local function CreateWindow()
     shopping.resultScroll:SetScript("OnMouseWheel", function(_, delta) ScrollShoppingResults(delta) end)
     shopping.scrollbar = AttachFauxPillScrollbar(shop, shopping.resultScroll, 147, 21,
         function() return #(shopping.eligibleResults or {}) end,
-        function() return #(shopping.resultRows or {}) end, RefreshShoppingResults)
+        function() return #(shopping.resultRows or {}) end)
     AddHelp(shopping.scrollbar, "Eligible listings", "Only listings within the current maximum and percentage rules appear. Scroll to review more.")
     RefreshShoppingResults()
     AddScanFooter(shop)

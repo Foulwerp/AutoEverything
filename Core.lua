@@ -680,6 +680,7 @@ local BOP_STR = ITEM_BIND_ON_PICKUP or "Binds when picked up"
 local BOE_STR = ITEM_BIND_ON_EQUIP or "Binds when equipped"
 local BOU_STR = ITEM_BIND_ON_USE or "Binds when used"
 local QUEST_ITEM_STR = ITEM_QUEST_ITEM_TEMPLATE or "Quest Item"
+local tooltipScanCache = {}
 
 ----------------------------------------------------------------------
 -- Fill the shared tooltip from link and/or location.
@@ -865,6 +866,15 @@ end
 -- Scan binding status + usability (exact red)
 ----------------------------------------------------------------------
 function Core.ScanTooltip(link, guid, location)
+    local cacheKey = tostring(link) .. ":" .. tostring(guid)
+        .. ":" .. tostring(location and location.bag)
+        .. ":" .. tostring(location and location.slot)
+        .. ":" .. tostring(location and location.invSlot)
+    local cached = tooltipScanCache[cacheKey]
+    if cached and GetTime() - cached.at < 0.5 then
+        return cached.boundStatus, cached.usable
+    end
+
     local tooltip = Core.tooltip
     if not SetTooltipItem(link, location) then
         return "unbound", true
@@ -927,6 +937,9 @@ function Core.ScanTooltip(link, guid, location)
         end
     end
 
+    tooltipScanCache[cacheKey] = {
+        at = GetTime(), boundStatus = boundStatus, usable = usable,
+    }
     return boundStatus, usable
 end
 
