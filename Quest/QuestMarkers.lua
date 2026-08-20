@@ -493,8 +493,9 @@ local function MatchUnit(unit)
     if npcID then SpawnStore.RememberName(npcID, name) end
     local learnedNotable = npcID and UnitClassification
         and SpawnStore.RememberClassification(npcID, UnitClassification(unit))
-    if learnedNotable and AutoQuest.Map and AutoQuest.Map.RequestRefresh then
-        AutoQuest.Map.RequestRefresh()
+    if learnedNotable then
+        if AutoQuest.Map and AutoQuest.Map.RequestRefresh then AutoQuest.Map.RequestRefresh() end
+        if Markers.RequestRefresh then Markers.RequestRefresh() end
     end
     local match = npcID and activeByNPC[npcID]
     if not match and not npcID then
@@ -838,7 +839,6 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
     end
     if visualEnabled then eventFrame.markersWereEnabled = true end
     if not indexEnabled then return end
-    eventFrame.elapsed = (eventFrame.elapsed or 0) + math.min(elapsed or 0, 0.1)
     if refreshPending and GetTime() >= refreshAt then
         if AutoQuest.Map and AutoQuest.Map.IsQuestLayerReady
             and not AutoQuest.Map.IsQuestLayerReady()
@@ -848,9 +848,5 @@ eventFrame:SetScript("OnUpdate", function(_, elapsed)
         refreshPending = false
         Markers.RebuildIndex()
         if visualEnabled then RefreshVisible() end
-        eventFrame.elapsed = 0
-    elseif visualEnabled and eventFrame.elapsed >= 0.25 then
-        eventFrame.elapsed = 0
-        RefreshVisible()
     end
 end)
