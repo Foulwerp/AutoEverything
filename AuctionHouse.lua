@@ -20,6 +20,7 @@ local MAX_PAGES = 5000
 local MAX_HISTORY = 7
 local MAX_SAVED_PRICES = 100
 local DATABASE_MAX_AGE = 7 * 24 * 60 * 60
+local tooltipPriceCache = {}
 
 local scan, posting, marketQuery, upgradeAnalysis, window, statusText, scanStatusText, scanStatsText
 local scanButton, postButton, modeButton
@@ -43,7 +44,6 @@ local function AttachFauxPillScrollbar(parent, scrollFrame, height, rowHeight,
     local scrollbar = Core.UI.CreateVerticalScrollbar(parent, height, function(value)
         if syncing then return end
         scrollFrame:SetVerticalScroll(math.floor(value + 0.5) * rowHeight)
-        if refresh then refresh() end
     end, 1)
     scrollbar:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 1, 0)
     function scrollbar:Sync()
@@ -509,7 +509,17 @@ local function AddTooltipPrice(tooltip, link, stackCount)
     local _, _, _, _, _, itemType, _, _, _, _, vendorPrice = GetItemInfo(link)
     local market = EnsureDB()
     local item = IsMarketPriceEligible(link, itemType) and FindMarketItem(market, link, itemType) or nil
-    local unit, support, estimateConfidence = ReasonablePrice(item)
+    local cacheKey = ItemVariantString(link) or tostring(itemID)
+    local cached = tooltipPriceCache[cacheKey]
+    local unit, support, estimateConfidence
+    if cached and GetTime() - cached.at < 1 then
+        unit, support, estimateConfidence = cached.unit, cached.support, cached.confidence
+    else
+        unit, support, estimateConfidence = ReasonablePrice(item)
+        tooltipPriceCache[cacheKey] = {
+            at = GetTime(), unit = unit, support = support, confidence = estimateConfidence,
+        }
+    end
     local priceTime = unit and item and (item.priceTime or item.lastSeen) or market.lastScan
     local fresh = priceTime and time() - priceTime <= 24 * 60 * 60
     local confidence, source = "Low", "stale market data"
@@ -945,18 +955,30 @@ local function ReadPage()
     scan.expectedTotal = math.max(scan.expectedTotal or 0, page.total)
     scan.retries, scan.softRetries = 0, 0
     scan.previousFingerprint = page.fingerprint
-    for _, record in ipairs(page.records) do StoreRecord(record) end
-    scan.auctions = scan.auctions + page.num
+    scan.pageRecords, scan.recordIndex, scan.pageCount = page.records, 1, page.num
+end
+
+local function ProcessPageRecords()
+    if not scan or not scan.pageRecords then return false end
+    local last = math.min(#scan.pageRecords, scan.recordIndex + 7)
+    for index = scan.recordIndex, last do StoreRecord(scan.pageRecords[index]) end
+    scan.recordIndex = last + 1
+    if scan.recordIndex <= #scan.pageRecords then return true end
+
+    local pageCount = scan.pageCount
+    scan.pageRecords, scan.recordIndex, scan.pageCount = nil, nil, nil
+    scan.auctions = scan.auctions + pageCount
     -- A final page can contain exactly PAGE_SIZE rows. Some Ascension realms
     -- answer an out-of-range page request with that same final page instead
     -- of an empty page, so waiting only for a short page can scan forever.
     -- The server-reported total lets us finish without issuing that request.
-    if scan.expectedTotal > 0 and scan.auctions >= scan.expectedTotal then FinishScan(); return end
-    if page.num < PAGE_SIZE then FinishScan(); return end
+    if scan.expectedTotal > 0 and scan.auctions >= scan.expectedTotal then FinishScan(); return true end
+    if pageCount < PAGE_SIZE then FinishScan(); return true end
     scan.page = scan.page + 1
-    if scan.page >= MAX_PAGES then AbortScan("Scan stopped at the page safety limit."); return end
+    if scan.page >= MAX_PAGES then AbortScan("Scan stopped at the page safety limit."); return true end
     scan.nextQuery = GetTime()
     SendQuery()
+    return true
 end
 
 local function FallBackToPagedScan(reason)
@@ -971,7 +993,7 @@ end
 local function ProcessGetAllChunk()
     if not scan or not scan.fastCapture then return end
     local capture = scan.fastCapture
-    local last = math.min(capture.num, capture.index + 49)
+    local last = math.min(capture.num, capture.index + 9)
     for index = capture.index, last do
         local name, _, count, quality, _, _, _, _, buyout, _, _, owner, sold = GetAuctionItemInfo("list", index)
         local link = GetAuctionItemLink("list", index)
@@ -1651,8 +1673,11 @@ local function ApplyManualBuyout()
 end
 
 local function IsManualSellable(link, bag, slot)
-    local data = Core.GetItemData(link, { bag = bag, slot = slot, link = link })
-    if not data or not data.id or data.itemType == "Key" then return false end
+    -- This path only needs static item fields; avoid the extra hidden tooltip
+    -- pass that Core.GetItemData performs for scaled required levels.
+    local name, _, _, _, _, itemType = GetItemInfo(link)
+    local data = { id = ItemID(link), name = name, itemType = itemType }
+    if not data.id or not data.itemType or data.itemType == "Key" then return false end
     if not IsMarketPriceEligible(link, data.itemType) then return false end
     if Core.IsActiveQuestItem(data.id) then return false end
     if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
@@ -1663,7 +1688,7 @@ local function IsManualSellable(link, bag, slot)
 end
 
 local function ScanSellInventory()
-    local inventory, present = {}, {}
+    local inventory, present, stackCache = {}, {}, {}
     for bag = 0, NUM_BAG_SLOTS or 4 do
         for slot = 1, GetContainerNumSlots(bag) do
             local link = GetContainerItemLink(bag, slot)
@@ -1685,8 +1710,13 @@ local function ScanSellInventory()
                 local marketItem = FindMarketItem(EnsureDB(), link, itemType)
                 local suggested, _, confidence = ReasonablePrice(marketItem)
                 entry.suggested, entry.confidence = suggested, confidence
-                entry.numStacks = math.max(1, math.min(
-                    MatchingManualStacks(entry.link, entry.count, entry.itemType), entry.numStacks or 1))
+                local stackKey = MarketItemKey(entry.link, entry.itemType) or entry.link
+                local matchingStacks = stackCache[stackKey]
+                if not matchingStacks then
+                    matchingStacks = MatchingManualStacks(entry.link, entry.count, entry.itemType)
+                    stackCache[stackKey] = matchingStacks
+                end
+                entry.numStacks = math.max(1, math.min(matchingStacks, entry.numStacks or 1))
                 if entry.selected then manual.entries[key] = entry else manual.entries[key] = nil end
                 inventory[#inventory + 1], present[key] = entry, true
             end
@@ -1768,7 +1798,7 @@ local function SetShoppingItem(link)
         return
     end
     shopping.awaitingLink = false
-    shopping.active, shopping.activeKey, shopping.results, shopping.selectedResults, shopping.dismissedResults = nil, nil, {}, {}, {}
+    shopping.active, shopping.activeKey, shopping.results, shopping.selectedResults, shopping.dismissedResults, shopping.eligibleResults = nil, nil, {}, {}, {}, nil
     shopping.pendingBuy = nil
     shopping.selectedLink, shopping.selectedItemID, shopping.selectedItemType = link, ItemID(link), itemType
     if shopping.itemSlot then
@@ -1781,7 +1811,7 @@ local function SetShoppingItem(link)
 end
 
 local function ClearShoppingItem()
-    shopping.awaitingLink, shopping.active, shopping.activeKey, shopping.results, shopping.selectedResults, shopping.dismissedResults = false, nil, nil, {}, {}, {}
+    shopping.awaitingLink, shopping.active, shopping.activeKey, shopping.results, shopping.selectedResults, shopping.dismissedResults, shopping.eligibleResults = false, nil, nil, {}, {}, {}, nil
     shopping.selectedLink, shopping.selectedItemID, shopping.selectedItemType = nil, nil, nil
     shopping.pendingBuy = nil
     if shopping.itemSlot then
@@ -1956,10 +1986,12 @@ RefreshShoppingResults = function()
             shopping.buyButton:SetText(selectedCount > 0 and "Buy Selected" or "Buy Cheapest")
         end
     end
-    shopping.eligibleResults = {}
-    for _, row in ipairs(shopping.results) do
-        if row.eligible and not (shopping.dismissedResults and shopping.dismissedResults[ShoppingRowKey(row)]) then
-            table.insert(shopping.eligibleResults, row)
+    if not shopping.eligibleResults then
+        shopping.eligibleResults = {}
+        for _, row in ipairs(shopping.results) do
+            if row.eligible and not (shopping.dismissedResults and shopping.dismissedResults[ShoppingRowKey(row)]) then
+                table.insert(shopping.eligibleResults, row)
+            end
         end
     end
     local offset = shopping.resultScroll and FauxScrollFrame_GetOffset(shopping.resultScroll) or 0
@@ -2129,6 +2161,7 @@ local function ScanShopping(updateReference)
         equipment = IsEquipment(entry.itemType), broad = entry.broad, notice = "shopping" }, function(reason, rows)
         if reason then Warn(reason); return end
         shopping.dismissedResults = {}
+        shopping.eligibleResults = nil
         shopping.submittedRows = {}
         if not entry.broad and entry.link then
             UpdateCheckedMarketItem(entry.link, entry.itemType, rows)
@@ -2188,6 +2221,7 @@ local function DismissShoppingRow(row, key)
     shopping.selectedResults[key] = nil
     shopping.dismissedResults = shopping.dismissedResults or {}
     shopping.dismissedResults[key] = true
+    shopping.eligibleResults = nil
 end
 
 local function PrepareShoppingRow(wanted, key, mayBuy, selected)
@@ -2303,6 +2337,7 @@ ConfirmShoppingBuyout = function()
     shopping.selectedResults[pending.key] = nil
     shopping.dismissedResults = shopping.dismissedResults or {}
     shopping.dismissedResults[pending.key] = true
+    shopping.eligibleResults = nil
     shopping.pendingBuy = nil
     Info("Buyout submitted for " .. Money(buyout) .. ". Session spend: "
         .. Money(shopping.sessionSpent) .. ".")
@@ -2317,8 +2352,9 @@ local function OwnedTimeText(value)
     return math.floor(value / 3600) .. "h"
 end
 
-RefreshOwnedAuctions = function()
+RefreshOwnedAuctions = function(refreshData)
     if not owned.rows then return end
+    if refreshData ~= false then
     local num = 0
     if GetNumAuctionItems then
         local ownedCount = GetNumAuctionItems("owner")
@@ -2340,6 +2376,9 @@ RefreshOwnedAuctions = function()
         if a.name == b.name then return a.unit < b.unit end
         return tostring(a.name) < tostring(b.name)
     end)
+    owned.totalBuyout = 0
+    for _, row in ipairs(owned.results) do owned.totalBuyout = owned.totalBuyout + row.buyout end
+    end
     local selectedStillExists
     for _, row in ipairs(owned.results) do
         if owned.selected and row.index == owned.selected.index and row.link == owned.selected.link
@@ -2370,9 +2409,7 @@ RefreshOwnedAuctions = function()
         if owned.scrollbar then owned.scrollbar:Sync() end
     end
     if owned.summary then
-        local total = 0
-        for _, row in ipairs(owned.results) do total = total + row.buyout end
-        owned.summary:SetText(#owned.results .. " active auctions | " .. Money(total) .. " total buyout value")
+        owned.summary:SetText(#owned.results .. " active auctions | " .. Money(owned.totalBuyout or 0) .. " total buyout value")
     end
     if owned.cancelButton then owned.cancelButton:SetText("Cancel Auction") end
 end
@@ -2422,12 +2459,14 @@ end
 
 RefreshUpgradeResults = function()
     if not upgrades.rows then return end
-    upgrades.filtered = {}
-    for _, row in ipairs(upgrades.results or {}) do
-        if (not upgrades.typeFilter or row.itemType == upgrades.typeFilter)
-            and (not upgrades.subTypeFilter or row.subType == upgrades.subTypeFilter)
-            and (not upgrades.slotFilter or row.equipSlot == upgrades.slotFilter)
-        then upgrades.filtered[#upgrades.filtered + 1] = row end
+    if not upgrades.filtered then
+        upgrades.filtered = {}
+        for _, row in ipairs(upgrades.results or {}) do
+            if (not upgrades.typeFilter or row.itemType == upgrades.typeFilter)
+                and (not upgrades.subTypeFilter or row.subType == upgrades.subTypeFilter)
+                and (not upgrades.slotFilter or row.equipSlot == upgrades.slotFilter)
+            then upgrades.filtered[#upgrades.filtered + 1] = row end
+        end
     end
     local offset = upgrades.scroll and FauxScrollFrame_GetOffset(upgrades.scroll) or 0
     for index, button in ipairs(upgrades.rows) do
@@ -2459,6 +2498,7 @@ end
 local function FinishUpgradeAnalysis()
     if not upgradeAnalysis then return end
     upgrades.results = upgradeAnalysis.results
+    upgrades.filtered = nil
     table.sort(upgrades.results, function(a, b)
         if a.rank ~= b.rank then return a.rank > b.rank end
         if a.gain ~= b.gain then return a.gain > b.gain end
@@ -2508,6 +2548,7 @@ StartUpgradeAnalysis = function()
     if scan or posting or marketQuery then Warn("Wait for current Auction House work to finish."); return end
     if not AutoUpgrade or not AutoUpgrade.EvaluateItem then
         upgrades.results = {}
+        upgrades.filtered = nil
         RefreshUpgradeResults()
         if upgrades.summary then upgrades.summary:SetText("Upgrade evaluation is unavailable.") end
         return
@@ -2515,6 +2556,7 @@ StartUpgradeAnalysis = function()
     local weights = UpgradeStatWeights()
     if not Core.HasStatWeights or not Core.HasStatWeights(weights) then
         upgrades.results = {}
+        upgrades.filtered = nil
         RefreshUpgradeResults()
         if upgrades.summary then upgrades.summary:SetText("Configure upgrade stat weights to find upgrades.") end
         return
@@ -2531,6 +2573,7 @@ StartUpgradeAnalysis = function()
         then items[#items + 1] = item end
     end
     upgrades.results = {}
+    upgrades.filtered = nil
     upgradeAnalysis = { items = items, index = 1, results = {}, weights = weights }
     RefreshUpgradeResults()
     if upgrades.summary then upgrades.summary:SetText("Analyzing saved gear 0/" .. #items .. "...") end
@@ -2745,7 +2788,6 @@ local function CreateUpgradePage(upgradePage, contentWidth)
         local maximum = math.max(0, (#(upgrades.filtered or {}) - #upgrades.rows) * 24)
         upgrades.scroll:SetVerticalScroll(math.max(0,
             math.min(maximum, upgrades.scroll:GetVerticalScroll() - delta * 24)))
-        RefreshUpgradeResults()
     end
     for index = 1, 10 do
         local row = Button(upgradePage, "", upgradeRowWidth)
@@ -2845,7 +2887,6 @@ local function CreateWindow()
         local maximum = math.max(0, (#(owned.results or {}) - #(owned.rows or {})) * 24)
         owned.scroll:SetVerticalScroll(math.max(0,
             math.min(maximum, owned.scroll:GetVerticalScroll() - delta * 24)))
-        RefreshOwnedAuctions()
     end
     for index = 1, 11 do
         local row = Button(ownedPage, "", ownedRowWidth)
@@ -2872,7 +2913,7 @@ local function CreateWindow()
     owned.scroll = CreateFrame("ScrollFrame", nil, ownedPage, "FauxScrollFrameTemplate")
     owned.scroll:SetPoint("TOPLEFT", ownedRowWidth + 6, -65); owned.scroll:SetSize(18, 264)
     owned.scroll:SetScript("OnVerticalScroll", function(self, offset)
-        FauxScrollFrame_OnVerticalScroll(self, offset, 24, RefreshOwnedAuctions)
+        FauxScrollFrame_OnVerticalScroll(self, offset, 24, function() RefreshOwnedAuctions(false) end)
     end)
     owned.scroll:EnableMouseWheel(true)
     owned.scroll:SetScript("OnMouseWheel", function(_, delta) ScrollOwnedResults(delta) end)
@@ -2883,7 +2924,8 @@ local function CreateWindow()
     end
     owned.scrollbar = AttachFauxPillScrollbar(ownedPage, owned.scroll, 264, 24,
         function() return #(owned.results or {}) end,
-        function() return #(owned.rows or {}) end, RefreshOwnedAuctions)
+        function() return #(owned.rows or {}) end,
+        function() RefreshOwnedAuctions(false) end)
     AddScanFooter(ownedPage)
 
     local sell = pageFrames.sell
@@ -3186,7 +3228,6 @@ local function CreateWindow()
             if not scroll then return end
             local maximum = math.max(0, (#(shopping.eligibleResults or {}) - #shopping.resultRows) * 21)
             scroll:SetVerticalScroll(math.max(0, math.min(maximum, scroll:GetVerticalScroll() - delta * 21)))
-            RefreshShoppingResults()
         end)
         shopping.resultRows[index] = row
     end
@@ -3207,7 +3248,6 @@ local function CreateWindow()
         local scroll = shopping.resultScroll
         local maximum = math.max(0, (#(shopping.eligibleResults or {}) - #shopping.resultRows) * 21)
         scroll:SetVerticalScroll(math.max(0, math.min(maximum, scroll:GetVerticalScroll() - delta * 21)))
-        RefreshShoppingResults()
     end
     shopping.resultScroll:EnableMouseWheel(true)
     shopping.resultScroll:SetScript("OnMouseWheel", function(_, delta) ScrollShoppingResults(delta) end)
@@ -3401,6 +3441,7 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2)
 end)
 ProcessAuctionWork = function()
     local now = GetTime()
+    if scan and scan.pageRecords then ProcessPageRecords(); return end
     if scan then
         if scan.mode == "getall" then
             if scan.fastCapture then ProcessGetAllChunk()
