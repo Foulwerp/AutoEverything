@@ -1997,6 +1997,7 @@ AutoQuest.RareNPCPacked = {
     [80500] = "r	Son of Anzu",
     [80518] = "b	Hakkar",
     [80539] = "b	Goldilocks",
+    [80540] = "b	Trade Prince Gallywix",
     [80542] = "b	Vision of Azzele",
     [80543] = "b	Vision of Azzele",
     [80544] = "b	Azzele",

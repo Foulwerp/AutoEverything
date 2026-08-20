@@ -26,8 +26,6 @@ local cacheBaseline = true
 local cacheZoneKey
 local cacheTooltip
 local toast
-local activeInstanceKey
-local defeatedBosses = {}
 
 local function Now()
     return GetTime and GetTime() or 0
@@ -50,29 +48,20 @@ local function NormalizeZone(name)
     return string.gsub(name, "[^%w]", "")
 end
 
-local function NotableKindForMetadata(metadata)
+local function IsRareMetadata(metadata)
     local classification = metadata and tonumber(metadata.classification)
-    if metadata and (metadata.boss == true or metadata.boss == 1 or classification == 3) then
-        return "boss"
-    end
-    if classification == 2 or classification == 4 then return "rare" end
+    return classification == 2 or classification == 4
 end
 
-local function NotableKindForClassification(classification)
-    if classification == "worldboss" then return "boss" end
-    if classification == "rare" or classification == "rareelite" then return "rare" end
+local function IsRareClassification(classification)
+    return classification == "rare" or classification == "rareelite"
 end
 
-local function NotableMetadataForID(npcID)
-    if SpawnStore.GetMetadata then
-        local metadata = SpawnStore.GetMetadata(npcID)
-        if NotableKindForMetadata(metadata) then return metadata end
-    end
+local function RareMetadataForID(npcID)
+    if SpawnStore.GetRareMetadata then return SpawnStore.GetRareMetadata(npcID) end
     -- Compatibility for older embedded data-store shims.
     for _, metadata in ipairs(SpawnStore.GetNotableNPCs() or {}) do
-        if tonumber(metadata.id) == tonumber(npcID)
-            and (metadata.kind == "rare" or metadata.kind == "boss")
-        then
+        if tonumber(metadata.id) == tonumber(npcID) and metadata.kind == "rare" then
             return metadata
         end
     end
@@ -82,42 +71,6 @@ local function RequestMapRefresh()
     if AutoQuest.Map and AutoQuest.Map.RequestRefresh then
         AutoQuest.Map.RequestRefresh()
     end
-end
-
--- Defeated bosses are run-local. The legacy client does not expose a stable
--- unique ID for every five-player instance, so retain the state while the
--- player remains in the same loaded instance and reset it on leaving/changing.
-local function CurrentInstanceKey()
-    if not IsInInstance then return nil end
-    local inInstance, instanceType = IsInInstance()
-    if not inInstance or (instanceType ~= "party" and instanceType ~= "raid") then
-        return nil
-    end
-    local name, _, difficulty, _, _, _, _, mapID
-    if GetInstanceInfo then
-        name, _, difficulty, _, _, _, _, mapID = GetInstanceInfo()
-    end
-    return table.concat({
-        tostring(instanceType or ""), tostring(name or ""),
-        tostring(difficulty or ""), tostring(mapID or ""),
-    }, ":")
-end
-
-local function SyncInstanceState()
-    local key = CurrentInstanceKey()
-    if key ~= activeInstanceKey then
-        activeInstanceKey = key
-        defeatedBosses = {}
-        RequestMapRefresh()
-    end
-    return key
-end
-
-local function IsBossNPC(npcID)
-    local sighting = sightings[npcID]
-    if sighting and sighting.kind == "boss" then return true end
-    local metadata = SpawnStore.GetMetadata and SpawnStore.GetMetadata(npcID)
-    return NotableKindForMetadata(metadata) == "boss"
 end
 
 local function CreateToast()
@@ -215,7 +168,7 @@ local function PruneSightings(silent)
     return changed
 end
 
-function Scanner.ObserveNPC(npcID, name, guid, level, source, dead, kind)
+function Scanner.ObserveNPC(npcID, name, guid, level, source, dead)
     npcID = tonumber(npcID)
     if not Enabled() or not npcID or dead == true then return false end
     local now = Now()
@@ -226,7 +179,6 @@ function Scanner.ObserveNPC(npcID, name, guid, level, source, dead, kind)
     sighting.guid = guid or sighting.guid
     sighting.level = level or sighting.level
     sighting.source = source or sighting.source or "nearby"
-    sighting.kind = kind or sighting.kind or "rare"
     sighting.seenAt = existing and sighting.seenAt or now
     sighting.lastSeen = now
     sighting.expiresAt = now + SIGHTING_SECONDS
@@ -237,7 +189,7 @@ function Scanner.ObserveNPC(npcID, name, guid, level, source, dead, kind)
     sighting.floor = tonumber(location.floor or sighting.floor) or 0
     sightings[npcID] = sighting
 
-    local canAlert = sighting.kind == "rare" and not existing and (not lastAlerts[npcID]
+    local canAlert = not existing and (not lastAlerts[npcID]
         or now - lastAlerts[npcID] >= ALERT_COOLDOWN)
     if canAlert then
         lastAlerts[npcID] = now
@@ -252,66 +204,25 @@ function Scanner.ObserveUnit(unit, source)
     if UnitIsPlayer and UnitIsPlayer(unit) then return false end
     if UnitPlayerControlled and UnitPlayerControlled(unit) then return false end
     if UnitIsVisible and not UnitIsVisible(unit) then return false end
-    -- Classification alone is not proof of a real encounter. Ascension also
-    -- assigns boss classifications to decorative and story NPCs. Neutral
-    -- attackable creatures still pass UnitCanAttack; friendly actors do not.
-    if UnitCanAttack and not UnitCanAttack("player", unit) then return false end
     local classification = UnitClassification and UnitClassification(unit)
+    if not IsRareClassification(classification) then return false end
     local guid = UnitGUID and UnitGUID(unit)
     local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
     if not npcID then return false end
-    local kind = NotableKindForClassification(classification)
-    local metadata = SpawnStore.GetMetadata and SpawnStore.GetMetadata(npcID)
-    local metadataKind = NotableKindForMetadata(metadata)
-    -- Ascension can report dungeon bosses as rareelite unit tokens. Shipped
-    -- boss metadata is more specific and must prevent a rare-sighting alert.
-    if metadataKind == "boss" then kind = "boss" end
-    if not kind then return false end
     SpawnStore.RememberName(npcID, UnitName and UnitName(unit))
     SpawnStore.RememberClassification(npcID, classification)
     return Scanner.ObserveNPC(npcID, UnitName and UnitName(unit), guid,
         UnitLevel and UnitLevel(unit), source or unit,
-        UnitIsDead and UnitIsDead(unit) or false, kind)
-end
-
--- Custom instances may have no shipped spawn coordinates. Once live tooltip
--- evidence proves that a visible unit belongs to an active quest, retain the
--- player's current position as a short-lived approximate map sighting.
-function Scanner.ObserveQuestUnit(unit, match, source)
-    if not Enabled() or not match or not UnitExists or not UnitExists(unit) then return false end
-    if UnitIsPlayer and UnitIsPlayer(unit) then return false end
-    if not match.kill and not match.loot and not match.talk then return false end
-    local guid = UnitGUID and UnitGUID(unit)
-    local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
-    if not npcID then return false end
-    local kind = match.loot and "questLoot" or "quest"
-    return Scanner.ObserveNPC(npcID, UnitName and UnitName(unit), guid,
-        UnitLevel and UnitLevel(unit), source or "quest objective",
-        UnitIsDead and UnitIsDead(unit) or false, kind)
+        UnitIsDead and UnitIsDead(unit) or false)
 end
 
 function Scanner.MarkDead(guid, npcID)
     npcID = tonumber(npcID) or (Resolver and Resolver.NPCIDFromGUID
         and Resolver.NPCIDFromGUID(guid))
-    if not npcID then return false end
-    local isBoss = IsBossNPC(npcID)
-    local changed = false
-    if sightings[npcID] then
-        sightings[npcID] = nil
-        changed = true
-    end
-    if isBoss and SyncInstanceState() and not defeatedBosses[npcID] then
-        defeatedBosses[npcID] = true
-        changed = true
-    end
-    if changed then RequestMapRefresh() end
-    return changed
-end
-
-function Scanner.IsBossDefeated(npcID)
-    npcID = tonumber(npcID)
-    if not npcID or not SyncInstanceState() then return false end
-    return defeatedBosses[npcID] == true
+    if not npcID or not sightings[npcID] then return false end
+    sightings[npcID] = nil
+    RequestMapRefresh()
+    return true
 end
 
 function Scanner.HandleCombatLog(...)
@@ -332,11 +243,9 @@ function Scanner.HandleCombatLog(...)
     end
     local function ObserveGUID(guid, name)
         local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
-        local metadata = npcID and NotableMetadataForID(npcID)
-        local kind = NotableKindForMetadata(metadata)
-        if npcID and metadata and kind then
-            Scanner.ObserveNPC(npcID, name or metadata.name, guid, nil,
-                "combat log", false, kind)
+        local metadata = npcID and RareMetadataForID(npcID)
+        if npcID and metadata and IsRareMetadata(metadata) then
+            Scanner.ObserveNPC(npcID, name or metadata.name, guid, nil, "combat log", false)
         end
     end
     ObserveGUID(sourceGUID, sourceName)
@@ -497,7 +406,6 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         Scanner.HandleCombatLog(unit, ...)
     elseif event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
-        SyncInstanceState()
         cacheZoneKey = nil
         RebuildCacheCandidates()
     end

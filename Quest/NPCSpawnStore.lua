@@ -24,7 +24,6 @@ local metadataPackStarts
 local notableNPCs
 local notableNPCsBuilding = false
 local observedClassifications = {}
-local areaMapNames = {}
 
 local serviceOrder = {
     "auctioneer", "banker", "battlemaster", "flightmaster", "guildmaster",
@@ -90,26 +89,6 @@ local function NotableKind(metadata)
     if classification == 2 or classification == 4 then return "rare" end
 end
 
--- The generated area-name catalog is intentionally compact and some classic
--- dungeon AreaTable IDs are absent from it. Ascension's guarded world-map API
--- can still resolve those IDs to the same map-file key returned by
--- GetMapInfo(), which keeps static dungeon bosses out of anonymous "Map N"
--- buckets without maintaining a manual instance list.
-local function SpawnAreaName(areaID)
-    local generated = DataStore.GetNPCSpawnAreaName(areaID)
-    if areaMapNames[areaID] ~= nil then return areaMapNames[areaID] or nil end
-    local name
-    if C_WorldMap and type(C_WorldMap.GetMapFileByAreaID) == "function" then
-        local ok, value = pcall(C_WorldMap.GetMapFileByAreaID, areaID)
-        if ok and type(value) == "string" and value ~= "" then name = value end
-    end
-    -- Prefer the client's exact map-file key when available. Generated names
-    -- keep every known shipped dungeon usable on clients lacking this API.
-    if not name then name = generated end
-    areaMapNames[areaID] = name or false
-    return name
-end
-
 local function Decode(packed)
     local locations = {}
     for group in string.gmatch(packed or "", "[^|]+") do
@@ -122,7 +101,7 @@ local function Decode(packed)
         if areaID and floor and points then
             local location = {
                 zoneID = areaID,
-                zone = SpawnAreaName(areaID) or ("Map " .. areaID),
+                zone = DataStore.GetNPCSpawnAreaName(areaID) or ("Map " .. areaID),
                 floor = floor,
                 coords = {},
             }
