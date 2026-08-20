@@ -603,6 +603,7 @@ end
 local function BuildMappedQuestZones()
     local mapped = {}
     buildStats.mappedQuestPoints = 0
+    buildStats.mappedQuestZones = {}
     for key in pairs(starterMapTransforms) do
         local zone = StarterZoneForKey(key)
         if zone then
@@ -624,6 +625,7 @@ local function BuildMappedQuestZones()
                 existing.routes[#existing.routes + 1] = route
             end
         end
+        buildStats.mappedQuestZones[key] = #(activeByZone[key] and activeByZone[key].points or {})
     end
     -- A cooperative rebuild can yield while map events are still firing.
     -- Discard any combined zones assembled before these quest aliases existed.
@@ -2171,6 +2173,9 @@ function QuestMap.Debug()
     local activeZone = playerMap.key and activeByZone[playerMap.key]
     local notableZone = playerMap.key and notableByZone and notableByZone[playerMap.key]
     local serviceZone = playerMap.key and serviceByZone and serviceByZone[playerMap.key]
+    local transform = playerMap.key and starterMapTransforms[playerMap.key]
+    local parentKey = transform and NormalizeZone(transform.parent)
+    local parentZone = parentKey and activeByZone[parentKey]
     print("|cff33ccffMap Pins|r")
     print("  enabled=" .. tostring(Enabled()) .. " dbLoaded="
         .. tostring(AutoQuest.DataStore.HasQuestData()))
@@ -2196,7 +2201,11 @@ function QuestMap.Debug()
     print("  current layers quest=" .. tostring(activeZone and #activeZone.points or 0)
         .. " notable=" .. tostring(notableZone and #notableZone.points or 0)
         .. " service=" .. tostring(serviceZone and #serviceZone.points or 0)
-        .. " combinedCached=" .. tostring(playerMap.key and combinedByZone[playerMap.key] ~= nil))
+        .. " combinedCached=" .. tostring(playerMap.key and combinedByZone[playerMap.key] ~= nil)
+        .. " parent=" .. tostring(parentKey)
+        .. " parentQuest=" .. tostring(parentZone and #parentZone.points or 0)
+        .. " installed=" .. tostring(buildStats.mappedQuestZones
+            and buildStats.mappedQuestZones[playerMap.key] or 0))
     print("  minimap=" .. minimapStatus)
     print("  raw zoneText=" .. tostring(locationDebug.zoneText) .. " realZone=" .. tostring(locationDebug.realZoneText)
         .. " subZone=" .. tostring(locationDebug.subZoneText)
