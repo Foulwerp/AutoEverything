@@ -204,6 +204,10 @@ function Scanner.ObserveUnit(unit, source)
     if UnitIsPlayer and UnitIsPlayer(unit) then return false end
     if UnitPlayerControlled and UnitPlayerControlled(unit) then return false end
     if UnitIsVisible and not UnitIsVisible(unit) then return false end
+    -- Classification alone is not proof of a real encounter. Ascension also
+    -- assigns boss classifications to decorative and story NPCs. Neutral
+    -- attackable creatures still pass UnitCanAttack; friendly actors do not.
+    if UnitCanAttack and not UnitCanAttack("player", unit) then return false end
     local classification = UnitClassification and UnitClassification(unit)
     if not IsRareClassification(classification) then return false end
     local guid = UnitGUID and UnitGUID(unit)
