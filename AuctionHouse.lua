@@ -26,7 +26,7 @@ local scanButton, postButton, modeButton
 local queue = {}
 local queueRows = {}
 local auctionLauncher
-local manual = { entries = {}, inventory = {} }
+local manual = { entries = {}, inventory = {}, inventoryDirty = true }
 local owned = { results = {} }
 local upgrades = { results = {}, filtered = {} }
 local RefreshSellGrid, RefreshShoppingResults, RefreshOwnedAuctions, RefreshManualCompetition
@@ -1700,6 +1700,7 @@ local function ScanSellInventory()
         return tostring(a.name) < tostring(b.name)
     end)
     manual.inventory = inventory
+    manual.inventoryDirty = false
     if manual.activeKey and not present[manual.activeKey] then manual.activeKey = nil end
     RefreshManualActive()
 end
@@ -2642,7 +2643,7 @@ end
 
 RefreshSellGrid = function()
     if not manual.rows then return end
-    ScanSellInventory()
+    if manual.inventoryDirty then ScanSellInventory() end
     if manual.scrollFrame then
         FauxScrollFrame_Update(manual.scrollFrame, #manual.inventory, #manual.rows, 27)
         if manual.scrollbar then manual.scrollbar:Sync() end
@@ -3321,7 +3322,12 @@ events:RegisterEvent("AUCTION_OWNED_LIST_UPDATE")
 events:RegisterEvent("AUCTION_MULTISELL_START")
 events:RegisterEvent("AUCTION_MULTISELL_UPDATE")
 events:RegisterEvent("AUCTION_MULTISELL_FAILURE")
+events:RegisterEvent("BAG_UPDATE")
 events:SetScript("OnEvent", function(_, event, arg1, arg2)
+    if event == "BAG_UPDATE" then
+        manual.inventoryDirty = true
+        return
+    end
     if event == "AUCTION_OWNED_LIST_UPDATE" and RefreshOwnedAuctions then RefreshOwnedAuctions() end
     if event == "AUCTION_ITEM_LIST_UPDATE" and not marketQuery then
         -- A completed buyout can compact the live page and change every row
