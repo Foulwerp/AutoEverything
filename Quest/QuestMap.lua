@@ -1052,8 +1052,9 @@ local iconTextures = {
     loot = "Interface\\AddOns\\AutoEverything\\Images\\QuestLootBag.tga",
     object = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
     scout = "Interface\\AddOns\\AutoEverything\\Images\\QuestScout.tga",
-    boss = "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga",
-    rare = "Interface\\AddOns\\AutoEverything\\Images\\QuestRare.tga",
+    boss = "Interface\\AddOns\\AutoEverything\\Images\\BossMobPin.tga",
+    worldboss = "Interface\\AddOns\\AutoEverything\\Images\\WorldBossPin.tga",
+    rare = "Interface\\AddOns\\AutoEverything\\Images\\RareMobPin.tga",
     search = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
     sighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestRare.tga",
     auctioneer = "Interface\\AddOns\\AutoEverything\\Images\\ServiceAuctioneer.tga",
@@ -1071,7 +1072,7 @@ local iconTextures = {
 
 local iconColors = {
     kill={1,0.3,0.3}, loot={0.35,1,0.45}, object={0.45,0.8,1}, scout={1,0.75,0.25},
-    boss={1,0.18,0.18}, rare={0.75,0.35,1}, search={0.2,0.85,1},
+    boss={1,0.18,0.18}, worldboss={1,0.65,0.12}, rare={0.75,0.35,1}, search={0.2,0.85,1},
     sighting={1,0.82,0.18},
     auctioneer={1,0.65,0.2}, banker={1,0.82,0.2}, battlemaster={0.85,0.9,1},
     flightmaster={0.75,0.9,1}, guildmaster={0.35,0.55,1}, innkeeper={0.35,0.7,1},
@@ -1086,6 +1087,7 @@ local ROUTE_DOT_TEXTURE = AutoCore.UI and AutoCore.UI.Textures
 local headingText = {
     kill = "Kill",
     boss = "Boss",
+    worldboss = "World Boss",
     rare = "Rare",
     search = "NPC Search",
     sighting = "Recent Rare Sighting",
@@ -1112,7 +1114,7 @@ local function DescribeObjective(cluster, point)
     local name = point.name or point.questTitle or "Unknown"
     if point.isService then
         return name
-    elseif cluster.kind == "boss" then
+    elseif cluster.kind == "boss" or cluster.kind == "worldboss" then
         return "Boss: " .. name
     elseif cluster.kind == "rare" then
         return "Rare: " .. name

@@ -82,7 +82,7 @@ end
 local function NotableKind(metadata)
     if not metadata then return nil end
     local observed = observedClassifications[metadata.id]
-    if observed == "worldboss" then return "boss" end
+    if observed == "worldboss" then return "worldboss" end
     if observed == "rare" or observed == "rareelite" then return "rare" end
     local classification = tonumber(metadata.classification)
     if metadata.boss or classification == 3 then return "boss" end
