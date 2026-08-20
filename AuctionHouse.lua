@@ -1710,7 +1710,8 @@ local function ScanSellInventory()
                 local marketItem = FindMarketItem(EnsureDB(), link, itemType)
                 local suggested, _, confidence = ReasonablePrice(marketItem)
                 entry.suggested, entry.confidence = suggested, confidence
-                local stackKey = MarketItemKey(entry.link, entry.itemType) or entry.link
+                local stackKey = (MarketItemKey(entry.link, entry.itemType) or entry.link)
+                    .. ":" .. tostring(entry.count)
                 local matchingStacks = stackCache[stackKey]
                 if not matchingStacks then
                     matchingStacks = MatchingManualStacks(entry.link, entry.count, entry.itemType)
