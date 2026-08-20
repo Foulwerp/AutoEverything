@@ -108,51 +108,6 @@ local subZoneParents = {
     sunstriderisle   = "Eversong Woods",
 }
 
--- Ascension exposes several starter areas as standalone zoomed maps. Quest
--- and NPC coordinates still use the surrounding classic zone. These bounds
--- are the starter-area overlay rectangles from the client's bundled
--- WorldMapOverlay data, normalized to the parent map. They let both map and
--- minimap pins use the standalone map when selecting the parent map does not
--- yield a usable player position.
-local starterMapTransforms = {
-    northshirevalley = {
-        parent="Elwynn Forest", left=0.424152, top=0.284431,
-        right=0.598802, bottom=0.561377,
-    },
-    fargodeepmine = {
-        parent="Elwynn Forest", left=0.299401, top=0.763473,
-        right=0.469062, bottom=0.920659,
-    },
-    coldridgevalley = {
-        parent="Dun Morogh", left=0.189621, top=0.666168,
-        right=0.339321, bottom=0.838323,
-    },
-    deathknell = {
-        parent="Tirisfal Glades", left=0.278443, top=0.547904,
-        right=0.410180, bottom=0.730539,
-    },
-    valleyoftrials = {
-        parent="Durotar", left=0.394212, top=0.591317,
-        right=0.494012, bottom=0.748503,
-    },
-    campnarache = {
-        parent="Mulgore", left=0.339321, top=0.718563,
-        right=0.558882, bottom=0.935629,
-    },
-    shadowglen = {
-        parent="Teldrassil", left=0.533932, top=0.306886,
-        right=0.658683, bottom=0.494012,
-    },
-    ammenvale = {
-        parent="Azuremyst Isle", left=0.753493, top=0.402695,
-        right=0.798403, bottom=0.473054,
-    },
-    sunstriderisle = {
-        parent="Eversong Woods", left=0.225549, top=0.040419,
-        right=0.401198, bottom=0.281437,
-    },
-}
-
 local function NormalizeZone(name)
     name = string.lower(name or "")
     name = string.gsub(name, "^the%s+", "")
@@ -506,8 +461,6 @@ local function BuildServiceIndex()
     end
 end
 
-local StarterZoneForKey
-
 local function ZoneForKey(key)
     if not key then return nil end
     local cached = combinedByZone[key]
@@ -520,8 +473,7 @@ local function ZoneForKey(key)
     if notableZone then sources[#sources + 1] = notableZone end
     if serviceZone then sources[#sources + 1] = serviceZone end
     if #sources == 0 then return nil end
-    if #sources == 1 and sources[1] ~= notableZone then return sources[1] end
-    local scanner = AutoQuest.RareScanner
+    if #sources == 1 then return sources[1] end
     local zone = {
         name=(questZone and questZone.name) or sources[1].name,
         zoneIDs={}, questIDs=questZone and questZone.questIDs or {}, points={}, routes={},
@@ -532,12 +484,8 @@ local function ZoneForKey(key)
             local enabled = source ~= notableZone
                 or (point.kind == "rare" and RareNPCsEnabled())
                 or (point.kind ~= "rare" and BossNPCsEnabled())
-            local defeated = source == notableZone and point.kind == "boss"
-                and scanner and scanner.IsBossDefeated
-                and scanner.IsBossDefeated(point.entityID)
             if enabled and (source ~= notableZone
                 or not trackedNPCIDs[tonumber(point.entityID) or point.entityID])
-                and not defeated
             then
                 zone.points[#zone.points + 1] = point
             end
@@ -550,92 +498,6 @@ local function ZoneForKey(key)
     end
     combinedByZone[key] = zone
     return zone
-end
-
-local function StarterPoint(point, transform)
-    local parentX, parentY = (tonumber(point.x) or 0) / 100, (tonumber(point.y) or 0) / 100
-    if parentX < transform.left or parentX > transform.right
-        or parentY < transform.top or parentY > transform.bottom
-    then
-        return nil
-    end
-    local copy = {}
-    for key, value in pairs(point) do copy[key] = value end
-    copy.x = (parentX - transform.left) / (transform.right - transform.left) * 100
-    copy.y = (parentY - transform.top) / (transform.bottom - transform.top) * 100
-    return copy
-end
-
-StarterZoneForKey = function(key)
-    local transform = starterMapTransforms[key]
-    if not transform then return nil end
-    -- Transform only the active quest layer. Static services and notable NPCs
-    -- have their own map identities and must not decide whether quest points
-    -- from the parent coordinate frame are available here.
-    local parent = activeByZone[NormalizeZone(transform.parent)]
-    if not parent then return nil end
-    local zone = {
-        name=key, zoneIDs={}, questIDs=parent.questIDs or {}, points={}, routes={},
-    }
-    for _, point in ipairs(parent.points or {}) do
-        local transformed = StarterPoint(point, transform)
-        if transformed then zone.points[#zone.points + 1] = transformed end
-    end
-    for _, route in ipairs(parent.routes or {}) do
-        local transformedRoute = {}
-        for routeKey, value in pairs(route) do
-            if routeKey ~= "points" then transformedRoute[routeKey] = value end
-        end
-        transformedRoute.points = {}
-        for _, point in ipairs(route.points or {}) do
-            local transformed = StarterPoint(point, transform)
-            if transformed then transformedRoute.points[#transformedRoute.points + 1] = transformed end
-        end
-        if #transformedRoute.points >= 2 then zone.routes[#zone.routes + 1] = transformedRoute end
-    end
-    if #zone.points == 0 and #zone.routes == 0 then return nil end
-    return zone
-end
-
--- Materialize alternate-map quest layers before static pins are built. This
--- makes map identity independent of whether a boss or service layer exists,
--- and avoids relying on a lazy combined-layer lookup during map API events.
-local function BuildMappedQuestZones()
-    local mapped = {}
-    buildStats.mappedQuestPoints = 0
-    buildStats.mappedQuestZones = {}
-    for key in pairs(starterMapTransforms) do
-        local zone = StarterZoneForKey(key)
-        if zone then
-            mapped[key] = zone
-            buildStats.mappedQuestPoints = buildStats.mappedQuestPoints + #(zone.points or {})
-        end
-    end
-    for key, zone in pairs(mapped) do
-        local existing = activeByZone[key]
-        if not existing then
-            activeByZone[key] = zone
-        else
-            for zoneID in pairs(zone.zoneIDs or {}) do existing.zoneIDs[zoneID] = true end
-            for questID in pairs(zone.questIDs or {}) do existing.questIDs[questID] = true end
-            for _, point in ipairs(zone.points or {}) do
-                existing.points[#existing.points + 1] = point
-            end
-            for _, route in ipairs(zone.routes or {}) do
-                existing.routes[#existing.routes + 1] = route
-            end
-        end
-        buildStats.mappedQuestZones[key] = #(activeByZone[key] and activeByZone[key].points or {})
-    end
-    -- A cooperative rebuild can yield while map events are still firing.
-    -- Discard any combined zones assembled before these quest aliases existed.
-    combinedByZone = {}
-end
-
-local function HasActiveQuestPoints(key)
-    if not key then return false end
-    local zone = activeByZone[key]
-    return zone and (#(zone.points or {}) > 0 or #(zone.routes or {}) > 0) or false
 end
 
 local function ConfirmedMapKind(kind)
@@ -1043,12 +905,8 @@ local function AddNPCDiscoveryLocations()
     buildStats.sightingPoints = 0
     local scanner = AutoQuest.RareScanner
     for _, sighting in ipairs(scanner and scanner.GetSightings and scanner.GetSightings() or {}) do
-        local pinKind = sighting.kind == "boss" and "bossSighting"
-            or sighting.kind == "quest" and "questSighting"
-            or sighting.kind == "questLoot" and "questLootSighting"
-            or "sighting"
         if AddLocation(sighting.zoneID, sighting.zone, sighting.floor,
-            sighting, { sighting.x, sighting.y }, nil, nil, pinKind)
+            sighting, { sighting.x, sighting.y }, nil, nil, "sighting")
         then
             buildStats.sightingPoints = buildStats.sightingPoints + 1
         end
@@ -1124,7 +982,6 @@ function QuestMap.RebuildIndex()
         if contribution.remote then MergeContribution(contribution) end
     end
     AddConfirmedLocations(resolverObjectives)
-    BuildMappedQuestZones()
     -- Active quest locations are usable now. Static service, notable-NPC, and
     -- fallback-name indexes can continue warming without withholding them.
     questLayerReady = true
@@ -1133,9 +990,6 @@ function QuestMap.RebuildIndex()
         buildStats.servicePoints = buildStats.servicePoints + #(zone.points or {})
     end
     AddNPCDiscoveryLocations()
-    -- Service/notable warmup can likewise span frames after the quest layer
-    -- becomes visible. Never retain a partial combined layer across stages.
-    combinedByZone = {}
     buildStats.points, buildStats.partyPoints = 0, 0
     for _, zone in pairs(activeByZone) do
         buildStats.points = buildStats.points + #(zone.points or {})
@@ -1202,9 +1056,6 @@ local iconTextures = {
     rare = "Interface\\AddOns\\AutoEverything\\Images\\QuestRare.tga",
     search = "Interface\\AddOns\\AutoEverything\\Images\\Interact.tga",
     sighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestRare.tga",
-    bossSighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga",
-    questSighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestSkull.tga",
-    questLootSighting = "Interface\\AddOns\\AutoEverything\\Images\\QuestLootBag.tga",
     auctioneer = "Interface\\AddOns\\AutoEverything\\Images\\ServiceAuctioneer.tga",
     banker = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBanker.tga",
     battlemaster = "Interface\\AddOns\\AutoEverything\\Images\\ServiceBattlemaster.tga",
@@ -1221,8 +1072,7 @@ local iconTextures = {
 local iconColors = {
     kill={1,0.3,0.3}, loot={0.35,1,0.45}, object={0.45,0.8,1}, scout={1,0.75,0.25},
     boss={1,0.18,0.18}, rare={0.75,0.35,1}, search={0.2,0.85,1},
-    sighting={1,0.82,0.18}, bossSighting={1,0.35,0.2},
-    questSighting={1,0.3,0.3}, questLootSighting={0.35,1,0.45},
+    sighting={1,0.82,0.18},
     auctioneer={1,0.65,0.2}, banker={1,0.82,0.2}, battlemaster={0.85,0.9,1},
     flightmaster={0.75,0.9,1}, guildmaster={0.35,0.55,1}, innkeeper={0.35,0.7,1},
     talentunlearner={0.75,0.45,1}, tabardvendor={1,0.3,0.25},
@@ -1239,9 +1089,6 @@ local headingText = {
     rare = "Rare",
     search = "NPC Search",
     sighting = "Recent Rare Sighting",
-    bossSighting = "Recent Boss Sighting",
-    questSighting = "Recent Quest Target Sighting",
-    questLootSighting = "Recent Quest Loot Sighting",
     loot = "Item",
     object = "Interact",
     scout = "Scout",
@@ -1271,9 +1118,7 @@ local function DescribeObjective(cluster, point)
         return "Rare: " .. name
     elseif cluster.kind == "search" then
         return "Find " .. name .. " (NPC " .. tostring(point.entityID or "?") .. ")"
-    elseif cluster.kind == "sighting" or cluster.kind == "bossSighting"
-        or cluster.kind == "questSighting" or cluster.kind == "questLootSighting"
-    then
+    elseif cluster.kind == "sighting" then
         return "Recently sighted: " .. name
     elseif cluster.kind == "loot" then
         return point.item and ("Loot " .. point.item .. " from " .. name) or ("Loot from " .. name)
@@ -1366,9 +1211,7 @@ local function ConfigurePin(pin, cluster, size)
     -- QuestMarkers.lua (white skull, brown bag) rather than recoloring them.
     pin.icon:SetTexture(iconTextures[cluster.kind] or iconTextures.kill)
     pin.icon:SetVertexColor(1, 1, 1, 1)
-    if cluster.kind == "sighting" or cluster.kind == "bossSighting"
-        or cluster.kind == "questSighting" or cluster.kind == "questLootSighting"
-    then
+    if cluster.kind == "sighting" then
         pin:SetScript("OnUpdate", UpdateSightingPulse)
     else
         pin:SetScript("OnUpdate", nil)
@@ -1539,24 +1382,9 @@ local function DrawWorldRoutes(zone, parent, currentFloor)
     end
 end
 
--- Dungeon maps do not participate in the classic continent/zone selector.
--- Resolve the selected map through every map API shape exposed by supported
--- Ascension builds, including the legacy map-file name returned by
--- GetMapInfo(). Map-file names omit spaces ("WailingCaverns") but normalize
--- to the same keys as the database's display names.
 local function CurrentMapName()
     local mapID = GetCurrentMapAreaID and GetCurrentMapAreaID()
     local name = mapID and GetMapName and GetMapName(mapID)
-    if not name and mapID and C_Map and C_Map.GetMapInfo then
-        local ok, info = pcall(C_Map.GetMapInfo, mapID)
-        if ok and type(info) == "table" then name = info.name end
-    end
-    if not name and GetMapInfo then
-        local ok, mapFileName = pcall(GetMapInfo)
-        if ok and type(mapFileName) == "string" and mapFileName ~= "" then
-            name = mapFileName
-        end
-    end
     -- Some Ascension builds expose GetMapName but return nil for area IDs.
     -- Derive the viewed zone from the classic continent/zone selector instead.
     if not name and GetCurrentMapContinent and GetCurrentMapZone and GetMapZones then
@@ -1570,23 +1398,6 @@ local function CurrentMapName()
         name = (GetZoneText and GetZoneText()) or (GetRealZoneText and GetRealZoneText())
     end
     return name, mapID
-end
-
-local function ZoneForMapName(name)
-    local key = NormalizeZone(name)
-    local zone = ZoneForKey(key)
-    -- Legacy dungeon map-file names concatenate a leading article, while
-    -- NormalizeZone removes it from display names such as "The Deadmines".
-    if not zone and string.sub(key, 1, 3) == "the" then
-        key = string.sub(key, 4)
-        zone = ZoneForKey(key)
-    end
-    return zone, key
-end
-
-local function MapKey(name)
-    local _, key = ZoneForMapName(name)
-    return key
 end
 
 function QuestMap.UpdateWorldMap()
@@ -1605,7 +1416,7 @@ function QuestMap.UpdateWorldMap()
         return
     end
     local mapName = CurrentMapName()
-    local zone = mapName and ZoneForMapName(mapName)
+    local zone = mapName and ZoneForKey(NormalizeZone(mapName))
     if not zone then
         HidePins(worldPins)
         return
@@ -1686,25 +1497,14 @@ local function UpdatePlayerLocation(force)
     local x, y = ReadPlayerMapPosition()
     local beforeX, beforeY = x, y
     local setOK, setResult
-    local selectedKey = selectedName and MapKey(selectedName)
-    local playerZoneKey = name and name ~= "" and MapKey(name)
     local wrongMap = (oldContinent and oldContinent > 0 and oldZone == 0)
         or (name and name ~= "" and selectedName
-            and selectedKey ~= playerZoneKey)
+            and NormalizeZone(selectedName) ~= NormalizeZone(name))
     if wrongMap or not x or not y or (x == 0 and y == 0) then
         if SetMapToCurrentZone then setOK, setResult = pcall(SetMapToCurrentZone) end
         x, y = ReadPlayerMapPosition()
-        selectedName = CurrentMapName() or selectedName
     end
     if not name or name == "" then name = CurrentMapName() end
-
-    -- Instance display names and legacy map-file names can differ completely
-    -- ("Ragefire Chasm" versus "Ragefire"). Static spawn data uses the map
-    -- file when the generated area catalog has no dungeon display name, so
-    -- prefer that selected-map identity only when it actually has pin data.
-    local selectedZone = selectedName and ZoneForMapName(selectedName)
-    local displayZone = name and name ~= "" and ZoneForMapName(name)
-    if selectedZone and not displayZone then name = selectedName end
 
     local probeSelector, probeQuestID
     -- Ascension can leave GetPlayerMapPosition at 0,0 after selecting the
@@ -1754,7 +1554,7 @@ local function UpdatePlayerLocation(force)
     -- that does. This also covers custom cave maps without maintaining an
     -- exhaustive subZoneParents list.
     if not parentName and selectedName
-        and not HasActiveQuestPoints(NormalizeZone(selectedName))
+        and not ZoneForKey(NormalizeZone(selectedName))
     then
         local candidates = {}
         if zoneName and zoneName ~= "" then candidates[#candidates + 1] = zoneName end
@@ -1762,14 +1562,14 @@ local function UpdatePlayerLocation(force)
         for _, candidate in ipairs(candidates) do
             if candidate and candidate ~= ""
                 and NormalizeZone(candidate) ~= NormalizeZone(selectedName)
-                and HasActiveQuestPoints(NormalizeZone(candidate))
+                and ZoneForKey(NormalizeZone(candidate))
             then
                 parentName = candidate
                 break
             end
         end
     end
-    if parentName and not mapShown and HasActiveQuestPoints(NormalizeZone(parentName)) then
+    if parentName and not mapShown and ZoneForKey(NormalizeZone(parentName)) then
         local px, py = ReadParentZonePosition(parentName)
         if px and py then
             name, x, y = parentName, px, py
@@ -1823,8 +1623,8 @@ end
 local function PhysicalZoneSize(zone, key)
     local known = zoneSizes[key]
     if known then return known end
-    local function TryArea(areaID)
-        if not (areaID and C_WorldMap and C_WorldMap.GetWorldPosition) then return nil end
+    if not (C_WorldMap and C_WorldMap.GetWorldPosition) then return nil end
+    for areaID in pairs(zone and zone.zoneIDs or {}) do
         local okStart, x1, y1 = pcall(C_WorldMap.GetWorldPosition, areaID, 0, 0)
         local okEnd, x2, y2 = pcall(C_WorldMap.GetWorldPosition, areaID, 1, 1)
         if okStart and okEnd and type(x1) == "number" and type(y1) == "number"
@@ -1837,26 +1637,6 @@ local function PhysicalZoneSize(zone, key)
                 return known
             end
         end
-    end
-    -- Standalone starter maps have no shipped spawn-area IDs of their own.
-    -- Their live selected-map ID is still authoritative for physical size.
-    if playerMap.key == key then
-        known = TryArea(playerMap.zoneID)
-        if known then return known end
-    end
-    for areaID in pairs(zone and zone.zoneIDs or {}) do
-        known = TryArea(areaID)
-        if known then return known end
-    end
-    local transform = starterMapTransforms[key]
-    local parentSize = transform and zoneSizes[NormalizeZone(transform.parent)]
-    if parentSize then
-        known = {
-            parentSize[1] * (transform.right - transform.left),
-            parentSize[2] * (transform.bottom - transform.top),
-        }
-        zoneSizes[key] = known
-        return known
     end
 end
 
@@ -1907,7 +1687,7 @@ RefreshRouteHighlight = function(pin)
 
     local parent = WorldMapDetailFrame or WorldMapButton
     local mapName = CurrentMapName()
-    local zone = mapName and ZoneForMapName(mapName)
+    local zone = mapName and ZoneForKey(NormalizeZone(mapName))
     if parent and zone then
         local currentFloor = GetCurrentMapDungeonLevel and GetCurrentMapDungeonLevel() or 0
         DrawWorldRoutes(zone, parent, currentFloor)
@@ -2170,19 +1950,12 @@ function QuestMap.Debug()
     QuestMap.UpdateMinimap()
     local zone = playerMap.key and ZoneForKey(playerMap.key)
     local zonePoints = zone and #zone.points or 0
-    local activeZone = playerMap.key and activeByZone[playerMap.key]
-    local notableZone = playerMap.key and notableByZone and notableByZone[playerMap.key]
-    local serviceZone = playerMap.key and serviceByZone and serviceByZone[playerMap.key]
-    local transform = playerMap.key and starterMapTransforms[playerMap.key]
-    local parentKey = transform and NormalizeZone(transform.parent)
-    local parentZone = parentKey and activeByZone[parentKey]
     print("|cff33ccffMap Pins|r")
     print("  enabled=" .. tostring(Enabled()) .. " dbLoaded="
         .. tostring(AutoQuest.DataStore.HasQuestData()))
     print("  activeQuests=" .. buildStats.activeQuests .. " matchedInDB=" .. buildStats.matchedQuests
         .. " confirmedObjectives=" .. buildStats.confirmedObjectives
         .. " indexedPoints=" .. buildStats.points
-        .. " mappedQuestPoints=" .. (buildStats.mappedQuestPoints or 0)
         .. " partyQuests=" .. buildStats.partyQuests
         .. " partyPoints=" .. buildStats.partyPoints
         .. " servicePoints=" .. buildStats.servicePoints
@@ -2198,22 +1971,6 @@ function QuestMap.Debug()
     print("  playerMap=" .. tostring(playerMap.name) .. " key=" .. tostring(playerMap.key)
         .. " position=" .. string.format("%.1f, %.1f", (playerMap.x or 0) * 100, (playerMap.y or 0) * 100))
     print("  currentZonePoints=" .. zonePoints .. " mapSizeKnown=" .. tostring(zoneSizes[playerMap.key or ""] ~= nil))
-    print("  current layers quest=" .. tostring(activeZone and #activeZone.points or 0)
-        .. " notable=" .. tostring(notableZone and #notableZone.points or 0)
-        .. " service=" .. tostring(serviceZone and #serviceZone.points or 0)
-        .. " combinedCached=" .. tostring(playerMap.key and combinedByZone[playerMap.key] ~= nil)
-        .. " parent=" .. tostring(parentKey)
-        .. " parentQuest=" .. tostring(parentZone and #parentZone.points or 0)
-        .. " installed=" .. tostring(buildStats.mappedQuestZones
-            and buildStats.mappedQuestZones[playerMap.key] or 0))
-    local listed = 0
-    for key, value in pairs(activeByZone) do
-        if value and #(value.points or {}) > 0 then
-            print("    active zone " .. tostring(key) .. "=" .. tostring(#value.points))
-            listed = listed + 1
-            if listed >= 8 then break end
-        end
-    end
     print("  minimap=" .. minimapStatus)
     print("  raw zoneText=" .. tostring(locationDebug.zoneText) .. " realZone=" .. tostring(locationDebug.realZoneText)
         .. " subZone=" .. tostring(locationDebug.subZoneText)
