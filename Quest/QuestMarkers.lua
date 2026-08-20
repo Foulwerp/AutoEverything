@@ -55,6 +55,11 @@ local function GroupTooltipsRequested()
         and type(members) == "table" and next(members) ~= nil
 end
 
+local function QuestTooltipsRequested()
+    return AutoCore.GetSetting("quest", "showGroupQuestTooltips",
+        AutoQuestConfig and AutoQuestConfig.showGroupQuestTooltips) ~= false
+end
+
 -- Mirrors the useful one-line command that previously had to be run by hand.
 -- Only the two NPC quest-icon switches are touched; all other ElvUI nameplate
 -- settings remain under the player's control.
@@ -170,8 +175,15 @@ local function BuildQuestContribution(quest, member, sourceKey, fingerprint)
         local objectives = member and RemoteObjectives(quest) or LocalObjectives(quest)
         local questID = tonumber(quest.id)
             or tonumber(string.match(quest.key or sourceKey or "", "I(%d+)$"))
+        local memberName, memberClass
+        if member then
+            memberName, memberClass = member.name, member.class
+        elseif QuestTooltipsRequested() then
+            memberName = UnitName and UnitName("player") or nil
+            if UnitClass then _, memberClass = UnitClass("player") end
+        end
         IndexQuestTargets(quest.title, questID, objectives,
-            member and member.name, member and member.class)
+            memberName, memberClass)
     end
     local contribution = {
         fingerprint=fingerprint, byNPC=activeByNPC, byName=activeByName,
@@ -382,7 +394,7 @@ end
 
 function Markers.RebuildIndex()
     activeByNPC, activeByName = {}, {}
-    if not Enabled() and not GroupTooltipsRequested() then return end
+    if not Enabled() and not QuestTooltipsRequested() then return end
     Resolver.BuildActive()
     local previous, nextContributions = questContributions, {}
     local rebuilt, reused = 0, 0
@@ -523,7 +535,7 @@ end
 function Markers.GetGroupTooltipRows(unit)
     if not unit or not UnitExists(unit) or UnitIsPlayer(unit) then return {} end
     if UnitIsUnit and UnitIsUnit(unit, "pet") then return {} end
-    if not GroupTooltipsRequested() then return {} end
+    if not QuestTooltipsRequested() then return {} end
     if not next(activeByNPC) and not next(activeByName) then Markers.RebuildIndex() end
     local match = MatchUnit(unit)
     local rows = {}
@@ -813,7 +825,7 @@ AutoQuest.QuestState.Subscribe(function(changes)
 end)
 eventFrame:SetScript("OnUpdate", function(_, elapsed)
     local visualEnabled = Enabled()
-    local indexEnabled = visualEnabled or GroupTooltipsRequested()
+    local indexEnabled = visualEnabled or QuestTooltipsRequested()
     if not visualEnabled then
         if eventFrame.markersWereEnabled ~= false then
             for _, plate in pairs(visibleUnits) do

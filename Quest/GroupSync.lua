@@ -1362,7 +1362,7 @@ local function AddTooltipProgress(tooltip, link)
 end
 
 local function AddUnitTooltipProgress(tooltip)
-    if not tooltip or Setting("showGroupQuestTooltips", true) == false or not SyncActive() then return end
+    if not tooltip or Setting("showGroupQuestTooltips", true) == false then return end
     if not tooltip.GetUnit or not AQ.Markers or not AQ.Markers.GetGroupTooltipRows then return end
     local _, unit = tooltip:GetUnit()
     if not unit and UnitExists and UnitExists("mouseover") then unit = "mouseover" end
@@ -1382,7 +1382,7 @@ local function AddUnitTooltipProgress(tooltip)
     tooltip.__aeGroupUnitMarker = signature
 
     tooltip:AddLine(" ")
-    tooltip:AddLine("Group Quest Progress", 0.35, 0.65, 1)
+    tooltip:AddLine(SyncActive() and "Group Quest Progress" or "Quest Progress", 0.35, 0.65, 1)
     local shown, total, maximum = 0, 0, 12
     for _, row in ipairs(rows) do total = total + #(row.steps or {}) end
     for _, row in ipairs(rows) do
