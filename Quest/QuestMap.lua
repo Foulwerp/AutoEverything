@@ -515,11 +515,13 @@ local function ZoneForKey(key)
     local questZone = activeByZone[key]
     local notableZone = NotableNPCsEnabled() and notableByZone and notableByZone[key]
     local serviceZone = serviceByZone and serviceByZone[key]
+    local starterQuestZone = StarterZoneForKey and StarterZoneForKey(key)
     local sources = {}
     if questZone then sources[#sources + 1] = questZone end
+    if starterQuestZone then sources[#sources + 1] = starterQuestZone end
     if notableZone then sources[#sources + 1] = notableZone end
     if serviceZone then sources[#sources + 1] = serviceZone end
-    if #sources == 0 then return StarterZoneForKey and StarterZoneForKey(key) end
+    if #sources == 0 then return nil end
     if #sources == 1 and sources[1] ~= notableZone then return sources[1] end
     local scanner = AutoQuest.RareScanner
     local zone = {
@@ -569,7 +571,10 @@ end
 StarterZoneForKey = function(key)
     local transform = starterMapTransforms[key]
     if not transform then return nil end
-    local parent = ZoneForKey(NormalizeZone(transform.parent))
+    -- Transform only the active quest layer. Static services and notable NPCs
+    -- have their own map identities and must not decide whether quest points
+    -- from the parent coordinate frame are available here.
+    local parent = activeByZone[NormalizeZone(transform.parent)]
     if not parent then return nil end
     local zone = {
         name=key, zoneIDs={}, questIDs=parent.questIDs or {}, points={}, routes={},
@@ -591,8 +596,14 @@ StarterZoneForKey = function(key)
         if #transformedRoute.points >= 2 then zone.routes[#zone.routes + 1] = transformedRoute end
     end
     if #zone.points == 0 and #zone.routes == 0 then return nil end
-    combinedByZone[key] = zone
     return zone
+end
+
+local function HasActiveQuestPoints(key)
+    if not key then return false end
+    local zone = activeByZone[key]
+    if not zone and starterMapTransforms[key] then zone = StarterZoneForKey(key) end
+    return zone and (#(zone.points or {}) > 0 or #(zone.routes or {}) > 0) or false
 end
 
 local function ConfirmedMapKind(kind)
@@ -1707,7 +1718,7 @@ local function UpdatePlayerLocation(force)
     -- that does. This also covers custom cave maps without maintaining an
     -- exhaustive subZoneParents list.
     if not parentName and selectedName
-        and not ZoneForKey(NormalizeZone(selectedName))
+        and not HasActiveQuestPoints(NormalizeZone(selectedName))
     then
         local candidates = {}
         if zoneName and zoneName ~= "" then candidates[#candidates + 1] = zoneName end
@@ -1715,14 +1726,14 @@ local function UpdatePlayerLocation(force)
         for _, candidate in ipairs(candidates) do
             if candidate and candidate ~= ""
                 and NormalizeZone(candidate) ~= NormalizeZone(selectedName)
-                and ZoneForKey(NormalizeZone(candidate))
+                and HasActiveQuestPoints(NormalizeZone(candidate))
             then
                 parentName = candidate
                 break
             end
         end
     end
-    if parentName and not mapShown and ZoneForKey(NormalizeZone(parentName)) then
+    if parentName and not mapShown and HasActiveQuestPoints(NormalizeZone(parentName)) then
         local px, py = ReadParentZonePosition(parentName)
         if px and py then
             name, x, y = parentName, px, py
