@@ -625,6 +625,9 @@ local function BuildMappedQuestZones()
             end
         end
     end
+    -- A cooperative rebuild can yield while map events are still firing.
+    -- Discard any combined zones assembled before these quest aliases existed.
+    combinedByZone = {}
 end
 
 local function HasActiveQuestPoints(key)
@@ -1128,6 +1131,9 @@ function QuestMap.RebuildIndex()
         buildStats.servicePoints = buildStats.servicePoints + #(zone.points or {})
     end
     AddNPCDiscoveryLocations()
+    -- Service/notable warmup can likewise span frames after the quest layer
+    -- becomes visible. Never retain a partial combined layer across stages.
+    combinedByZone = {}
     buildStats.points, buildStats.partyPoints = 0, 0
     for _, zone in pairs(activeByZone) do
         buildStats.points = buildStats.points + #(zone.points or {})
@@ -2162,6 +2168,9 @@ function QuestMap.Debug()
     QuestMap.UpdateMinimap()
     local zone = playerMap.key and ZoneForKey(playerMap.key)
     local zonePoints = zone and #zone.points or 0
+    local activeZone = playerMap.key and activeByZone[playerMap.key]
+    local notableZone = playerMap.key and notableByZone and notableByZone[playerMap.key]
+    local serviceZone = playerMap.key and serviceByZone and serviceByZone[playerMap.key]
     print("|cff33ccffMap Pins|r")
     print("  enabled=" .. tostring(Enabled()) .. " dbLoaded="
         .. tostring(AutoQuest.DataStore.HasQuestData()))
@@ -2184,6 +2193,10 @@ function QuestMap.Debug()
     print("  playerMap=" .. tostring(playerMap.name) .. " key=" .. tostring(playerMap.key)
         .. " position=" .. string.format("%.1f, %.1f", (playerMap.x or 0) * 100, (playerMap.y or 0) * 100))
     print("  currentZonePoints=" .. zonePoints .. " mapSizeKnown=" .. tostring(zoneSizes[playerMap.key or ""] ~= nil))
+    print("  current layers quest=" .. tostring(activeZone and #activeZone.points or 0)
+        .. " notable=" .. tostring(notableZone and #notableZone.points or 0)
+        .. " service=" .. tostring(serviceZone and #serviceZone.points or 0)
+        .. " combinedCached=" .. tostring(playerMap.key and combinedByZone[playerMap.key] ~= nil))
     print("  minimap=" .. minimapStatus)
     print("  raw zoneText=" .. tostring(locationDebug.zoneText) .. " realZone=" .. tostring(locationDebug.realZoneText)
         .. " subZone=" .. tostring(locationDebug.subZoneText)
