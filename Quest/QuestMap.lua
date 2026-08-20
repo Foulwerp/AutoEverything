@@ -108,6 +108,51 @@ local subZoneParents = {
     sunstriderisle   = "Eversong Woods",
 }
 
+-- Ascension exposes several starter areas as standalone zoomed maps. Quest
+-- and NPC coordinates still use the surrounding classic zone. These bounds
+-- are the starter-area overlay rectangles from the client's bundled
+-- WorldMapOverlay data, normalized to the parent map. They let both map and
+-- minimap pins use the standalone map when selecting the parent map does not
+-- yield a usable player position.
+local starterMapTransforms = {
+    northshirevalley = {
+        parent="Elwynn Forest", left=0.424152, top=0.284431,
+        right=0.598802, bottom=0.561377,
+    },
+    fargodeepmine = {
+        parent="Elwynn Forest", left=0.299401, top=0.763473,
+        right=0.469062, bottom=0.920659,
+    },
+    coldridgevalley = {
+        parent="Dun Morogh", left=0.189621, top=0.666168,
+        right=0.339321, bottom=0.838323,
+    },
+    deathknell = {
+        parent="Tirisfal Glades", left=0.278443, top=0.547904,
+        right=0.410180, bottom=0.730539,
+    },
+    valleyoftrials = {
+        parent="Durotar", left=0.394212, top=0.591317,
+        right=0.494012, bottom=0.748503,
+    },
+    campnarache = {
+        parent="Mulgore", left=0.339321, top=0.718563,
+        right=0.558882, bottom=0.935629,
+    },
+    shadowglen = {
+        parent="Teldrassil", left=0.533932, top=0.306886,
+        right=0.658683, bottom=0.494012,
+    },
+    ammenvale = {
+        parent="Azuremyst Isle", left=0.753493, top=0.402695,
+        right=0.798403, bottom=0.473054,
+    },
+    sunstriderisle = {
+        parent="Eversong Woods", left=0.225549, top=0.040419,
+        right=0.401198, bottom=0.281437,
+    },
+}
+
 local function NormalizeZone(name)
     name = string.lower(name or "")
     name = string.gsub(name, "^the%s+", "")
@@ -461,6 +506,8 @@ local function BuildServiceIndex()
     end
 end
 
+local StarterZoneForKey
+
 local function ZoneForKey(key)
     if not key then return nil end
     local cached = combinedByZone[key]
@@ -472,7 +519,7 @@ local function ZoneForKey(key)
     if questZone then sources[#sources + 1] = questZone end
     if notableZone then sources[#sources + 1] = notableZone end
     if serviceZone then sources[#sources + 1] = serviceZone end
-    if #sources == 0 then return nil end
+    if #sources == 0 then return StarterZoneForKey and StarterZoneForKey(key) end
     if #sources == 1 and sources[1] ~= notableZone then return sources[1] end
     local scanner = AutoQuest.RareScanner
     local zone = {
@@ -501,6 +548,49 @@ local function ZoneForKey(key)
             end
         end
     end
+    combinedByZone[key] = zone
+    return zone
+end
+
+local function StarterPoint(point, transform)
+    local parentX, parentY = (tonumber(point.x) or 0) / 100, (tonumber(point.y) or 0) / 100
+    if parentX < transform.left or parentX > transform.right
+        or parentY < transform.top or parentY > transform.bottom
+    then
+        return nil
+    end
+    local copy = {}
+    for key, value in pairs(point) do copy[key] = value end
+    copy.x = (parentX - transform.left) / (transform.right - transform.left) * 100
+    copy.y = (parentY - transform.top) / (transform.bottom - transform.top) * 100
+    return copy
+end
+
+StarterZoneForKey = function(key)
+    local transform = starterMapTransforms[key]
+    if not transform then return nil end
+    local parent = ZoneForKey(NormalizeZone(transform.parent))
+    if not parent then return nil end
+    local zone = {
+        name=key, zoneIDs={}, questIDs=parent.questIDs or {}, points={}, routes={},
+    }
+    for _, point in ipairs(parent.points or {}) do
+        local transformed = StarterPoint(point, transform)
+        if transformed then zone.points[#zone.points + 1] = transformed end
+    end
+    for _, route in ipairs(parent.routes or {}) do
+        local transformedRoute = {}
+        for routeKey, value in pairs(route) do
+            if routeKey ~= "points" then transformedRoute[routeKey] = value end
+        end
+        transformedRoute.points = {}
+        for _, point in ipairs(route.points or {}) do
+            local transformed = StarterPoint(point, transform)
+            if transformed then transformedRoute.points[#transformedRoute.points + 1] = transformed end
+        end
+        if #transformedRoute.points >= 2 then zone.routes[#zone.routes + 1] = transformedRoute end
+    end
+    if #zone.points == 0 and #zone.routes == 0 then return nil end
     combinedByZone[key] = zone
     return zone
 end
@@ -1686,8 +1776,8 @@ end
 local function PhysicalZoneSize(zone, key)
     local known = zoneSizes[key]
     if known then return known end
-    if not (C_WorldMap and C_WorldMap.GetWorldPosition) then return nil end
-    for areaID in pairs(zone and zone.zoneIDs or {}) do
+    local function TryArea(areaID)
+        if not (areaID and C_WorldMap and C_WorldMap.GetWorldPosition) then return nil end
         local okStart, x1, y1 = pcall(C_WorldMap.GetWorldPosition, areaID, 0, 0)
         local okEnd, x2, y2 = pcall(C_WorldMap.GetWorldPosition, areaID, 1, 1)
         if okStart and okEnd and type(x1) == "number" and type(y1) == "number"
@@ -1700,6 +1790,26 @@ local function PhysicalZoneSize(zone, key)
                 return known
             end
         end
+    end
+    -- Standalone starter maps have no shipped spawn-area IDs of their own.
+    -- Their live selected-map ID is still authoritative for physical size.
+    if playerMap.key == key then
+        known = TryArea(playerMap.zoneID)
+        if known then return known end
+    end
+    for areaID in pairs(zone and zone.zoneIDs or {}) do
+        known = TryArea(areaID)
+        if known then return known end
+    end
+    local transform = starterMapTransforms[key]
+    local parentSize = transform and zoneSizes[NormalizeZone(transform.parent)]
+    if parentSize then
+        known = {
+            parentSize[1] * (transform.right - transform.left),
+            parentSize[2] * (transform.bottom - transform.top),
+        }
+        zoneSizes[key] = known
+        return known
     end
 end
 
