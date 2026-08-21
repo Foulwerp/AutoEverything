@@ -195,7 +195,7 @@ end
 local function IsMarketPriceEligible(link, itemType, requiredLevel)
     if not IsEquipment(itemType) then return true end
     if not link or not GetItemInfo then return false end
-    requiredLevel = tonumber(requiredLevel) or tonumber(select(5, GetItemInfo(link)))
+    requiredLevel = tonumber(requiredLevel) or tonumber((select(5, GetItemInfo(link))))
     return requiredLevel == 60
 end
 
