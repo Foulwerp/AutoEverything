@@ -2726,7 +2726,9 @@ local EquipSlotToInventorySlot = {
     INVTYPE_WEAPON          = "MainHandSlot",
     INVTYPE_2HWEAPON        = "MainHandSlot",
     INVTYPE_WEAPONMAINHAND  = "MainHandSlot",
+    INVTYPE_MAINHAND        = "MainHandSlot",
     INVTYPE_WEAPONOFFHAND   = "SecondaryHandSlot",
+    INVTYPE_OFFHAND         = "SecondaryHandSlot",
     INVTYPE_SHIELD          = "SecondaryHandSlot",
     INVTYPE_HOLDABLE        = "SecondaryHandSlot",
     INVTYPE_RANGED          = "RangedSlot",
@@ -2857,7 +2859,7 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
     local _, _, _, _, _, newItemType, newSubType, _, newEquipSlot = GetItemInfo(link)
 
     local armorClassTypes = { Cloth = true, Leather = true, Mail = true, Plate = true }
-    if newItemType == "Armor" and armorClassTypes[newSubType]
+    if newEquipSlot ~= "INVTYPE_CLOAK" and newItemType == "Armor" and armorClassTypes[newSubType]
         and #armorTypes > 0 and not TypeInList(newSubType, armorTypes)
     then
         SetReason("armor type (" .. tostring(newSubType) .. ") is not in armorTypes")
@@ -2995,7 +2997,7 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
         return CompareWeakerOfTwo(baseSlot, baseSlot + 1)
     end
 
-    if newEquipSlot == "INVTYPE_WEAPONMAINHAND" then
+    if newEquipSlot == "INVTYPE_WEAPONMAINHAND" or newEquipSlot == "INVTYPE_MAINHAND" then
         if not TypeInList(newSubType, mainHandTypes) then
             SetReason("weapon type (" .. tostring(newSubType) .. ") is not in mainHandTypes")
             return false, newScore, 0, nil, nil
@@ -3003,7 +3005,7 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
         return CompareSingleSlot(16)
     end
 
-    if newEquipSlot == "INVTYPE_WEAPONOFFHAND" then
+    if newEquipSlot == "INVTYPE_WEAPONOFFHAND" or newEquipSlot == "INVTYPE_OFFHAND" then
         if not TypeInList(newSubType, offHandTypes) then
             SetReason("weapon type (" .. tostring(newSubType) .. ") is not in offHandTypes")
             return false, newScore, 0, nil, nil
@@ -3015,7 +3017,7 @@ local function RawIsUpgrade(link, weights, threshold, targetSlot, options, debug
         return CompareSingleSlot(17)
     end
 
-    if newEquipSlot == "INVTYPE_WEAPON" and newItemType == "Weapon" then
+    if newEquipSlot == "INVTYPE_WEAPON" then
         local inMain = TypeInList(newSubType, mainHandTypes)
         local inOff = TypeInList(newSubType, offHandTypes)
         if not inMain and not inOff then
