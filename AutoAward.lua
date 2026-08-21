@@ -42,6 +42,7 @@ local selectedSlot
 local selectedBag
 local selectedBagSlot
 local frame
+local uiRefreshElapsed = 0
 local ui = {}
 local Theme = AutoCore and AutoCore.UI
 
@@ -1306,7 +1307,15 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
 end)
 
 eventFrame:SetScript("OnUpdate", function(_, elapsed)
-    if frame and frame:IsShown() then RefreshUI() end
+    if frame and frame:IsShown() then
+        uiRefreshElapsed = uiRefreshElapsed + (elapsed or 0)
+        if uiRefreshElapsed >= 0.1 then
+            uiRefreshElapsed = 0
+            RefreshUI()
+        end
+    else
+        uiRefreshElapsed = 0
+    end
     local now = GetTime()
     UpdateRollCountdown(now)
     if (current.state == STATE_ROLLING or current.state == STATE_TIE) and current.deadline and now >= current.deadline then
