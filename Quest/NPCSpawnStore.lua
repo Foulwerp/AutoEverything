@@ -178,12 +178,30 @@ function Store.GetMetadata(npcID)
     return found
 end
 
+-- Static boss records do not have a unit token, so use the recorded faction
+-- reaction as the conservative equivalent of UnitCanAttack.  Ascension's
+-- metadata uses positive reactions for friendly actors and zero/negative
+-- reactions for neutral or hostile creatures.  Missing reaction data must not
+-- hide otherwise valid bosses from older or custom records.
+function Store.CanAttackByFaction(npcID)
+    local metadata = Store.GetMetadata(npcID)
+    if not metadata then return true end
+    local faction = UnitFactionGroup and UnitFactionGroup("player")
+    local reaction = faction == "Horde" and metadata.hordeReaction
+        or faction == "Alliance" and metadata.allianceReaction
+    return reaction == nil or reaction <= 0
+end
+
 local function GeneratedNotableMetadata(npcID)
     npcID = tonumber(npcID)
     if not npcID then return nil end
     local packed = DataStore.GetRareNPCPacked(npcID)
     if type(packed) ~= "string" then return nil end
-    local kind, name = string.match(packed, "^([^\t]+)\t(.*)$")
+    local kind, name, allianceReaction, hordeReaction = string.match(
+        packed, "^([^\t]+)\t([^\t]*)\t(-?%d+)\t(-?%d+)$")
+    if not kind then
+        kind, name = string.match(packed, "^([^\t]+)\t(.*)$")
+    end
     if kind ~= "r" and kind ~= "b" then return nil end
     local metadata = metadataByID[npcID] or {
         id=npcID,
@@ -191,6 +209,10 @@ local function GeneratedNotableMetadata(npcID)
         classification=kind == "r" and 2 or 3,
         boss=kind == "b",
     }
+    metadata.allianceReaction = metadata.allianceReaction
+        or tonumber(allianceReaction)
+    metadata.hordeReaction = metadata.hordeReaction
+        or tonumber(hordeReaction)
     metadata.kind = kind == "r" and "rare" or "boss"
     metadataByID[npcID] = metadata
     return metadata
