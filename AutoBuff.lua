@@ -30,6 +30,7 @@ local WINDOW_INSET = 8
 local WINDOW_CONTENT_WIDTH = WINDOW_WIDTH - (WINDOW_INSET * 2)
 local CAST_DELAY_SECONDS = 1
 local TRIVIAL_ERROR_WINDOW_SECONDS = 0.75
+local POWERFUL_BUFF_RETRY_SECONDS = 30 * 60
 local PERIODIC_SCAN_INTERVAL = 5
 
 local function Default(key, fallback)
@@ -407,32 +408,27 @@ local function TargetAllowed(entry, unit, hasSelfAssignments)
 end
 
 local function ReadAuraTimers(unit)
-    local timers, auraKeys = {}, {}
-    if not UnitAura then return timers, auraKeys end
+    local timers = {}
+    if not UnitAura then return timers end
     for index = 1, 40 do
-        local name, rank, _, _, _, duration, expires, _, _, _, spellID = UnitAura(unit, index, "HELPFUL")
+        local name, _, _, _, _, duration, expires = UnitAura(unit, index, "HELPFUL")
         if not name then break end
         if not duration or duration <= 0 or not expires or expires <= 0 then
             timers[name] = math.huge
         else
             timers[name] = math.max(0, expires - GetTime())
         end
-        local key = spellID and ("id:" .. tostring(spellID))
-            or ("name:" .. tostring(name) .. ":" .. tostring(rank or ""))
-        auraKeys[key] = true
     end
-    return timers, auraKeys
+    return timers
 end
 
-local function HasRejectedPowerfulBuff(identity, spell, auraKeys)
+local function HasRejectedPowerfulBuff(identity, spell)
     local bySpell = identity and rejectedPowerfulBuffs[identity]
-    local snapshot = bySpell and bySpell[spell]
-    if not snapshot then return false end
-    for key in pairs(snapshot) do
-        if not auraKeys[key] then
-            bySpell[spell] = nil
-            return false
-        end
+    local expiresAt = bySpell and bySpell[spell]
+    if not expiresAt then return false end
+    if expiresAt <= GetTime() then
+        bySpell[spell] = nil
+        return false
     end
     return true
 end
@@ -469,9 +465,9 @@ local function BuildMissing()
     local missing = {}
     local units = GroupUnits()
     local hasSelfAssignments = HasSelfAssignments()
-    local auraTimers, auraKeys = {}, {}
+    local auraTimers = {}
     for _, unit in ipairs(units) do
-        auraTimers[unit.unit], auraKeys[unit.unit] = ReadAuraTimers(unit.unit)
+        auraTimers[unit.unit] = ReadAuraTimers(unit.unit)
     end
     for _, entry in ipairs(BuffList()) do
         local learned = type(entry) == "table" and LearnedSpell(entry.spell)
@@ -481,7 +477,7 @@ local function BuildMissing()
                 if TargetAllowed(entry, unit, hasSelfAssignments) then
                     local needed, remaining = NeedsBuff(auraTimers[unit.unit], learned.name)
                     local identity = UnitIdentity(unit.unit)
-                    if needed and not HasRejectedPowerfulBuff(identity, learned.name, auraKeys[unit.unit]) then
+                    if needed and not HasRejectedPowerfulBuff(identity, learned.name) then
                         table.insert(missing, {
                             spell = learned.name,
                             icon = learned.icon,
@@ -757,9 +753,9 @@ events:SetScript("OnEvent", function(self, event, arg1)
                 end
                 ScheduleScan(0)
             elseif lastBuffAttempt.identity and lastBuffAttempt.spell and IsMorePowerfulBuffError(arg1) then
-                local _, auraKeys = ReadAuraTimers(lastBuffAttempt.unit)
                 rejectedPowerfulBuffs[lastBuffAttempt.identity] = rejectedPowerfulBuffs[lastBuffAttempt.identity] or {}
-                rejectedPowerfulBuffs[lastBuffAttempt.identity][lastBuffAttempt.spell] = auraKeys
+                rejectedPowerfulBuffs[lastBuffAttempt.identity][lastBuffAttempt.spell]
+                    = GetTime() + POWERFUL_BUFF_RETRY_SECONDS
                 ScheduleScan(0)
             end
             lastBuffAttempt = nil
