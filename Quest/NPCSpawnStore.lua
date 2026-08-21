@@ -14,6 +14,16 @@ local decodedQuestItems = {}
 local decodedServices
 local decodedServiceFactions
 local observedNames = {}
+
+-- Static outdoor bosses are stored as generic bosses in the scraped catalog.
+-- Keep the known base-game world-boss IDs here so they stay off the map even
+-- before UnitClassification("worldboss") is observed in-game.
+local staticWorldBossIDs = {
+    [6109] = true, [12397] = true, [14471] = true,
+    [14887] = true, [14888] = true, [14889] = true, [14890] = true,
+    [17711] = true, [18728] = true,
+}
+
 local npcIDsByName
 local npcNamesByID
 local npcNamesByPrefix
@@ -81,6 +91,7 @@ end
 
 local function NotableKind(metadata)
     if not metadata then return nil end
+    if staticWorldBossIDs[tonumber(metadata.id)] then return "worldboss" end
     local observed = observedClassifications[metadata.id]
     if observed == "worldboss" then return "worldboss" end
     if observed == "rare" or observed == "rareelite" then return "rare" end
