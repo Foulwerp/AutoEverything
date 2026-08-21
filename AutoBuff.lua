@@ -21,7 +21,7 @@ local rejectedTrivialTargets = {}
 local rejectedPowerfulBuffs = {}
 local lastBuffAttempt = nil
 local castReadyAt = nil
-local combatHider, window, castButton, statusText
+local combatHider, window, castButton
 local windowHidesInCombat = false
 
 local BASE_WINDOW_HEIGHT = 88
@@ -548,15 +548,10 @@ local function CreateWindow()
     title:SetText("AutoBuff")
     if UI and UI.Colors then title:SetTextColor(UI.Unpack(UI.Colors.brand)) end
 
-    statusText = window:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    statusText:SetPoint("TOPLEFT", WINDOW_INSET, -31)
-    statusText:SetWidth(WINDOW_CONTENT_WIDTH)
-    statusText:SetJustifyH("LEFT")
-
     castButton = CreateFrame("Button", "AutoEverythingBuffNextButton", window,
         "SecureActionButtonTemplate,UIPanelButtonTemplate")
     castButton:SetSize(WINDOW_CONTENT_WIDTH, 26)
-    castButton:SetPoint("TOPLEFT", WINDOW_INSET, -48)
+    castButton:SetPoint("TOPLEFT", WINDOW_INSET, -31)
     castButton:RegisterForClicks("LeftButtonUp")
     if UI then
         UI.StripTemplateArt(castButton)
@@ -633,21 +628,16 @@ local function PaintWindow()
     end
     if not shouldShow then return end
 
-    if InCombat() then
-        statusText:SetText("Paused in combat")
-        return
-    end
+    if InCombat() then return end
 
     if currentCandidate then
-        statusText:SetText(currentCandidate.name .. " > " .. currentCandidate.spell)
         castButton:SetAttribute("type", "spell")
         castButton:SetAttribute("spell", currentCandidate.spell)
         castButton:SetAttribute("unit", currentCandidate.unit)
+        castButton:SetText(currentCandidate.name .. " > " .. currentCandidate.spell)
         if castReadyAt and GetTime() < castReadyAt then
-            castButton:SetText("Waiting for global cooldown")
             castButton:Disable()
         else
-            castButton:SetText("Buff " .. currentCandidate.name)
             castButton:Enable()
         end
     else
@@ -664,13 +654,10 @@ local function PaintWindow()
                 end
             end
             if waitingCooldown then
-                local seconds = math.max(0, waitingCooldown.cooldown)
-                statusText:SetText(waitingCooldown.name .. " > " .. waitingCooldown.spell)
-                castButton:SetText("Waiting " .. string.format("%.1f", seconds) .. "s")
+                castButton:SetText(waitingCooldown.name .. " > " .. waitingCooldown.spell)
             else
                 local waiting = currentMissing[1]
-                statusText:SetText(waiting.name .. " > " .. waiting.spell)
-                castButton:SetText("No target in range")
+                castButton:SetText(waiting.name .. " > " .. waiting.spell)
             end
         end
         castButton:Disable()
