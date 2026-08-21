@@ -24,7 +24,7 @@ local castReadyAt = nil
 local combatHider, window, castButton
 local windowHidesInCombat = false
 
-local BASE_WINDOW_HEIGHT = 88
+local BASE_WINDOW_HEIGHT = 64
 local WINDOW_WIDTH = 180
 local WINDOW_INSET = 8
 local WINDOW_CONTENT_WIDTH = WINDOW_WIDTH - (WINDOW_INSET * 2)
