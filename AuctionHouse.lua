@@ -192,11 +192,10 @@ local function IsEquipment(itemType)
         or itemType == (ARMOR or "Armor") or itemType == (WEAPON or "Weapon")
 end
 
-local function IsMarketPriceEligible(link, itemType)
+local function IsMarketPriceEligible(link, itemType, requiredLevel)
     if not IsEquipment(itemType) then return true end
     if not link or not GetItemInfo then return false end
-    local requiredLevel = select(5, GetItemInfo(link))
-    requiredLevel = tonumber(requiredLevel)
+    requiredLevel = tonumber(requiredLevel) or tonumber(select(5, GetItemInfo(link)))
     return requiredLevel == 60
 end
 
@@ -1706,12 +1705,11 @@ local function ApplyManualBuyout()
 end
 
 local function IsManualSellable(link, bag, slot)
-    -- This path only needs static item fields; avoid the extra hidden tooltip
-    -- pass that Core.GetItemData performs for scaled required levels.
-    local name, _, _, _, _, itemType = GetItemInfo(link)
-    local data = { id = ItemID(link), name = name, itemType = itemType }
-    if not data.id or not data.itemType or data.itemType == "Key" then return false end
-    if not IsMarketPriceEligible(link, data.itemType) then return false end
+    -- The tooltip resolves Ascension's scaled required level when GetItemInfo
+    -- has not populated it yet.
+    local data = Core.GetItemData(link, { bag = bag, slot = slot, link = link })
+    if not data or not data.id or not data.itemType or data.itemType == "Key" then return false end
+    if not IsMarketPriceEligible(link, data.itemType, data.reqLevel) then return false end
     if Core.IsActiveQuestItem(data.id) then return false end
     if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
         and AutoUpgrade.IsBestPvPSetItem(link, { link=link, bag=bag, slot=slot })
