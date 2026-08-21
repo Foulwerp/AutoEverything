@@ -477,14 +477,16 @@ local function BuildMissing()
                 if TargetAllowed(entry, unit, hasSelfAssignments) then
                     local needed, remaining = NeedsBuff(auraTimers[unit.unit], learned.name)
                     local identity = UnitIdentity(unit.unit)
-                    if needed and not HasRejectedPowerfulBuff(identity, learned.name) then
+                    if needed and not HasRejectedPowerfulBuff(identity, learned.name)
+                        and InSpellRange(learned.name, unit.unit)
+                    then
                         table.insert(missing, {
                             spell = learned.name,
                             icon = learned.icon,
                             unit = unit.unit,
                             name = unit.name,
                             remaining = remaining,
-                            inRange = InSpellRange(learned.name, unit.unit),
+                            inRange = true,
                             cooldown = cooldown,
                             cooldownDuration = cooldownDuration,
                         })
