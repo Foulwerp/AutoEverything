@@ -915,7 +915,8 @@ local function BuildNotableIndex()
                 end
                 if buildCooperate then buildCooperate() end
             end
-        elseif metadata.kind ~= "rare" and BossNPCsEnabled()
+        elseif metadata.kind ~= "rare" and metadata.kind ~= "worldboss"
+            and BossNPCsEnabled()
             and (not SpawnStore.CanAttackByFaction
                 or SpawnStore.CanAttackByFaction(metadata.id))
         then
