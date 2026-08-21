@@ -892,7 +892,10 @@ local function BuildNotableIndex()
                 end
                 if buildCooperate then buildCooperate() end
             end
-        elseif metadata.kind ~= "rare" and BossNPCsEnabled() then
+        elseif metadata.kind ~= "rare" and BossNPCsEnabled()
+            and (not SpawnStore.CanAttackByFaction
+                or SpawnStore.CanAttackByFaction(metadata.id))
+        then
             AddDiscoveryNPC(npc, metadata.kind or "rare", notableByZone, pointKeys)
         end
         if buildCooperate then buildCooperate() end
@@ -1614,9 +1617,10 @@ end
 local function UpdatePlayerPositionFast()
     if WorldMapFrame and WorldMapFrame:IsShown() then return false end
     local x, y = ReadPlayerMapPosition()
-    if not x or not y or (x == 0 and y == 0) then return false end
+    if not x or not y or (x == 0 and y == 0) then return nil end
+    local changed = playerMap.x ~= x or playerMap.y ~= y
     playerMap.x, playerMap.y = x, y
-    return true
+    return changed
 end
 
 -- Ascension exposes the same guarded world-position API used by installed map
@@ -2128,7 +2132,7 @@ frame:SetScript("OnUpdate", function(_, elapsed)
             QuestMap.UpdateMinimap()
         end
         frame.positionElapsed, frame.selectionElapsed = 0, 0
-    elseif frame.positionElapsed >= (1 / 30) then
+    elseif frame.positionElapsed >= (1 / 15) then
         frame.positionElapsed = 0
         if frame.selectionElapsed >= 0.2 then
             frame.selectionElapsed = 0
@@ -2136,9 +2140,14 @@ frame:SetScript("OnUpdate", function(_, elapsed)
             QuestMap.UpdateMinimap()
         elseif WorldMapFrame and WorldMapFrame:IsShown() then
             PositionMinimapPins()
-        elseif not UpdatePlayerPositionFast() or not PositionMinimapPins() then
-            UpdatePlayerLocation()
-            QuestMap.UpdateMinimap()
+        else
+            local moved = UpdatePlayerPositionFast()
+            if moved == nil then
+                UpdatePlayerLocation()
+                QuestMap.UpdateMinimap()
+            elseif moved then
+                PositionMinimapPins()
+            end
         end
     end
 end)

@@ -44,6 +44,7 @@ local upgrades = { results = {}, filtered = {} }
 local RefreshSellGrid, RefreshShoppingResults, RefreshOwnedAuctions, RefreshManualCompetition
 local RefreshUpgradeResults, StartUpgradeAnalysis, ProcessUpgradeAnalysis
 local shopping = { results = {}, sessionSpent = 0 }
+local savedShoppingKeys
 local currentPage = "sell"
 local pageFrames, pageButtons, scanFooters = {}, {}, {}
 local events = CreateFrame("Frame")
@@ -413,6 +414,7 @@ local function UpdateCheckedMarketItem(link, itemType, rows)
     table.insert(item.history, { time = now, floor = price, listings = item.listings, quantity = item.quantity })
     TrimHistory(item.history, now)
     market.items[key] = item
+    market.cachedItemCount, market.cachedGearStatCount = nil, nil
     market.lastIncrementalUpdate = now
     return item
 end
@@ -776,13 +778,17 @@ local function RefreshScanFooters(market)
     local text = "Market updated: " .. updated .. " | Full scan: " .. scanned
     for _, footer in ipairs(scanFooters) do footer:SetText(text) end
     if scanStatsText then
-        local itemCount, gearStatCount = 0, 0
-        for _, item in pairs(market.items or {}) do
-            itemCount = itemCount + 1
-            if IsEquipment(item.itemType) and type(item.stats) == "table" and next(item.stats) then
-                gearStatCount = gearStatCount + 1
+        if not market.cachedItemCount then
+            local itemCount, gearStatCount = 0, 0
+            for _, item in pairs(market.items or {}) do
+                itemCount = itemCount + 1
+                if IsEquipment(item.itemType) and type(item.stats) == "table" and next(item.stats) then
+                    gearStatCount = gearStatCount + 1
+                end
             end
+            market.cachedItemCount, market.cachedGearStatCount = itemCount, gearStatCount
         end
+        local itemCount, gearStatCount = market.cachedItemCount, market.cachedGearStatCount
         local freshness = latest > 0 and AgeText(latest) or "no observations"
         scanStatsText:SetText(itemCount .. " item variants tracked | "
             .. gearStatCount .. " gear stat sets | "
@@ -870,6 +876,7 @@ local function FinishScan()
         itemCount = itemCount + 1
     end
     TrimMarketItems(market)
+    market.cachedItemCount, market.cachedGearStatCount = nil, nil
     market.lastScan, market.lastIncrementalUpdate, market.lastAuctionCount = now, now, scan.auctions
     local elapsed = GetTime() - scan.startedAt
     scan = nil
@@ -2044,14 +2051,17 @@ RefreshShoppingResults = function()
 end
 
 local function SavedShoppingKeys()
+    if savedShoppingKeys then return savedShoppingKeys end
     local keys = {}
     for key, entry in pairs(EnsureDB().shopping) do
         if type(entry) == "table" and (entry.itemID or entry.name) then table.insert(keys, key) end
     end
     table.sort(keys, function(a, b)
-        local left, right = EnsureDB().shopping[a], EnsureDB().shopping[b]
+        local shoppingDB = EnsureDB().shopping
+        local left, right = shoppingDB[a], shoppingDB[b]
         return tostring(left.name or a) < tostring(right.name or b)
     end)
+    savedShoppingKeys = keys
     return keys
 end
 
@@ -2114,6 +2124,7 @@ end
 local function DeleteSavedShoppingEntry()
     if not shopping.activeKey then Warn("No saved shopping entry is selected."); return end
     EnsureDB().shopping[shopping.activeKey] = nil
+    savedShoppingKeys = nil
     shopping.results = {}
     LoadSavedShoppingEntry()
     Info("Removed saved shopping entry.")
@@ -2172,6 +2183,7 @@ local function PersistShoppingEntry()
     local entry = SaveShoppingEntry()
     if not entry then return end
     EnsureDB().shopping[shopping.activeKey] = entry
+    savedShoppingKeys = nil
     if shopping.savedButton then shopping.savedButton:SetText("Saved: " .. tostring(entry.name)) end
     Info("Saved shopping search for " .. tostring(entry.name) .. ".")
 end

@@ -213,12 +213,16 @@ local function MaybeStartDungeonRequeue()
 end
 
 local function CheckBattlegroundCompletion()
+    if not Setting("autoLeaveCompletedBattleground", false) then
+        battlegroundCompletionHandled = false
+        return
+    end
     local inInstance, instanceType = IsInInstance()
     if not inInstance or instanceType ~= "pvp" then
         battlegroundCompletionHandled = false
         return
     end
-    if battlegroundCompletionHandled or not Setting("autoLeaveCompletedBattleground", false) then return end
+    if battlegroundCompletionHandled then return end
     if not GetBattlefieldWinner or GetBattlefieldWinner() == nil then return end
     battlegroundCompletionHandled = true
     StartCountdown("Battleground Complete", "Leaving battleground", function()

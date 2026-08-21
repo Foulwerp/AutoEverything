@@ -234,16 +234,15 @@ end
 
 function Scanner.HandleCombatLog(...)
     if not Enabled() then return end
-    local args = { ... }
-    if #args == 0 and CombatLogGetCurrentEventInfo then
-        args = { CombatLogGetCurrentEventInfo() }
+    if select("#", ...) == 0 and CombatLogGetCurrentEventInfo then
+        return Scanner.HandleCombatLog(CombatLogGetCurrentEventInfo())
     end
-    local subevent = args[2]
-    local modernLayout = type(args[3]) == "boolean"
+    local subevent = select(2, ...)
+    local modernLayout = type(select(3, ...)) == "boolean"
     local sourceIndex = modernLayout and 4 or 3
     local destIndex = sourceIndex + (modernLayout and 4 or 3)
-    local sourceGUID, sourceName = args[sourceIndex], args[sourceIndex + 1]
-    local destGUID, destName = args[destIndex], args[destIndex + 1]
+    local sourceGUID, sourceName = select(sourceIndex, ...), select(sourceIndex + 1, ...)
+    local destGUID, destName = select(destIndex, ...), select(destIndex + 1, ...)
     if subevent == "UNIT_DIED" or subevent == "PARTY_KILL" then
         Scanner.MarkDead(destGUID)
         return
