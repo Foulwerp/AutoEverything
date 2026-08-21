@@ -915,13 +915,6 @@ local function BuildNotableIndex()
                 end
                 if buildCooperate then buildCooperate() end
             end
-        elseif metadata.kind ~= "rare" and metadata.kind ~= "worldboss"
-            and BossNPCsEnabled()
-            and (not SpawnStore.CanAttackByFaction
-                or SpawnStore.CanAttackByFaction(metadata.id))
-        then
-            AddDiscoveryNPC(npc, metadata.kind or "rare", notableByZone, pointKeys,
-                metadata.kind == "boss")
         end
         if buildCooperate then buildCooperate() end
     end

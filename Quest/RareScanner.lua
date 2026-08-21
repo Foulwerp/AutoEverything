@@ -57,13 +57,17 @@ local function IsRareClassification(classification)
     return classification == "rare" or classification == "rareelite"
 end
 
-local function RareMetadataForID(npcID)
+local function IsBossMetadata(metadata)
+    return metadata and (metadata.boss == true or tonumber(metadata.classification) == 3)
+end
+
+local function NotableMetadataForID(npcID)
+    local metadata = SpawnStore.GetMetadata and SpawnStore.GetMetadata(npcID)
+    if IsBossMetadata(metadata) then return metadata end
     if SpawnStore.GetRareMetadata then return SpawnStore.GetRareMetadata(npcID) end
     -- Compatibility for older embedded data-store shims.
-    for _, metadata in ipairs(SpawnStore.GetNotableNPCs() or {}) do
-        if tonumber(metadata.id) == tonumber(npcID) and metadata.kind == "rare" then
-            return metadata
-        end
+    for _, entry in ipairs(SpawnStore.GetNotableNPCs() or {}) do
+        if tonumber(entry.id) == tonumber(npcID) then return entry end
     end
 end
 
@@ -212,10 +216,11 @@ function Scanner.ObserveUnit(unit, source)
     -- attackable creatures still pass UnitCanAttack; friendly actors do not.
     if UnitCanAttack and not UnitCanAttack("player", unit) then return false end
     local classification = UnitClassification and UnitClassification(unit)
-    if not IsRareClassification(classification) then return false end
+    local isBoss = classification == "worldboss"
+    if not IsRareClassification(classification) and not isBoss then return false end
     local guid = UnitGUID and UnitGUID(unit)
     local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
-    if not npcID then return false end
+    if not npcID or not NotableMetadataForID(npcID) then return false end
     SpawnStore.RememberName(npcID, UnitName and UnitName(unit))
     SpawnStore.RememberClassification(npcID, classification)
     return Scanner.ObserveNPC(npcID, UnitName and UnitName(unit), guid,
