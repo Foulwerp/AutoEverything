@@ -16,6 +16,9 @@ Core.ActionBarEffects = Effects
 local tracked = setmetatable({}, { __mode = "k" })
 local hideSwipe = false
 local hideBling = false
+local driver
+local scanElapsed = 0
+local updateElapsed = 0
 local BLING_LEAD = 0.08
 local BLING_DURATION = 1.10
 
@@ -115,30 +118,30 @@ function Effects.Refresh()
     GetOptions()
     ScanElvUIButtons()
     Apply(GetTime())
+    if driver then
+        if hideSwipe or hideBling then
+            driver:SetScript("OnUpdate", function(_, elapsed)
+                scanElapsed = scanElapsed + elapsed
+                updateElapsed = updateElapsed + elapsed
+                if scanElapsed >= 1 then
+                    scanElapsed = 0
+                    ScanElvUIButtons()
+                end
+                if updateElapsed >= 0.03 then
+                    updateElapsed = 0
+                    Apply(GetTime())
+                end
+            end)
+        else
+            driver:SetScript("OnUpdate", nil)
+        end
+    end
 end
 
-local driver = CreateFrame("Frame")
-local scanElapsed = 0
-local updateElapsed = 0
+driver = CreateFrame("Frame")
 driver:RegisterEvent("PLAYER_LOGIN")
 driver:RegisterEvent("PLAYER_ENTERING_WORLD")
 driver:SetScript("OnEvent", function()
     Effects.Refresh()
 end)
-driver:SetScript("OnUpdate", function(_, elapsed)
-    scanElapsed = scanElapsed + elapsed
-    updateElapsed = updateElapsed + elapsed
-
-    -- ElvUI can create pet, stance, or extra-bar buttons after login.
-    if scanElapsed >= 1 then
-        scanElapsed = 0
-        ScanElvUIButtons()
-    end
-
-    -- The two effects share one native layer, so independent control needs a
-    -- short update around each cooldown's completion window.
-    if (hideSwipe or hideBling) and updateElapsed >= 0.03 then
-        updateElapsed = 0
-        Apply(GetTime())
-    end
-end)
+-- Effects.Refresh installs the worker only while an effect is enabled.

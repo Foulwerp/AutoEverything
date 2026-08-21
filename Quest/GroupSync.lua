@@ -1521,6 +1521,12 @@ end)
 local sendElapsed = 0
 driver:SetScript("OnUpdate", function(self, elapsed)
     local now = GetTime()
+    if not SyncActive() and not updateAt and not rosterCleanupAt
+        and #pendingShares == 0 and not next(pendingSnapshotTargets)
+    then
+        sendElapsed = 0
+        return
+    end
     if updateAt and now >= updateAt then
         updateAt = nil
         ProcessQuestUpdate()
