@@ -497,7 +497,7 @@ local function ZoneForKey(key)
             end
         end
         for _, route in ipairs(source.routes or {}) do
-            if source ~= notableZone or RareNPCsEnabled() then
+            if source ~= notableZone or RareNPCsEnabled() or route.kind ~= "rare" then
                 zone.routes[#zone.routes + 1] = route
             end
         end
