@@ -25,7 +25,7 @@ local combatHider, window, castButton, statusText
 local windowHidesInCombat = false
 
 local BASE_WINDOW_HEIGHT = 88
-local WINDOW_WIDTH = 270
+local WINDOW_WIDTH = 180
 local WINDOW_INSET = 8
 local WINDOW_CONTENT_WIDTH = WINDOW_WIDTH - (WINDOW_INSET * 2)
 local CAST_DELAY_SECONDS = 1
