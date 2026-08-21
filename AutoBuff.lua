@@ -544,7 +544,7 @@ local function CreateWindow()
     if UI and UI.Backdrop then UI.Backdrop(window, UI.Colors.window, 0.96) end
 
     local title = window:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOPLEFT", WINDOW_INSET, -10)
+    title:SetPoint("TOP", 0, -10)
     title:SetText("AutoBuff")
     if UI and UI.Colors then title:SetTextColor(UI.Unpack(UI.Colors.brand)) end
 
