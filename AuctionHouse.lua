@@ -19,8 +19,19 @@ local HARD_RETRY_AFTER = 2
 local MAX_PAGES = 5000
 local MAX_HISTORY = 7
 local MAX_SAVED_PRICES = 100
+local MAX_MARKET_ITEMS = 5000
+local MAX_QUERY_ROWS = 1000
 local DATABASE_MAX_AGE = 7 * 24 * 60 * 60
 local tooltipPriceCache = {}
+local tooltipPriceCacheWrites = 0
+
+local function PruneTooltipPriceCache(now)
+    tooltipPriceCacheWrites = tooltipPriceCacheWrites + 1
+    if tooltipPriceCacheWrites % 32 ~= 0 then return end
+    for key, entry in pairs(tooltipPriceCache) do
+        if now - entry.at > 1 then tooltipPriceCache[key] = nil end
+    end
+end
 
 local scan, posting, marketQuery, upgradeAnalysis, window, statusText, scanStatusText, scanStatsText
 local scanButton, postButton, modeButton
@@ -247,6 +258,16 @@ local function TrimHistory(history, now)
     end
     while #history > MAX_HISTORY do table.remove(history, 1) end
     return history
+end
+
+local function TrimMarketItems(market)
+    local keys = {}
+    for key in pairs(market.items or {}) do keys[#keys + 1] = key end
+    if #keys <= MAX_MARKET_ITEMS then return end
+    table.sort(keys, function(a, b)
+        return (market.items[a].lastSeen or 0) < (market.items[b].lastSeen or 0)
+    end)
+    for index = 1, #keys - MAX_MARKET_ITEMS do market.items[keys[index]] = nil end
 end
 
 local function Median(values)
@@ -516,9 +537,11 @@ local function AddTooltipPrice(tooltip, link, stackCount)
         unit, support, estimateConfidence = cached.unit, cached.support, cached.confidence
     else
         unit, support, estimateConfidence = ReasonablePrice(item)
+        local now = GetTime()
         tooltipPriceCache[cacheKey] = {
-            at = GetTime(), unit = unit, support = support, confidence = estimateConfidence,
+            at = now, unit = unit, support = support, confidence = estimateConfidence,
         }
+        PruneTooltipPriceCache(now)
     end
     local priceTime = unit and item and (item.priceTime or item.lastSeen) or market.lastScan
     local fresh = priceTime and time() - priceTime <= 24 * 60 * 60
@@ -846,6 +869,7 @@ local function FinishScan()
         market.items[key] = item
         itemCount = itemCount + 1
     end
+    TrimMarketItems(market)
     market.lastScan, market.lastIncrementalUpdate, market.lastAuctionCount = now, now, scan.auctions
     local elapsed = GetTime() - scan.startedAt
     scan = nil
@@ -1176,8 +1200,10 @@ local function ReadMarketQueryPage()
             local row = { unit = math.max(1, math.floor(buyout / count)), count = count,
                 buyout = buyout, owner = owner, link = link, name = name,
                 index = index, page = marketQuery.page }
-            table.insert(marketQuery.rows, row)
-            table.insert(pageRows, row)
+            if #marketQuery.rows < MAX_QUERY_ROWS then
+                table.insert(marketQuery.rows, row)
+                table.insert(pageRows, row)
+            end
         end
     end
     marketQuery.waiting = false
@@ -2362,8 +2388,9 @@ RefreshOwnedAuctions = function(refreshData)
         local ownedCount = GetNumAuctionItems("owner")
         num = tonumber(ownedCount) or 0
     end
+    owned.totalCount = num
     owned.results = {}
-    for index = 1, num do
+    for index = 1, math.min(num, MAX_QUERY_ROWS) do
         local name, _, count, _, _, _, minBid, _, buyout, bidAmount, highestBidder, _, sold =
             GetAuctionItemInfo("owner", index)
         local link = GetAuctionItemLink("owner", index)
@@ -2411,7 +2438,9 @@ RefreshOwnedAuctions = function(refreshData)
         if owned.scrollbar then owned.scrollbar:Sync() end
     end
     if owned.summary then
-        owned.summary:SetText(#owned.results .. " active auctions | " .. Money(owned.totalBuyout or 0) .. " total buyout value")
+        local count = owned.totalCount or #owned.results
+        owned.summary:SetText(count .. (count > #owned.results and "+" or "")
+            .. " active auctions | " .. Money(owned.totalBuyout or 0) .. " total buyout value")
     end
     if owned.cancelButton then owned.cancelButton:SetText("Cancel Auction") end
 end

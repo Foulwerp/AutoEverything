@@ -682,7 +682,18 @@ local BOU_STR = ITEM_BIND_ON_USE or "Binds when used"
 local QUEST_ITEM_STR = ITEM_QUEST_ITEM_TEMPLATE or "Quest Item"
 local tooltipScanCache = {}
 local tooltipReqCache = {}
+local tooltipCacheWrites = 0
 
+local function PruneTooltipCaches(now)
+    tooltipCacheWrites = tooltipCacheWrites + 1
+    if tooltipCacheWrites % 32 ~= 0 then return end
+    for key, entry in pairs(tooltipScanCache) do
+        if now - entry.at > 1 then tooltipScanCache[key] = nil end
+    end
+    for key, entry in pairs(tooltipReqCache) do
+        if now - entry.at > 1 then tooltipReqCache[key] = nil end
+    end
+end
 ----------------------------------------------------------------------
 -- Fill the shared tooltip from link and/or location.
 -- Prefer the source-specific setter whenever a real item location is known.
@@ -831,7 +842,9 @@ function Core.GetTooltipReqLevel(link, location)
             end
         end
     end
-    tooltipReqCache[cacheKey] = { at = GetTime(), value = reqLevel }
+    local now = GetTime()
+    tooltipReqCache[cacheKey] = { at = now, value = reqLevel }
+    PruneTooltipCaches(now)
     return reqLevel
 end
 
@@ -943,9 +956,9 @@ function Core.ScanTooltip(link, guid, location)
         end
     end
 
-    tooltipScanCache[cacheKey] = {
-        at = GetTime(), boundStatus = boundStatus, usable = usable,
-    }
+    local now = GetTime()
+    tooltipScanCache[cacheKey] = { at = now, boundStatus = boundStatus, usable = usable }
+    PruneTooltipCaches(now)
     return boundStatus, usable
 end
 

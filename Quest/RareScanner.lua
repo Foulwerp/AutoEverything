@@ -164,6 +164,9 @@ local function PruneSightings(silent)
             changed = true
         end
     end
+    for npcID, alertedAt in pairs(lastAlerts) do
+        if now - alertedAt >= ALERT_COOLDOWN then lastAlerts[npcID] = nil end
+    end
     if changed and not silent then RequestMapRefresh() end
     return changed
 end
@@ -309,6 +312,7 @@ local function RebuildCacheCandidates()
     local zoneKey = NormalizeZone(zone) .. ":" .. tostring(zoneID or "")
     if zoneKey == cacheZoneKey then return end
     cacheZoneKey = zoneKey
+    cacheKnown = {}
     cacheCandidates, cacheCandidateIndex, cacheBaseline = {}, 1, true
     if tonumber(zoneID) and tonumber(zoneID) > 0 and SpawnStore.GetRareNPCsForZone then
         cacheCandidates = SpawnStore.GetRareNPCsForZone(zoneID)
