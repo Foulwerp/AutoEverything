@@ -254,8 +254,8 @@ function Scanner.HandleCombatLog(...)
     end
     local function ObserveGUID(guid, name)
         local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
-        local metadata = npcID and RareMetadataForID(npcID)
-        if npcID and metadata and IsRareMetadata(metadata) then
+        local metadata = npcID and NotableMetadataForID(npcID)
+        if npcID and metadata and (IsRareMetadata(metadata) or IsBossMetadata(metadata)) then
             Scanner.ObserveNPC(npcID, name or metadata.name, guid, nil, "combat log", false)
         end
     end
