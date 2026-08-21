@@ -398,15 +398,17 @@ local function AddServiceLocation(zone, service, location)
     end
 end
 
-local function AddRarePatrolPoint(zone, npc, location, point, routeEndpoint)
+local function AddPatrolPoint(zone, npc, location, point, kind, routeEndpoint)
     zone.points[#zone.points + 1] = {
         x=point.x, y=point.y, floor=tonumber(location.floor) or 0,
-        kind="rare", entityID=npc.id, name=npc.name,
+        kind=kind, entityID=npc.id, name=npc.name,
         routeEndpoint=routeEndpoint and true or nil,
     }
 end
 
-local function AddRarePatrolLocation(zone, npc, location)
+-- Dense NPC coordinate samples are treated as patrol evidence. Sparse groups
+-- remain ordinary spawn pins so isolated boss/rare locations are unchanged.
+local function AddPatrolLocation(zone, npc, location, kind)
     for _, group in ipairs(ServiceCoordinateGroups(location.coords)) do
         local _, _, spanSq = FarthestServicePoints(group)
         if #group >= 3 and spanSq >= PATROL_ROUTE_MIN_SPAN_SQ then
@@ -421,17 +423,21 @@ local function AddRarePatrolLocation(zone, npc, location)
             zone.routes[#zone.routes + 1] = {
                 points=path, closed=closed,
                 floor=tonumber(location.floor) or 0,
-                kind="rare", entityID=npc.id, name=npc.name,
+                kind=kind, entityID=npc.id, name=npc.name,
             }
-            AddRarePatrolPoint(zone, npc, location, path[1], true)
+            AddPatrolPoint(zone, npc, location, path[1], kind, true)
             if not closed then
-                AddRarePatrolPoint(zone, npc, location, path[#path], true)
+                AddPatrolPoint(zone, npc, location, path[#path], kind, true)
             end
         elseif #group > 0 then
-            AddRarePatrolPoint(zone, npc, location,
-                RepresentativeServicePoint(group), false)
+            AddPatrolPoint(zone, npc, location,
+                RepresentativeServicePoint(group), kind, false)
         end
     end
+end
+
+local function AddRarePatrolLocation(zone, npc, location)
+    AddPatrolLocation(zone, npc, location, "rare")
 end
 
 local function BuildServiceIndex()
@@ -851,10 +857,27 @@ local function MergeContribution(contribution)
     end
 end
 
-local function AddDiscoveryNPC(npc, kind, targetByZone, targetPointKeys)
+local function AddDiscoveryNPC(npc, kind, targetByZone, targetPointKeys, patrol)
     if not npc or type(npc.locations) ~= "table" then return 0 end
     local added = 0
     local record = { id=npc.id, name=npc.name }
+    if patrol then
+        for _, location in ipairs(npc.locations) do
+            local key = NormalizeZone(location.zone)
+            if key ~= "" then
+                local zone = targetByZone[key]
+                if not zone then
+                    zone = { name=location.zone, zoneIDs={}, questIDs={}, points={}, routes={} }
+                    targetByZone[key] = zone
+                end
+                local numericZoneID = tonumber(location.zoneID)
+                if numericZoneID then zone.zoneIDs[numericZoneID] = true end
+                AddPatrolLocation(zone, npc, location, kind)
+            end
+            if buildCooperate then buildCooperate() end
+        end
+        return added
+    end
     for _, location in ipairs(npc.locations) do
         for _, coord in ipairs(location.coords or {}) do
             if AddLocation(location.zoneID, location.zone, location.floor,
@@ -896,7 +919,8 @@ local function BuildNotableIndex()
             and (not SpawnStore.CanAttackByFaction
                 or SpawnStore.CanAttackByFaction(metadata.id))
         then
-            AddDiscoveryNPC(npc, metadata.kind or "rare", notableByZone, pointKeys)
+            AddDiscoveryNPC(npc, metadata.kind or "rare", notableByZone, pointKeys,
+                metadata.kind == "boss")
         end
         if buildCooperate then buildCooperate() end
     end
