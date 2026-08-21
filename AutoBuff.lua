@@ -30,6 +30,7 @@ local WINDOW_INSET = 8
 local WINDOW_CONTENT_WIDTH = WINDOW_WIDTH - (WINDOW_INSET * 2)
 local CAST_DELAY_SECONDS = 1
 local TRIVIAL_ERROR_WINDOW_SECONDS = 0.75
+local PERIODIC_SCAN_INTERVAL = 5
 
 local function Default(key, fallback)
     local value = AutoBuffConfig and AutoBuffConfig[key]
@@ -794,7 +795,7 @@ events:SetScript("OnUpdate", function(self, elapsed)
     end
     if AB.db and AB.db.enabled == true and not InCombat() then
         periodicElapsed = periodicElapsed + (elapsed or 0)
-        if periodicElapsed >= 2 then
+        if periodicElapsed >= PERIODIC_SCAN_INTERVAL then
             periodicElapsed = 0
             ScheduleScan(0)
         end

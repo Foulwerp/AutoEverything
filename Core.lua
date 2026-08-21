@@ -681,6 +681,7 @@ local BOE_STR = ITEM_BIND_ON_EQUIP or "Binds when equipped"
 local BOU_STR = ITEM_BIND_ON_USE or "Binds when used"
 local QUEST_ITEM_STR = ITEM_QUEST_ITEM_TEMPLATE or "Quest Item"
 local tooltipScanCache = {}
+local tooltipReqCache = {}
 
 ----------------------------------------------------------------------
 -- Fill the shared tooltip from link and/or location.
@@ -808,9 +809,13 @@ end
 -- location optional: { bag=B, slot=S }, { invSlot=N }, or { rollID=R }
 ----------------------------------------------------------------------
 function Core.GetTooltipReqLevel(link, location)
-    if not SetTooltipItem(link, location) then
-        return nil
-    end
+    local cacheKey = tostring(link)
+        .. ":" .. tostring(location and location.bag)
+        .. ":" .. tostring(location and location.slot)
+        .. ":" .. tostring(location and location.invSlot)
+    local cached = tooltipReqCache[cacheKey]
+    if cached and GetTime() - cached.at < 0.5 then return cached.value end
+    if not SetTooltipItem(link, location) then return nil end
 
     local reqLevel = nil
     local numLines = Core.tooltip:NumLines()
@@ -826,6 +831,7 @@ function Core.GetTooltipReqLevel(link, location)
             end
         end
     end
+    tooltipReqCache[cacheKey] = { at = GetTime(), value = reqLevel }
     return reqLevel
 end
 
