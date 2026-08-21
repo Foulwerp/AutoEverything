@@ -543,7 +543,7 @@ local function CreateWindow()
     local UI = AutoCore and AutoCore.UI
     if UI and UI.Backdrop then UI.Backdrop(window, UI.Colors.window, 0.96) end
 
-    local title = window:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local title = window:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -10)
     title:SetText("AutoBuff")
     if UI and UI.Colors then title:SetTextColor(UI.Unpack(UI.Colors.brand)) end
@@ -557,8 +557,8 @@ local function CreateWindow()
         UI.StripTemplateArt(castButton)
         UI.Backdrop(castButton, UI.Colors.control, 1)
         if castButton.SetNormalFontObject then
-            castButton:SetNormalFontObject("GameFontHighlight")
-            castButton:SetHighlightFontObject("GameFontHighlight")
+            castButton:SetNormalFontObject("GameFontHighlightSmall")
+            castButton:SetHighlightFontObject("GameFontHighlightSmall")
             if castButton.SetDisabledFontObject then castButton:SetDisabledFontObject("GameFontDisable") end
         end
         castButton:HookScript("OnEnter", function(self) self:SetBackdropBorderColor(UI.Unpack(UI.Colors.brand)) end)
