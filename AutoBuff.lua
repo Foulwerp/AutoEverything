@@ -25,7 +25,7 @@ local combatHider, window, castButton, statusText
 local windowHidesInCombat = false
 
 local BASE_WINDOW_HEIGHT = 88
-local WINDOW_WIDTH = 298
+local WINDOW_WIDTH = 270
 local WINDOW_INSET = 8
 local WINDOW_CONTENT_WIDTH = WINDOW_WIDTH - (WINDOW_INSET * 2)
 local CAST_DELAY_SECONDS = 1
@@ -637,10 +637,7 @@ local function PaintWindow()
     end
 
     if currentCandidate then
-        local timerText = currentCandidate.remaining == nil and "missing"
-            or (currentCandidate.remaining == math.huge and "active"
-                or ("expires in " .. math.max(0, math.floor(currentCandidate.remaining + 0.5)) .. "s"))
-        statusText:SetText(currentCandidate.name .. ": " .. currentCandidate.spell .. "  -  " .. timerText)
+        statusText:SetText(currentCandidate.name .. " > " .. currentCandidate.spell)
         castButton:SetAttribute("type", "spell")
         castButton:SetAttribute("spell", currentCandidate.spell)
         castButton:SetAttribute("unit", currentCandidate.unit)
@@ -666,13 +663,11 @@ local function PaintWindow()
             end
             if waitingCooldown then
                 local seconds = math.max(0, waitingCooldown.cooldown)
-                local reason = (waitingCooldown.cooldownDuration or 0) <= 2
-                    and "global cooldown" or "spell cooldown"
-                statusText:SetText(waitingCooldown.spell .. "  -  " .. reason)
+                statusText:SetText(waitingCooldown.name .. " > " .. waitingCooldown.spell)
                 castButton:SetText("Waiting " .. string.format("%.1f", seconds) .. "s")
             else
                 local waiting = currentMissing[1]
-                statusText:SetText(waiting.name .. ": " .. waiting.spell .. "  -  out of range")
+                statusText:SetText(waiting.name .. " > " .. waiting.spell)
                 castButton:SetText("No target in range")
             end
         end
