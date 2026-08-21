@@ -1122,9 +1122,6 @@ local function ShouldQueue(link, bag, slot)
     if not data or not data.id or data.itemType == "Key" then return false end
     if not IsMarketPriceEligible(link, data.itemType) then return false end
     if Core.IsActiveQuestItem(data.id) then return false end
-    if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
-        and AutoUpgrade.IsBestPvPSetItem(link, location)
-    then return false end
     local boundStatus, usable = Core.ScanTooltip(link, nil, location)
     if not IsAuctionableBinding(boundStatus) then return false end
     local playerLevel = UnitLevel("player") or 0
@@ -1317,12 +1314,6 @@ local function PostValidated(entry, unitPrice)
         return
     end
     if not IsMarketPriceEligible(link, entry.itemType) then
-        posting.skipped = posting.skipped + 1
-        return
-    end
-    if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
-        and AutoUpgrade.IsBestPvPSetItem(link, { link=link, bag=entry.bag, slot=entry.slot })
-    then
         posting.skipped = posting.skipped + 1
         return
     end
@@ -1711,9 +1702,6 @@ local function IsManualSellable(link, bag, slot)
     if not data or not data.id or not data.itemType or data.itemType == "Key" then return false end
     if not IsMarketPriceEligible(link, data.itemType, data.reqLevel) then return false end
     if Core.IsActiveQuestItem(data.id) then return false end
-    if AutoUpgrade and AutoUpgrade.IsBestPvPSetItem
-        and AutoUpgrade.IsBestPvPSetItem(link, { link=link, bag=bag, slot=slot })
-    then return false end
     local bound = Core.ScanTooltip(link, nil, { bag = bag, slot = slot })
     return IsAuctionableBinding(bound)
 end

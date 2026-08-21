@@ -2280,7 +2280,7 @@ pageBuilders.Upgrade = function(parent)
     local notifyOnlyToggle = ScalarCheck(parent, "upgrade", AutoUpgradeConfig, "notifyOnly", "Notify only", 300, -110, false,
         "Reports upgrades without equipping them automatically, even while Auto Equip is enabled.")
     ScalarCheck(parent, "upgrade", AutoUpgradeConfig, "pvpGearToggle", "Allow PvP gear upgrades", 300, -136, false,
-        "Controls auto-equip only. When enabled, Bloodforged and pure-PvP-Power items may be equipped as upgrades. The best set is protected from junking, selling, and auctioning either way.")
+        "Controls auto-equip only. When enabled, Bloodforged and pure-PvP-Power items may be equipped as upgrades. The best set remains protected from junking and vendor selling; auction posting follows your auction rules.")
     BindToggleDependency(autoEquipToggle, notifyOnlyToggle)
     local resolvedUpgrade = Core.GetProfile(AutoUpgradeConfig) or {}
     local function CurrentList(key)
