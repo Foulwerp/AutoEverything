@@ -175,7 +175,7 @@ local function PruneSightings(silent)
     return changed
 end
 
-function Scanner.ObserveNPC(npcID, name, guid, level, source, dead)
+function Scanner.ObserveNPC(npcID, name, guid, level, source, dead, silent)
     npcID = tonumber(npcID)
     if not Enabled() or not npcID or dead == true then return false end
     local now = Now()
@@ -198,7 +198,7 @@ function Scanner.ObserveNPC(npcID, name, guid, level, source, dead)
 
     local canAlert = not existing and (not lastAlerts[npcID]
         or now - lastAlerts[npcID] >= ALERT_COOLDOWN)
-    if canAlert then
+    if canAlert and not silent then
         lastAlerts[npcID] = now
         ShowAlert(sighting)
     end
@@ -225,7 +225,7 @@ function Scanner.ObserveUnit(unit, source)
     SpawnStore.RememberClassification(npcID, classification)
     return Scanner.ObserveNPC(npcID, UnitName and UnitName(unit), guid,
         UnitLevel and UnitLevel(unit), source or unit,
-        UnitIsDead and UnitIsDead(unit) or false)
+        UnitIsDead and UnitIsDead(unit) or false, isBoss)
 end
 
 function Scanner.MarkDead(guid, npcID)
@@ -256,7 +256,8 @@ function Scanner.HandleCombatLog(...)
         local npcID = Resolver and Resolver.NPCIDFromGUID and Resolver.NPCIDFromGUID(guid)
         local metadata = npcID and NotableMetadataForID(npcID)
         if npcID and metadata and (IsRareMetadata(metadata) or IsBossMetadata(metadata)) then
-            Scanner.ObserveNPC(npcID, name or metadata.name, guid, nil, "combat log", false)
+            Scanner.ObserveNPC(npcID, name or metadata.name, guid, nil, "combat log", false,
+                IsBossMetadata(metadata))
         end
     end
     ObserveGUID(sourceGUID, sourceName)
