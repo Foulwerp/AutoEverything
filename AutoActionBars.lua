@@ -94,6 +94,13 @@ local function NameFromSpecResults(...)
 end
 
 local function SpecName(id)
+    if GetSpecializationInfoByID then
+        local ok, first, second, third, fourth, fifth, sixth = pcall(GetSpecializationInfoByID, id)
+        if ok then
+            local name = NameFromSpecResults(first, second, third, fourth, fifth, sixth)
+            if name then return name end
+        end
+    end
     if SpecializationUtil and SpecializationUtil.GetSpecializationInfo then
         local ok, first, second, third, fourth, fifth, sixth =
             pcall(SpecializationUtil.GetSpecializationInfo, id)
