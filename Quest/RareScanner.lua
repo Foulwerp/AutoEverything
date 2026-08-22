@@ -180,7 +180,8 @@ function Scanner.ObserveNPC(npcID, name, guid, level, source, dead, silent)
     if not Enabled() or not npcID or dead == true then return false end
     local now = Now()
     local existing = sightings[npcID]
-    local location = existing or CaptureLocation() or {}
+    local oldX, oldY, oldZone = existing and existing.x, existing and existing.y, existing and existing.zone
+    local location = CaptureLocation() or {}
     local sighting = existing or { id=npcID }
     sighting.name = name or sighting.name or ("NPC " .. npcID)
     sighting.guid = guid or sighting.guid
@@ -202,7 +203,11 @@ function Scanner.ObserveNPC(npcID, name, guid, level, source, dead, silent)
         lastAlerts[npcID] = now
         ShowAlert(sighting)
     end
-    if not existing then RequestMapRefresh() end
+    if not existing or oldX ~= sighting.x or oldY ~= sighting.y
+        or oldZone ~= sighting.zone
+    then
+        RequestMapRefresh()
+    end
     return not existing, sighting
 end
 
