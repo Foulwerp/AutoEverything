@@ -1033,6 +1033,30 @@ end
 -- Every exposed quest-objective coordinate gets its own pin. Service patrols
 -- have already been reduced to endpoints above. Records are merged only when
 -- they share the exact same coordinate and pin type.
+local function ClusterPriority(cluster)
+    local priority = 2
+    for _, point in ipairs(cluster.members or {}) do
+        if point.kind == "sighting" then return 0 end
+        if point.kind == "rare" or point.kind == "boss" or point.kind == "worldboss" then
+            priority = math.min(priority, 1)
+        elseif point.isService then
+            priority = math.max(priority, 3)
+        end
+    end
+    return priority
+end
+
+local function SortClusters(clusters)
+    table.sort(clusters, function(a, b)
+        local priorityA, priorityB = ClusterPriority(a), ClusterPriority(b)
+        if priorityA ~= priorityB then return priorityA < priorityB end
+        if a.x ~= b.x then return a.x < b.x end
+        if a.y ~= b.y then return a.y < b.y end
+        return tostring(a.kind) < tostring(b.kind)
+    end)
+    return clusters
+end
+
 local function GroupExactPoints(points)
     local groups, byCoordinate, serviceCoordinates = {}, {}, {}
     for _, point in ipairs(points or {}) do
@@ -1407,16 +1431,17 @@ end
 
 local function CurrentMapName()
     local mapID = GetCurrentMapAreaID and GetCurrentMapAreaID()
-    local name = mapID and GetMapName and GetMapName(mapID)
-    -- Some Ascension builds expose GetMapName but return nil for area IDs.
-    -- Derive the viewed zone from the classic continent/zone selector instead.
-    if not name and GetCurrentMapContinent and GetCurrentMapZone and GetMapZones then
+    local name
+    -- The selector is the authoritative name on this client. GetMapName can
+    -- return a file/area label that does not match the database's zone name.
+    if GetCurrentMapContinent and GetCurrentMapZone and GetMapZones then
         local continent, zoneIndex = GetCurrentMapContinent(), GetCurrentMapZone()
         if continent and continent > 0 and zoneIndex and zoneIndex > 0 then
             local names = { GetMapZones(continent) }
             name = names[zoneIndex]
         end
     end
+    if not name and mapID and GetMapName then name = GetMapName(mapID) end
     if not name and (not WorldMapFrame or not WorldMapFrame:IsShown()) then
         name = (GetZoneText and GetZoneText()) or (GetRealZoneText and GetRealZoneText())
     end
@@ -1450,7 +1475,7 @@ function QuestMap.UpdateWorldMap()
     local maxPins = MaxWorldPins()
     local pinSize = WorldPinSize()
     DrawWorldRoutes(zone, parent, currentFloor)
-    if not zone.exactPoints then zone.exactPoints = GroupExactPoints(zone.points) end
+    if not zone.exactPoints then zone.exactPoints = SortClusters(GroupExactPoints(zone.points)) end
     for _, cluster in ipairs(zone.exactPoints) do
         if shown >= maxPins then break end
         if cluster.floor == 0 or currentFloor == 0 or cluster.floor == currentFloor then
@@ -1806,14 +1831,15 @@ function QuestMap.UpdateMinimap()
         -- belong on the world map/route arrow; clamping every spawn to the
         -- rim creates an unreadable pile of icons.
             if distanceSq <= radiusLimitSq then
-                candidates[#candidates + 1] = { cluster=cluster, distanceSq=distanceSq }
+                candidates[#candidates + 1] = {
+                    cluster=cluster, distanceSq=distanceSq,
+                    priority=ClusterPriority(cluster),
+                }
             end
         end
     end
     table.sort(candidates, function(a,b)
-        if a.cluster.isService ~= b.cluster.isService then
-            return not a.cluster.isService
-        end
+        if a.priority ~= b.priority then return a.priority < b.priority end
         if a.distanceSq ~= b.distanceSq then return a.distanceSq < b.distanceSq end
         if a.cluster.x ~= b.cluster.x then return a.cluster.x < b.cluster.x end
         if a.cluster.y ~= b.cluster.y then return a.cluster.y < b.cluster.y end
