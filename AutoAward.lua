@@ -396,6 +396,27 @@ local function PredictedWinnerText()
     return "None"
 end
 
+local function TopRollsText()
+    local rolls = {}
+    local bracketOrder = { MS = 1, OS = 2, TM = 3 }
+    for _, roll in pairs(current.rollsByPlayer or {}) do
+        table.insert(rolls, roll)
+    end
+    table.sort(rolls, function(a, b)
+        local aOrder, bOrder = bracketOrder[a.bracket] or 4, bracketOrder[b.bracket] or 4
+        if aOrder ~= bOrder then return aOrder < bOrder end
+        if a.value ~= b.value then return a.value > b.value end
+        return a.normalizedPlayer < b.normalizedPlayer
+    end)
+
+    local lines = {}
+    for index = 1, math.min(5, #rolls) do
+        local roll = rolls[index]
+        table.insert(lines, string.format("%d. %s - %s %d", index, roll.player, roll.bracket, roll.value))
+    end
+    return #lines > 0 and table.concat(lines, "\n") or "No rolls yet"
+end
+
 local function RefreshUI()
     if not frame then return end
     local shown = selectedBag ~= nil and BagSlotData(selectedBag, selectedBagSlot)
@@ -412,6 +433,7 @@ local function RefreshUI()
     ui.rolls:SetText(string.format("MS:%2d  OS:%2d  TM:%2d  Rejected:%2d",
         CountRolls("MS"), CountRolls("OS"), CountRolls("TM"), #(current.rejectedRolls or {})))
     ui.winner:SetText("Leader: " .. PredictedWinnerText())
+    ui.topRolls:SetText(TopRollsText())
     ui.award:SetText(current.source == "inventory" and "Trade" or "Award")
     ui.auto:SetChecked(Setting("autoAward"))
 
@@ -1072,7 +1094,7 @@ end
 local function CreateWindow()
     frame = CreateFrame("Frame", "AutoEverythingAwardFrame", UIParent)
     frame:SetWidth(370)
-    frame:SetHeight(118)
+    frame:SetHeight(180)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -1108,6 +1130,9 @@ local function CreateWindow()
     ui.winner = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     ui.winner:SetPoint("TOPLEFT", 18, -98); ui.winner:SetWidth(180); ui.winner:SetJustifyH("LEFT")
     if Theme then Theme.ApplyFont(ui.winner, 11); ui.winner:SetTextColor(Theme.Unpack(Theme.Colors.text)) end
+    ui.topRolls = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    ui.topRolls:SetPoint("TOPLEFT", 18, -116); ui.topRolls:SetWidth(334); ui.topRolls:SetHeight(62); ui.topRolls:SetJustifyH("LEFT"); ui.topRolls:SetJustifyV("TOP")
+    if Theme then Theme.ApplyFont(ui.topRolls, 11); ui.topRolls:SetTextColor(Theme.Unpack(Theme.Colors.textMuted)) end
 
     local actionWidth = 69
     local actionGap = 4
