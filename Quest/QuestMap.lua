@@ -1743,6 +1743,15 @@ RefreshRouteHighlight = function(pin)
     end
 end
 
+local function ResetPlayerMap()
+    playerMap.name, playerMap.key = nil, nil
+    playerMap.x, playerMap.y = nil, nil
+    playerMap.zoneID, playerMap.floor = nil, nil
+    minimapZoneKey = nil
+    HidePins(minimapPins)
+    HideRouteDots(minimapRouteDots)
+end
+
 local function ClearMinimapPins(status)
     HidePins(minimapPins)
     HideRouteDots(minimapRouteDots)
@@ -2039,14 +2048,24 @@ end
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+frame:RegisterEvent("ZONE_CHANGED")
+frame:RegisterEvent("ZONE_CHANGED_INDOORS")
+frame:RegisterEvent("MINIMAP_UPDATE_ZOOM")
 frame:RegisterEvent("WORLD_MAP_UPDATE")
 frame:RegisterEvent("WORLD_MAP_NAME_UPDATE")
+frame:RegisterEvent("CLOSE_WORLD_MAP")
 frame:SetScript("OnEvent", function(_, event)
-    if event == "WORLD_MAP_UPDATE" or event == "WORLD_MAP_NAME_UPDATE" then
+    if event == "WORLD_MAP_UPDATE" or event == "WORLD_MAP_NAME_UPDATE"
+        or event == "CLOSE_WORLD_MAP" or event == "MINIMAP_UPDATE_ZOOM"
+    then
         QuestMap.UpdateWorldMap()
-    else
-        refreshPending, refreshAt = true, GetTime() + 0.5
+        QuestMap.UpdateMinimap()
+        return
     end
+    -- Zone-change events can arrive before the map API has switched to the
+    -- new zone. Never keep drawing the previous zone while waiting for it.
+    ResetPlayerMap()
+    refreshPending, refreshAt = true, GetTime() + 0.5
 end)
 AutoQuest.QuestState.Subscribe(function(changes)
     if changes.semanticChanged then
