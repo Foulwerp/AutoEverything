@@ -1554,35 +1554,15 @@ local function UpdatePlayerLocation(force)
     end
     if not name or name == "" then name = CurrentMapName() end
 
-    local probeSelector, probeQuestID
-    -- Ascension can leave GetPlayerMapPosition at 0,0 after selecting the
-    -- current zone. Selecting a known active quest's destination map forces
-    -- the correct zone canvas to initialize on affected client builds.
-    if (not x or not y or (x == 0 and y == 0)) and name and SetMapByID
-        and GetQuestWorldMapAreaID
-    then
-        local currentZone = ZoneForKey(NormalizeZone(name))
-        for questID in pairs(currentZone and currentZone.questIDs or {}) do
-            local ok, selector = pcall(GetQuestWorldMapAreaID, questID)
-            if ok and type(selector) == "number" and selector > 0 then
-                local setSelectorOK, result = pcall(SetMapByID, selector)
-                local probeX, probeY = ReadPlayerMapPosition()
-                if setSelectorOK and result ~= false and probeX and probeY
-                    and (probeX > 0 or probeY > 0)
-                then
-                    x, y, probeSelector, probeQuestID = probeX, probeY, selector, questID
-                    break
-                end
-            end
-        end
-    end
+    -- If the client cannot provide coordinates after selecting the current
+    -- zone, leave the context invalid until the next map/zone event. Do not
+    -- substitute coordinates from a quest destination or another map.
 
     locationDebug = {
         mapShown=mapShown and true or false, zoneText=zoneName,
         realZoneText=realZoneName, subZoneText=subZoneName, selectedName=selectedName,
         wrongMap=wrongMap and true or false, beforeX=beforeX,
         beforeY=beforeY, x=x, y=y, setOK=setOK, setResult=setResult,
-        probeSelector=probeSelector, probeQuestID=probeQuestID,
         continent=GetCurrentMapContinent and GetCurrentMapContinent(),
         zone=GetCurrentMapZone and GetCurrentMapZone(),
         areaID=GetCurrentMapAreaID and GetCurrentMapAreaID(),
@@ -2041,8 +2021,7 @@ function QuestMap.Debug()
         .. " after=" .. tostring(locationDebug.x) .. "," .. tostring(locationDebug.y)
         .. " setMapOK=" .. tostring(locationDebug.setOK))
     print("  raw continent=" .. tostring(locationDebug.continent) .. " zone=" .. tostring(locationDebug.zone)
-        .. " areaID=" .. tostring(locationDebug.areaID) .. " probeSelector=" .. tostring(locationDebug.probeSelector)
-        .. " probeQuest=" .. tostring(locationDebug.probeQuestID))
+        .. " areaID=" .. tostring(locationDebug.areaID))
 end
 
 local frame = CreateFrame("Frame")
