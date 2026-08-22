@@ -1576,20 +1576,18 @@ local function UpdatePlayerLocation(force)
     if not parentName and subZoneName and subZoneName ~= "" then
         parentName = subZoneParents[NormalizeZone(subZoneName)]
     end
-    -- Indoor micro-maps such as Fargodeep Mine are not represented in the
+    -- Indoor micro-maps such as Skull Rock are not represented in the
     -- objective database: their points use the surrounding zone's coordinate
-    -- frame. When the selected map has no records, prefer a current zone name
-    -- that does. This also covers custom cave maps without maintaining an
-    -- exhaustive subZoneParents list.
-    if not parentName and selectedName
-        and not ZoneForKey(NormalizeZone(selectedName))
-    then
+    -- frame. Prefer any current zone label that has records, without requiring
+    -- an exhaustive cave-name list.
+    if not parentName and not ZoneForKey(NormalizeZone(name)) then
         local candidates = {}
-        if zoneName and zoneName ~= "" then candidates[#candidates + 1] = zoneName end
         if realZoneName and realZoneName ~= "" then candidates[#candidates + 1] = realZoneName end
+        if zoneName and zoneName ~= "" then candidates[#candidates + 1] = zoneName end
+        if selectedName and selectedName ~= "" then candidates[#candidates + 1] = selectedName end
         for _, candidate in ipairs(candidates) do
             if candidate and candidate ~= ""
-                and NormalizeZone(candidate) ~= NormalizeZone(selectedName)
+                and NormalizeZone(candidate) ~= NormalizeZone(name)
                 and ZoneForKey(NormalizeZone(candidate))
             then
                 parentName = candidate
