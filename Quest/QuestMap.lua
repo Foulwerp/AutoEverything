@@ -21,7 +21,7 @@ local minimapZoneKey
 local highlightedRouteEntityID
 local RefreshRouteHighlight
 local refreshPending, refreshAt = false, 0
-local playerMap = { name = nil, key = nil, x = nil, y = nil }
+local playerMap = { name = nil, key = nil, x = nil, y = nil, parent = nil }
 local buildStats = { activeQuests=0, matchedQuests=0, points=0, servicePoints=0 }
 local minimapStatus = "not updated"
 local locationDebug = {}
@@ -1621,10 +1621,12 @@ local function UpdatePlayerLocation(force)
         end
         if bestZone then parentName = bestZone.name end
     end
+    playerMap.parent = nil
     if parentName and not mapShown and ZoneForKey(NormalizeZone(parentName)) then
         local px, py = ReadParentZonePosition(parentName)
         if px and py then
             name, x, y = parentName, px, py
+            playerMap.parent = parentName
             locationDebug.subZoneParent = parentName
         end
     end
@@ -1750,6 +1752,7 @@ end
 local function ResetPlayerMap()
     playerMap.name, playerMap.key = nil, nil
     playerMap.x, playerMap.y = nil, nil
+    playerMap.parent = nil
     playerMap.zoneID, playerMap.floor = nil, nil
     minimapZoneKey = nil
     HidePins(minimapPins)
@@ -1826,6 +1829,9 @@ function QuestMap.UpdateMinimap()
 
     local radius = MinimapRadius()
     local radiusLimit = radius * (MinimapPinRadiusPercent() / 100)
+    -- Parent-map coordinates are necessary inside caves, but nearby outdoor
+    -- spawns share that same coordinate frame. Keep the cave view local.
+    if playerMap.parent then radiusLimit = math.min(radiusLimit, 100) end
     local facing = GetPlayerFacing and GetPlayerFacing() or 0
     local rotate = GetCVar and GetCVar("rotateMinimap") == "1"
     local mapRadius = math.min(Minimap:GetWidth(), Minimap:GetHeight()) / 2 - 10
