@@ -1504,19 +1504,24 @@ end
 -- the player's position in that frame. Returns nil when the parent map cannot
 -- be selected or the client reports no position there.
 local function ReadParentZonePosition(parentName)
-    if not (GetMapZones and GetCurrentMapContinent and ReadPlayerMapPosition) then return nil end
+    if not (GetMapZones and GetMapContinents and ReadPlayerMapPosition) then return nil end
     local parentKey = NormalizeZone(parentName)
     local current = CurrentMapName()
     if not current or NormalizeZone(current) ~= parentKey then
         if not SetMapZoom then return nil end
-        local continent = GetCurrentMapContinent()
-        if not continent or continent <= 0 then return nil end
-        local names = { GetMapZones(continent) }
-        local index
-        for i, zoneName in ipairs(names) do
-            if NormalizeZone(zoneName) == parentKey then index = i; break end
+        local continentIndex, zoneIndex
+        local continents = { GetMapContinents() }
+        for continent = 1, #continents do
+            local names = { GetMapZones(continent) }
+            for index, zoneName in ipairs(names) do
+                if NormalizeZone(zoneName) == parentKey then
+                    continentIndex, zoneIndex = continent, index
+                    break
+                end
+            end
+            if continentIndex then break end
         end
-        if not index or not pcall(SetMapZoom, continent, index) then return nil end
+        if not continentIndex or not pcall(SetMapZoom, continentIndex, zoneIndex) then return nil end
     end
     local x, y = ReadPlayerMapPosition()
     if x and y and (x > 0 or y > 0) then return x, y end
@@ -1594,6 +1599,27 @@ local function UpdatePlayerLocation(force)
                 break
             end
         end
+    end
+    -- Some Ascension cave maps report the cave as both zone and real zone,
+    -- with no usable parent label. Match the active quest IDs to the quest
+    -- index's own zone records instead of guessing a cave name.
+    if not parentName then
+        local activeQuestIDs = {}
+        for _, quest in ipairs(AutoQuest.QuestState.GetQuests()) do
+            local questID = tonumber(quest.id)
+            if questID then activeQuestIDs[questID] = true end
+        end
+        local bestZone, bestScore = nil, 0
+        for _, zone in pairs(activeByZone) do
+            local score = 0
+            for questID in pairs(zone.questIDs or {}) do
+                if activeQuestIDs[tonumber(questID)] then score = score + 1 end
+            end
+            if score > bestScore then
+                bestZone, bestScore = zone, score
+            end
+        end
+        if bestZone then parentName = bestZone.name end
     end
     if parentName and not mapShown and ZoneForKey(NormalizeZone(parentName)) then
         local px, py = ReadParentZonePosition(parentName)
