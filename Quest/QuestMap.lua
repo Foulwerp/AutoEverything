@@ -1499,6 +1499,41 @@ local function ReadPlayerMapPosition()
     if GetPlayerMapPosition then return GetPlayerMapPosition("player") end
 end
 
+-- Convert a position between map spaces without changing the visible map.
+-- This is the same model used by Questie's HBD layer: local map coordinates
+-- become shared world coordinates, then are projected into the target map.
+local mapBoundsCache = {}
+local function WorldMapBounds(areaID)
+    areaID = tonumber(areaID)
+    if not areaID or not C_WorldMap or not C_WorldMap.GetWorldPosition then return nil end
+    if mapBoundsCache[areaID] then return mapBoundsCache[areaID] end
+    local okA, xA, yA = pcall(C_WorldMap.GetWorldPosition, areaID, 0, 0)
+    local okB, xB, yB = pcall(C_WorldMap.GetWorldPosition, areaID, 1, 1)
+    if not (okA and okB and type(xA) == "number" and type(yA) == "number"
+        and type(xB) == "number" and type(yB) == "number"
+        and xA ~= xB and yA ~= yB)
+    then
+        return nil
+    end
+    mapBoundsCache[areaID] = { x=xA, y=yA, width=xB-xA, height=yB-yA }
+    return mapBoundsCache[areaID]
+end
+
+local function ConvertMapPosition(x, y, fromAreaID, targetZone)
+    if not x or not y then return nil end
+    local source = WorldMapBounds(fromAreaID)
+    if not source or not targetZone then return nil end
+    local worldX = source.x + source.width * x
+    local worldY = source.y + source.height * y
+    for areaID in pairs(targetZone.zoneIDs or {}) do
+        local target = WorldMapBounds(areaID)
+        if target then
+            return (worldX - target.x) / target.width * 100,
+                (worldY - target.y) / target.height * 100
+        end
+    end
+end
+
 -- Select the parent zone's map (only when it is not already selected, so this
 -- costs a SetMapZoom only on zone transitions, not every ticker pass) and read
 -- the player's position in that frame. Returns nil when the parent map cannot
@@ -1621,11 +1656,22 @@ local function UpdatePlayerLocation(force)
         end
         if bestZone then parentName = bestZone.name end
     end
-    if parentName and not mapShown and ZoneForKey(NormalizeZone(parentName)) then
-        local px, py = ReadParentZonePosition(parentName)
-        if px and py then
-            name, x, y = parentName, px, py
+    if parentName and not mapShown then
+        local parentKey = NormalizeZone(parentName)
+        local parentZone = ZoneForKey(parentKey)
+        local convertedX, convertedY = ConvertMapPosition(
+            x, y, locationDebug.areaID, parentZone)
+        if convertedX and convertedY then
+            name, x, y = parentName, convertedX / 100, convertedY / 100
             locationDebug.subZoneParent = parentName
+            locationDebug.coordinateModel = "world"
+        elseif parentZone then
+            local px, py = ReadParentZonePosition(parentName)
+            if px and py then
+                name, x, y = parentName, px, py
+                locationDebug.subZoneParent = parentName
+                locationDebug.coordinateModel = "parent-map"
+            end
         end
     end
 
@@ -2039,6 +2085,7 @@ function QuestMap.Debug()
         .. " subZone=" .. tostring(locationDebug.subZoneText)
         .. " selectedMap=" .. tostring(locationDebug.selectedName)
         .. " wrongMap=" .. tostring(locationDebug.wrongMap)
+        .. " coordinateModel=" .. tostring(locationDebug.coordinateModel)
         .. " mapShown=" .. tostring(locationDebug.mapShown)
         .. " subZoneParent=" .. tostring(locationDebug.subZoneParent))
     print("  raw before=" .. tostring(locationDebug.beforeX) .. "," .. tostring(locationDebug.beforeY)
