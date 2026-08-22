@@ -347,9 +347,11 @@ AA.ParseRoll = ParseRoll
 
 local function WinnerFromRolls(rolls)
     local bracket
-    for _, entry in pairs(rolls or {}) do
-        if entry.bracket == "MS" then bracket = "MS" break end
-        if entry.bracket == "OS" then bracket = "OS" end
+    for _, wanted in ipairs({ "MS", "OS", "TM" }) do
+        for _, entry in pairs(rolls or {}) do
+            if entry.bracket == wanted then bracket = wanted break end
+        end
+        if bracket then break end
     end
     if not bracket then return "NO_ROLLS" end
 
@@ -407,8 +409,8 @@ local function RefreshUI()
         stateText = stateText .. " (waiting for combat)"
     end
     ui.state:SetText("State: " .. stateText)
-    ui.rolls:SetText(string.format("MS:%2d  OS:%2d  Rejected:%2d",
-        CountRolls("MS"), CountRolls("OS"), #(current.rejectedRolls or {})))
+    ui.rolls:SetText(string.format("MS:%2d  OS:%2d  TM:%2d  Rejected:%2d",
+        CountRolls("MS"), CountRolls("OS"), CountRolls("TM"), #(current.rejectedRolls or {})))
     ui.winner:SetText("Leader: " .. PredictedWinnerText())
     ui.award:SetText(current.source == "inventory" and "Trade" or "Award")
     ui.auto:SetChecked(Setting("autoAward"))
@@ -648,7 +650,8 @@ local function BeginTieRound(tied, bracket)
     current.deadline = GetTime() + math.max(1, tonumber(Setting("tieRollSeconds")) or 10)
     current.lastCountdown = nil
     SetState(STATE_TIE)
-    Announce("Tie between " .. table.concat(names, ", ") .. ". Tied players reroll " .. (bracket == "MS" and "/roll 100" or "/roll 99") .. ".")
+    local tieRoll = bracket == "MS" and "/roll 100" or (bracket == "OS" and "/roll 99" or "/roll 50")
+    Announce("Tie between " .. table.concat(names, ", ") .. ". Tied players reroll " .. tieRoll .. ".")
     RefreshUI()
 end
 
@@ -732,7 +735,7 @@ function AA.Start(slot)
     }
     AA.current = current
     selectedSlot = slot
-    Announce("Roll for " .. data.link .. ": MS /roll 100, OS /roll 99.")
+    Announce("Roll for " .. data.link .. ": MS /roll 100, OS /roll 99, Transmog /roll 50.")
     if frame then frame:Show() end
     RefreshUI()
     return true
@@ -772,7 +775,7 @@ function AA.StartInventory(bag, slot)
         awardAttempted = false,
     }
     AA.current = current
-    Announce("Roll for " .. data.link .. ": MS /roll 100, OS /roll 99.")
+    Announce("Roll for " .. data.link .. ": MS /roll 100, OS /roll 99, Transmog /roll 50.")
     if frame then frame:Show() end
     RefreshUI()
     return true
@@ -935,6 +938,7 @@ local function AcceptRoll(message)
     local bracket
     if minimum == 1 and maximum == 100 then bracket = "MS"
     elseif minimum == 1 and maximum == 99 then bracket = "OS"
+    elseif minimum == 1 and maximum == 50 then bracket = "TM"
     else Rejected(rolledName, "unsupported range " .. minimum .. "-" .. maximum); return end
 
     local canonical, reason = ResolveRosterName(current.rosterAtStart, rolledName)
@@ -1109,7 +1113,7 @@ local function CreateWindow()
     local actionGap = 4
     ui.start = MakeButton(frame, "Start", actionWidth, function() AA.StartSelected() end, Theme and Theme.Colors.brand)
     ui.start:SetPoint("LEFT", iconFrame, "RIGHT", 10, 0)
-    AddTooltip(ui.start, "Start roll", "Snapshots the current group and starts MS /roll 100 and OS /roll 99 tracking for the selected item.")
+    AddTooltip(ui.start, "Start roll", "Snapshots the current group and starts MS /roll 100, OS /roll 99, and Transmog /roll 50 tracking for the selected item.")
     ui.stop = MakeButton(frame, "Stop", actionWidth, function() AA.Stop() end)
     ui.stop:SetPoint("LEFT", ui.start, "RIGHT", actionGap, 0)
     AddTooltip(ui.stop, "Stop roll", "Ends the timer now and resolves the accepted rolls.")
